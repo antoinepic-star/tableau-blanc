@@ -96,7 +96,7 @@ const Realtime = (() => {
     es.addEventListener('cursor:update', e => handleCursorUpdate(JSON.parse(e.data)));
     es.addEventListener('cursor:leave', e => removeCursor(JSON.parse(e.data).name));
 
-    ['note:created', 'note:updated', 'note:deleted', 'note:dragging'].forEach(evt => {
+    ['element:created', 'element:updated', 'element:deleted', 'element:dragging'].forEach(evt => {
       es.addEventListener(evt, e => emit(evt, JSON.parse(e.data)));
     });
   }

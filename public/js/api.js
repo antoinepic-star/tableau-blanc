@@ -42,10 +42,10 @@ const Api = (() => {
     token,
     whiteboardId,
     getWhiteboard: () => request('GET', base),
-    createNote: (note) => request('POST', `${base}/notes`, note || {}),
-    updateNote: (id, patch) => request('PATCH', `${base}/notes/${id}`, patch),
-    liveNote: (id, patch) => request('POST', `${base}/notes/${id}/live`, patch).catch(() => {}),
-    deleteNote: (id) => request('DELETE', `${base}/notes/${id}`),
+    createElement: (element) => request('POST', `${base}/elements`, element || {}),
+    updateElement: (id, patch) => request('PATCH', `${base}/elements/${id}`, patch),
+    liveElement: (id, patch) => request('POST', `${base}/elements/${id}/live`, patch).catch(() => {}),
+    deleteElement: (id) => request('DELETE', `${base}/elements/${id}`),
     sendCursor: (x, y) => request('POST', `${base}/cursor`, { x, y }).catch(() => {}),
   };
 })();

@@ -270,7 +270,7 @@
       `;
       row.querySelector('.sh-eyebrow').textContent = w.clientName.toUpperCase();
       row.querySelector('.sh-list-row-title').textContent = w.projectName;
-      row.querySelector('.sh-list-row-subtitle').textContent = `${w.workshopName} · ${w.noteCount} post-it${w.noteCount > 1 ? 's' : ''}`;
+      row.querySelector('.sh-list-row-subtitle').textContent = `${w.workshopName} · ${w.elementCount} élément${w.elementCount > 1 ? 's' : ''}`;
       row.querySelector('.sh-fav-btn').addEventListener('click', (e) => {
         e.stopPropagation();
         toggleFavorite(w, e.currentTarget);

@@ -55,7 +55,8 @@ const turso = createClient({
   authToken: process.env.TURSO_AUTH_TOKEN,
 });
 
-app.use(express.json());
+// Limite relevée (défaut Express : 100kb) pour accepter les images encodées en base64 (élément image).
+app.use(express.json({ limit: '8mb' }));
 app.use(express.static('public', { index: false }));
 
 // --- Turso helpers ---
@@ -71,11 +72,22 @@ async function tursoRun(sql, args = []) {
   return turso.execute({ sql, args });
 }
 
-const NOTE_COLORS = ['#FFF176', '#F8BBD0', '#90CAF9', '#A5D6A7', '#FFCC80', '#CE93D8'];
-const DEFAULT_NOTE_WIDTH = 200;
-const DEFAULT_NOTE_HEIGHT = 180;
+const ELEMENT_COLORS = ['#FFF176', '#F8BBD0', '#90CAF9', '#A5D6A7', '#FFCC80', '#CE93D8'];
+
+// Valeurs par défaut à la création, selon le type d'élément — voir ELEMENT_TYPES côté client
+// (public/js/board.js) pour le détail des interactions propres à chaque type.
+const ELEMENT_DEFAULTS = {
+  note: { width: 200, height: 180, color: ELEMENT_COLORS[0] },
+  line: { width: 160, height: 6, color: '#1c1c28' },
+  text: { width: 220, height: 60, color: '#1c1c28', fontSize: 18 },
+  image: { width: 240, height: 240, color: null },
+};
 
 async function initDb() {
+  // Table historique (avant l'ajout des traits/textes/images) : renommée une fois, sans effet
+  // aux démarrages suivants une fois le renommage effectué.
+  try { await turso.execute('ALTER TABLE whiteboard_notes RENAME TO whiteboard_elements'); } catch (_) {}
+
   await turso.batch([
     `CREATE TABLE IF NOT EXISTS whiteboards (
       id TEXT PRIMARY KEY,
@@ -90,15 +102,23 @@ async function initDb() {
       created_at INTEGER DEFAULT (unixepoch()),
       updated_at INTEGER DEFAULT (unixepoch())
     )`,
-    `CREATE TABLE IF NOT EXISTS whiteboard_notes (
+    `CREATE TABLE IF NOT EXISTS whiteboard_elements (
       id TEXT PRIMARY KEY,
       whiteboard_id TEXT NOT NULL,
+      type TEXT NOT NULL DEFAULT 'note',
       x REAL NOT NULL DEFAULT 0,
       y REAL NOT NULL DEFAULT 0,
-      width REAL NOT NULL DEFAULT ${DEFAULT_NOTE_WIDTH},
-      height REAL NOT NULL DEFAULT ${DEFAULT_NOTE_HEIGHT},
-      color TEXT NOT NULL DEFAULT '${NOTE_COLORS[0]}',
+      width REAL NOT NULL DEFAULT ${ELEMENT_DEFAULTS.note.width},
+      height REAL NOT NULL DEFAULT ${ELEMENT_DEFAULTS.note.height},
+      rotation REAL NOT NULL DEFAULT 0,
+      color TEXT NOT NULL DEFAULT '${ELEMENT_COLORS[0]}',
       text TEXT NOT NULL DEFAULT '',
+      font_size REAL,
+      bold INTEGER NOT NULL DEFAULT 0,
+      italic INTEGER NOT NULL DEFAULT 0,
+      underline INTEGER NOT NULL DEFAULT 0,
+      strikethrough INTEGER NOT NULL DEFAULT 0,
+      image_data TEXT,
       z_index INTEGER NOT NULL DEFAULT 0,
       created_at INTEGER DEFAULT (unixepoch()),
       updated_at INTEGER DEFAULT (unixepoch()),
@@ -110,6 +130,21 @@ async function initDb() {
       client_name TEXT, project_name TEXT, detail TEXT, created_at INTEGER DEFAULT (unixepoch())
     )`,
   ], 'write');
+
+  // Ajout des colonnes trait/texte/image (ignore l'erreur si la colonne existe déjà — même
+  // pattern que les autres outils de la suite pour une migration idempotente).
+  for (const sql of [
+    "ALTER TABLE whiteboard_elements ADD COLUMN type TEXT NOT NULL DEFAULT 'note'",
+    'ALTER TABLE whiteboard_elements ADD COLUMN rotation REAL NOT NULL DEFAULT 0',
+    'ALTER TABLE whiteboard_elements ADD COLUMN font_size REAL',
+    'ALTER TABLE whiteboard_elements ADD COLUMN bold INTEGER NOT NULL DEFAULT 0',
+    'ALTER TABLE whiteboard_elements ADD COLUMN italic INTEGER NOT NULL DEFAULT 0',
+    'ALTER TABLE whiteboard_elements ADD COLUMN underline INTEGER NOT NULL DEFAULT 0',
+    'ALTER TABLE whiteboard_elements ADD COLUMN strikethrough INTEGER NOT NULL DEFAULT 0',
+    'ALTER TABLE whiteboard_elements ADD COLUMN image_data TEXT',
+  ]) {
+    try { await turso.execute(sql); } catch (_) {}
+  }
 }
 
 // =====================
@@ -247,8 +282,8 @@ app.get('/api/admin/whiteboards', adminAuth, ah(async (req, res) => {
   const whiteboards = await tursoAll('SELECT * FROM whiteboards ORDER BY created_at DESC');
   const result = [];
   for (const w of whiteboards) {
-    const { n: noteCount } = await tursoGet('SELECT COUNT(*) as n FROM whiteboard_notes WHERE whiteboard_id = ?', [w.id]);
-    result.push({ ...publicWhiteboard(w), noteCount });
+    const { n: elementCount } = await tursoGet('SELECT COUNT(*) as n FROM whiteboard_elements WHERE whiteboard_id = ?', [w.id]);
+    result.push({ ...publicWhiteboard(w), elementCount });
   }
   res.json(result);
 }));
@@ -298,7 +333,7 @@ app.put('/api/admin/whiteboards/:id', adminAuth, ah(async (req, res) => {
 app.delete('/api/admin/whiteboards/:id', superadminAuth, ah(async (req, res) => {
   const whiteboard = await tursoGet('SELECT * FROM whiteboards WHERE id = ?', [req.params.id]);
   if (!whiteboard) return res.status(404).json({ error: 'Introuvable' });
-  await tursoRun('DELETE FROM whiteboard_notes WHERE whiteboard_id = ?', [req.params.id]);
+  await tursoRun('DELETE FROM whiteboard_elements WHERE whiteboard_id = ?', [req.params.id]);
   await tursoRun('DELETE FROM whiteboards WHERE id = ?', [req.params.id]);
   await logActivity('whiteboard_deleted', req.admin.name, whiteboard.client_name, whiteboard.workshop_name);
   res.json({ ok: true });
@@ -463,18 +498,28 @@ app.post('/api/whiteboards/:whiteboardId/cursor', whiteboardAuth, (req, res) => 
 });
 
 // =====================
-// TABLEAU : NOTES (post-its)
+// TABLEAU : ÉLÉMENTS (post-it, trait, texte, image)
 // =====================
 
-function parseNote(row) {
+const ELEMENT_LABELS = { note: 'post-it', line: 'trait', text: 'bloc de texte', image: 'image' };
+
+function parseElement(row) {
   return {
     id: row.id,
+    type: row.type,
     x: row.x,
     y: row.y,
     width: row.width,
     height: row.height,
+    rotation: row.rotation,
     color: row.color,
     text: row.text,
+    fontSize: row.font_size,
+    bold: !!row.bold,
+    italic: !!row.italic,
+    underline: !!row.underline,
+    strikethrough: !!row.strikethrough,
+    imageData: row.image_data,
     zIndex: row.z_index,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
@@ -484,46 +529,59 @@ function parseNote(row) {
 app.get('/api/whiteboards/:whiteboardId', whiteboardAuth, ah(async (req, res) => {
   const whiteboard = await tursoGet('SELECT * FROM whiteboards WHERE id = ?', [req.params.whiteboardId]);
   if (!whiteboard) return res.status(404).json({ error: 'Introuvable' });
-  const noteRows = await tursoAll('SELECT * FROM whiteboard_notes WHERE whiteboard_id = ? ORDER BY z_index', [req.params.whiteboardId]);
+  const elementRows = await tursoAll('SELECT * FROM whiteboard_elements WHERE whiteboard_id = ? ORDER BY z_index', [req.params.whiteboardId]);
   res.json({
     id: whiteboard.id,
     clientName: whiteboard.client_name,
     projectName: whiteboard.project_name,
     workshopName: whiteboard.workshop_name,
-    notes: noteRows.map(parseNote),
+    elements: elementRows.map(parseElement),
     me: req.user,
   });
 }));
 
-app.post('/api/whiteboards/:whiteboardId/notes', whiteboardAuth, ah(async (req, res) => {
-  const { x, y, color } = req.body || {};
-  const { max } = await tursoGet('SELECT MAX(z_index) as max FROM whiteboard_notes WHERE whiteboard_id = ?', [req.params.whiteboardId]);
+app.post('/api/whiteboards/:whiteboardId/elements', whiteboardAuth, ah(async (req, res) => {
+  const type = ['note', 'line', 'text', 'image'].includes(req.body?.type) ? req.body.type : 'note';
+  const defaults = ELEMENT_DEFAULTS[type];
+  const {
+    x, y, width, height, rotation, color, text, fontSize, bold, italic, underline, strikethrough, imageData,
+  } = req.body || {};
+  const { max } = await tursoGet('SELECT MAX(z_index) as max FROM whiteboard_elements WHERE whiteboard_id = ?', [req.params.whiteboardId]);
   const zIndex = (max ?? -1) + 1;
   const id = uuidv4();
   await tursoRun(
-    'INSERT INTO whiteboard_notes (id, whiteboard_id, x, y, width, height, color, z_index) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
-    [id, req.params.whiteboardId, x ?? 0, y ?? 0, DEFAULT_NOTE_WIDTH, DEFAULT_NOTE_HEIGHT, color || NOTE_COLORS[0], zIndex]
+    `INSERT INTO whiteboard_elements
+     (id, whiteboard_id, type, x, y, width, height, rotation, color, text, font_size, bold, italic, underline, strikethrough, image_data, z_index)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [
+      id, req.params.whiteboardId, type, x ?? 0, y ?? 0,
+      width ?? defaults.width, height ?? defaults.height, rotation ?? 0,
+      color ?? defaults.color ?? '#1c1c28', text || '', fontSize ?? defaults.fontSize ?? null,
+      bold ? 1 : 0, italic ? 1 : 0, underline ? 1 : 0, strikethrough ? 1 : 0, imageData || null, zIndex,
+    ]
   );
-  const row = await tursoGet('SELECT * FROM whiteboard_notes WHERE id = ?', [id]);
-  const note = parseNote(row);
+  const row = await tursoGet('SELECT * FROM whiteboard_elements WHERE id = ?', [id]);
+  const element = parseElement(row);
   const whiteboard = await tursoGet('SELECT client_name, workshop_name FROM whiteboards WHERE id = ?', [req.params.whiteboardId]);
-  await logActivity('note_created', req.user.name, whiteboard?.client_name, whiteboard?.workshop_name, 'Nouveau post-it');
+  await logActivity('element_created', req.user.name, whiteboard?.client_name, whiteboard?.workshop_name, `Nouveau ${ELEMENT_LABELS[type]}`);
   await touchWhiteboard(req.params.whiteboardId);
-  broadcast('note:created', note, req.params.whiteboardId);
-  res.json(note);
+  broadcast('element:created', element, req.params.whiteboardId);
+  res.json(element);
 }));
 
-// Patch partiel : position/taille (fin de drag/resize), couleur, ou texte. Le passage au premier
-// plan (z_index) est recalculé ici plutôt que confié au client, pour rester cohérent même si deux
-// personnes interagissent avec des notes différentes en même temps.
-app.patch('/api/whiteboards/:whiteboardId/notes/:id', whiteboardAuth, ah(async (req, res) => {
-  const existing = await tursoGet('SELECT * FROM whiteboard_notes WHERE id = ? AND whiteboard_id = ?', [req.params.id, req.params.whiteboardId]);
+// Patch partiel : position/taille/rotation (fin de drag/resize/rotation), couleur, texte ou mise en
+// forme. Le passage au premier plan (z_index) est recalculé ici plutôt que confié au client, pour
+// rester cohérent même si deux personnes interagissent avec des éléments différents en même temps.
+app.patch('/api/whiteboards/:whiteboardId/elements/:id', whiteboardAuth, ah(async (req, res) => {
+  const existing = await tursoGet('SELECT * FROM whiteboard_elements WHERE id = ? AND whiteboard_id = ?', [req.params.id, req.params.whiteboardId]);
   if (!existing) return res.status(404).json({ error: 'Introuvable' });
-  const { x, y, width, height, color, text, bringToFront } = req.body || {};
+  const {
+    x, y, width, height, rotation, color, text, fontSize, bold, italic, underline, strikethrough, imageData, bringToFront,
+  } = req.body || {};
 
   let zIndex = existing.z_index;
   if (bringToFront) {
-    const { max } = await tursoGet('SELECT MAX(z_index) as max FROM whiteboard_notes WHERE whiteboard_id = ?', [req.params.whiteboardId]);
+    const { max } = await tursoGet('SELECT MAX(z_index) as max FROM whiteboard_elements WHERE whiteboard_id = ?', [req.params.whiteboardId]);
     zIndex = (max ?? -1) + 1;
   }
 
@@ -532,36 +590,45 @@ app.patch('/api/whiteboards/:whiteboardId/notes/:id', whiteboardAuth, ah(async (
     y: y ?? existing.y,
     width: width ?? existing.width,
     height: height ?? existing.height,
+    rotation: rotation ?? existing.rotation,
     color: color ?? existing.color,
     text: text ?? existing.text,
+    fontSize: fontSize ?? existing.font_size,
+    bold: bold != null ? (bold ? 1 : 0) : existing.bold,
+    italic: italic != null ? (italic ? 1 : 0) : existing.italic,
+    underline: underline != null ? (underline ? 1 : 0) : existing.underline,
+    strikethrough: strikethrough != null ? (strikethrough ? 1 : 0) : existing.strikethrough,
+    imageData: imageData ?? existing.image_data,
   };
   await tursoRun(
-    'UPDATE whiteboard_notes SET x=?, y=?, width=?, height=?, color=?, text=?, z_index=?, updated_at=unixepoch() WHERE id=?',
-    [next.x, next.y, next.width, next.height, next.color, next.text, zIndex, req.params.id]
+    `UPDATE whiteboard_elements SET x=?, y=?, width=?, height=?, rotation=?, color=?, text=?, font_size=?,
+     bold=?, italic=?, underline=?, strikethrough=?, image_data=?, z_index=?, updated_at=unixepoch() WHERE id=?`,
+    [next.x, next.y, next.width, next.height, next.rotation, next.color, next.text, next.fontSize,
+     next.bold, next.italic, next.underline, next.strikethrough, next.imageData, zIndex, req.params.id]
   );
-  const row = await tursoGet('SELECT * FROM whiteboard_notes WHERE id = ?', [req.params.id]);
-  const note = parseNote(row);
+  const row = await tursoGet('SELECT * FROM whiteboard_elements WHERE id = ?', [req.params.id]);
+  const element = parseElement(row);
   await touchWhiteboard(req.params.whiteboardId);
-  broadcast('note:updated', note, req.params.whiteboardId);
-  res.json(note);
+  broadcast('element:updated', element, req.params.whiteboardId);
+  res.json(element);
 }));
 
-// Diffusion "live" pendant un drag/resize (pas de persistance ni d'activité) : la position finale
-// est persistée séparément via PATCH au relâchement, comme le curseur de souris.
-app.post('/api/whiteboards/:whiteboardId/notes/:id/live', whiteboardAuth, (req, res) => {
-  const { x, y, width, height } = req.body || {};
-  broadcast('note:dragging', { id: req.params.id, x, y, width, height }, req.params.whiteboardId);
+// Diffusion "live" pendant un drag/resize/rotation (pas de persistance ni d'activité) : la valeur
+// finale est persistée séparément via PATCH au relâchement, comme le curseur de souris.
+app.post('/api/whiteboards/:whiteboardId/elements/:id/live', whiteboardAuth, (req, res) => {
+  const { x, y, width, height, rotation } = req.body || {};
+  broadcast('element:dragging', { id: req.params.id, x, y, width, height, rotation }, req.params.whiteboardId);
   res.status(204).end();
 });
 
-app.delete('/api/whiteboards/:whiteboardId/notes/:id', whiteboardAuth, ah(async (req, res) => {
-  const existing = await tursoGet('SELECT * FROM whiteboard_notes WHERE id = ? AND whiteboard_id = ?', [req.params.id, req.params.whiteboardId]);
+app.delete('/api/whiteboards/:whiteboardId/elements/:id', whiteboardAuth, ah(async (req, res) => {
+  const existing = await tursoGet('SELECT * FROM whiteboard_elements WHERE id = ? AND whiteboard_id = ?', [req.params.id, req.params.whiteboardId]);
   if (!existing) return res.status(404).json({ error: 'Introuvable' });
-  await tursoRun('DELETE FROM whiteboard_notes WHERE id = ?', [req.params.id]);
+  await tursoRun('DELETE FROM whiteboard_elements WHERE id = ?', [req.params.id]);
   const whiteboard = await tursoGet('SELECT client_name, workshop_name FROM whiteboards WHERE id = ?', [req.params.whiteboardId]);
-  await logActivity('note_deleted', req.user.name, whiteboard?.client_name, whiteboard?.workshop_name, 'Post-it supprimé');
+  await logActivity('element_deleted', req.user.name, whiteboard?.client_name, whiteboard?.workshop_name, `${ELEMENT_LABELS[existing.type]} supprimé`);
   await touchWhiteboard(req.params.whiteboardId);
-  broadcast('note:deleted', { id: req.params.id }, req.params.whiteboardId);
+  broadcast('element:deleted', { id: req.params.id }, req.params.whiteboardId);
   res.json({ ok: true });
 }));
 
