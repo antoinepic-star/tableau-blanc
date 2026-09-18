@@ -1,0 +1,12 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head><meta charset="UTF-8"><title>Déconnexion</title></head>
+<body>
+<script>
+  // Chargée en iframe cachée par la page de connexion de l'UX Dashboard pour propager la
+  // déconnexion à tous les outils de la suite (pas de cookie/domaine partagé pour le faire autrement).
+  sessionStorage.removeItem('tb_admin_token');
+  sessionStorage.removeItem('tb_admin_user');
+</script>
+</body>
+</html>

@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Rejoindre le tableau</title>
+<link rel="stylesheet" href="/css/shared.css">
+<style>
+  body { display: flex; align-items: center; justify-content: center; min-height: 100vh; background: linear-gradient(160deg, #fdf6e6 0%, #eef6ff 100%); }
+  .join-card {
+    width: 380px; background: #fff; border-radius: 16px; padding: 40px 36px;
+    box-shadow: 0 20px 50px rgba(30, 20, 80, 0.12); text-align: center;
+  }
+  .join-card .logo-dot { width: 44px; height: 44px; border-radius: 12px; background: #E0A62B; margin: 0 auto 18px; display: flex; align-items: center; justify-content: center; color: #fff; font-weight: 700; font-size: 16px; }
+  .join-card h1 { font-size: 19px; margin-bottom: 6px; color: #1c1c28; }
+  .join-card p.sub { font-size: 13px; color: #7a7a8c; margin-bottom: 26px; }
+  .field { text-align: left; margin-bottom: 14px; }
+  .field label { display: block; font-size: 12px; font-weight: 600; color: #4a4a5c; margin-bottom: 6px; }
+  .field input {
+    width: 100%; padding: 11px 13px; border: 1.5px solid #e3e1f0; border-radius: 9px;
+    font-size: 14px; outline: none; transition: border-color 0.15s;
+  }
+  .field input:focus { border-color: #E0A62B; }
+  .join-btn {
+    width: 100%; padding: 12px; border: none; border-radius: 9px; background: #E0A62B; color: #fff;
+    font-size: 14px; font-weight: 600; cursor: pointer; margin-top: 8px; transition: background 0.15s;
+  }
+  .join-btn:hover { background: #b3830f; }
+  .join-btn:disabled { opacity: 0.6; cursor: not-allowed; }
+  .error-msg { color: #d64545; font-size: 12.5px; margin-top: 12px; min-height: 16px; }
+</style>
+</head>
+<body>
+  <form class="join-card" id="joinForm" style="display:none">
+    <div class="logo-dot" id="logoDot">…</div>
+    <h1 id="joinTitle"></h1>
+    <p class="sub" id="joinSubtitle"></p>
+    <div class="field">
+      <label for="name">Ton nom</label>
+      <input id="name" type="text" placeholder="Ex : Camille" maxlength="40" autocomplete="off" required>
+    </div>
+    <div class="field">
+      <label for="password">Mot de passe du tableau</label>
+      <input id="password" type="password" placeholder="••••••••" autocomplete="off" required>
+    </div>
+    <button class="join-btn" type="submit" id="joinBtn">Rejoindre le tableau</button>
+    <div class="error-msg" id="errorMsg"></div>
+  </form>
+
+  <div class="join-card" id="loadErrorCard" style="display:none">
+    <h1>Tableau introuvable</h1>
+    <p class="sub" id="loadErrorMsg">Ce lien n'est pas (ou plus) valide.</p>
+  </div>
+
+  <script>
+    const whiteboardId = location.pathname.split('/')[2];
+    const tokenKey = `tb_token_${whiteboardId}`;
+    const form = document.getElementById('joinForm');
+    const loadErrorCard = document.getElementById('loadErrorCard');
+    const errorMsg = document.getElementById('errorMsg');
+    const joinBtn = document.getElementById('joinBtn');
+
+    const existingToken = sessionStorage.getItem(tokenKey);
+    if (existingToken) window.location.href = `/w/${whiteboardId}/board`;
+
+    function initials(name) {
+      return name.trim().split(/\s+/).map(w => w[0]).slice(0, 2).join('').toUpperCase();
+    }
+
+    fetch(`/api/whiteboards/${whiteboardId}/meta`)
+      .then(res => res.ok ? res.json() : Promise.reject(new Error('not found')))
+      .then(meta => {
+        document.title = `Rejoindre — ${meta.projectName}`;
+        document.getElementById('logoDot').textContent = initials(meta.clientName);
+        document.getElementById('joinTitle').textContent = meta.workshopName;
+        document.getElementById('joinSubtitle').textContent = `${meta.clientName} — ${meta.projectName} : rejoins la session pour participer au tableau.`;
+        form.style.display = '';
+      })
+      .catch(() => { loadErrorCard.style.display = ''; });
+
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      errorMsg.textContent = '';
+      joinBtn.disabled = true;
+      joinBtn.textContent = 'Connexion...';
+      try {
+        const res = await fetch(`/api/whiteboards/${whiteboardId}/join`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            name: document.getElementById('name').value,
+            password: document.getElementById('password').value,
+          }),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || 'Erreur de connexion');
+        sessionStorage.setItem(tokenKey, data.token);
+        sessionStorage.setItem(`tb_name_${whiteboardId}`, data.name);
+        sessionStorage.setItem(`tb_color_${whiteboardId}`, data.color);
+        window.location.href = `/w/${whiteboardId}/board`;
+      } catch (err) {
+        errorMsg.textContent = err.message;
+        joinBtn.disabled = false;
+        joinBtn.textContent = 'Rejoindre le tableau';
+      }
+    });
+  </script>
+</body>
+</html>

@@ -1,0 +1,63 @@
+/* Header + drawers communs de la suite UX Infostrates.
+   Toutes les classes sont préfixées "sh-" (suite header) pour ne jamais entrer
+   en conflit avec le CSS existant de l'outil (qui utilise déjà .drawer, .field, etc.). */
+
+.sh-header { background: #fff; border-bottom: 2px solid #E0A62B; }
+.sh-header-inner { max-width: 1200px; margin: 0 auto; padding: 20px 32px; display: flex; align-items: center; justify-content: space-between; gap: 24px; font-family: 'DM Sans', -apple-system, BlinkMacSystemFont, sans-serif; }
+.sh-brand { display: flex; align-items: center; gap: 10px; cursor: pointer; text-decoration: none; color: inherit; }
+.sh-logo { width: 42px; height: 42px; border-radius: 10px; background-color: #E0A62B; background-repeat: no-repeat; background-position: center; background-size: 60%; background-image: url('assets/icon-tableau-blanc.png'); flex-shrink: 0; }
+.sh-title { font-size: 20px; font-weight: 700; line-height: 28px; color: #E0A62B; }
+.sh-right { display: flex; align-items: center; gap: 10px; }
+
+.sh-pill-btn { display: inline-flex; align-items: center; gap: 6px; height: 40px; padding: 0 14px; border-radius: 5px; font-family: 'DM Sans', -apple-system, BlinkMacSystemFont, sans-serif; font-weight: 700; font-size: 14px; cursor: pointer; border: 1px solid transparent; white-space: nowrap; }
+.sh-pill-solid { background: #E0A62B; color: #fff; }
+.sh-pill-outline { background: #fff; border-color: #E0A62B; color: #E0A62B; }
+
+.sh-avatar { width: 26px; height: 26px; border-radius: 50%; display: flex; align-items: center; justify-content: center; color: #fff; font-size: 11px; font-weight: 600; flex-shrink: 0; background: #5b4fe9; }
+.sh-avatar-lg { width: 96px; height: 96px; font-size: 30px; }
+.sh-avatar-edit { position: relative; width: 96px; height: 96px; }
+.sh-avatar-pencil { position: absolute; bottom: 0; right: 0; width: 30px; height: 30px; border-radius: 50%; background: #1a1a1e; border: 3px solid #fff; display: flex; align-items: center; justify-content: center; cursor: pointer; }
+.sh-avatar-pencil:hover { background: #333; }
+.sh-avatar-pencil input[type="file"] { display: none; }
+
+.sh-overlay { position: fixed; inset: 0; background: rgba(20,20,30,.35); opacity: 0; pointer-events: none; transition: opacity .2s; z-index: 400; }
+.sh-overlay.open { opacity: 1; pointer-events: all; }
+.sh-drawer { position: fixed; top: 0; right: -460px; bottom: 0; width: 420px; max-width: 90vw; background: #fff; box-shadow: -8px 0 28px rgba(20,20,30,.12); display: flex; flex-direction: column; transition: right .25s cubic-bezier(.4,0,.2,1); z-index: 401; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+.sh-drawer.open { right: 0; }
+.sh-drawer-wide { width: 600px; right: -640px; }
+.sh-drawer-header { padding: 20px 24px; border-bottom: 1px solid #e4e4e8; display: flex; align-items: center; justify-content: space-between; flex-shrink: 0; }
+.sh-drawer-header h2 { font-size: 16px; font-weight: 600; margin: 0; }
+.sh-drawer-body { flex: 1; overflow-y: auto; padding: 24px; }
+.sh-drawer-footer { padding: 16px 24px; border-top: 1px solid #e4e4e8; display: flex; flex-direction: column; gap: 10px; flex-shrink: 0; }
+.sh-icon-trigger { width: 36px; height: 36px; border-radius: 8px; border: none; background: transparent; color: #68686f; cursor: pointer; display: flex; align-items: center; justify-content: center; }
+.sh-icon-trigger:hover { background: #f4f4f6; color: #1a1a1e; }
+.sh-tools-close { position: absolute; top: 20px; right: 20px; }
+
+.sh-tools-body { padding: 56px 30px 40px; overflow-y: auto; }
+.sh-tools-heading { font-family: 'DM Sans', sans-serif; font-size: 24px; font-weight: 700; color: #1a1a1e; margin: 0 0 35px; }
+.sh-tools-grid { display: grid; grid-template-columns: repeat(3, 110px); column-gap: 65px; row-gap: 35px; justify-content: start; }
+.sh-tool-tile { display: flex; flex-direction: column; align-items: center; cursor: pointer; text-decoration: none; color: inherit; }
+.sh-tool-tile-icon { width: 110px; height: 110px; border-radius: 10px; background-repeat: no-repeat; background-position: center; background-size: 65%; margin-bottom: 17px; }
+.sh-tool-tile-icon-soon { background-color: rgba(189,191,192,.75); background-size: 55%; }
+.sh-tool-tile-label { font-family: 'Inter', 'DM Sans', sans-serif; font-size: 14px; font-weight: 600; color: #404040; text-align: center; line-height: 18px; white-space: nowrap; }
+.sh-tool-tile-badge { font-family: 'DM Sans', sans-serif; background: #f4f4f6; color: #404040; font-size: 12px; font-weight: 600; text-transform: uppercase; padding: 5px 10px; border-radius: 10px; margin-top: 5px; }
+.sh-tool-tile-soon { cursor: default; }
+
+.sh-avatar-wrap { display: flex; justify-content: center; margin-bottom: 24px; }
+.sh-field { margin-bottom: 18px; display: flex; flex-direction: column; gap: 6px; }
+.sh-field label { font-size: 13px; font-weight: 500; color: #68686f; }
+.sh-field input { padding: 10px 12px; border: 1px solid #d4d4da; border-radius: 7px; font-size: 14px; font-family: inherit; color: #1a1a1e; outline: none; background: #fff; width: 100%; box-sizing: border-box; }
+.sh-field input:disabled { background: #f4f4f6; color: #68686f; }
+.sh-info-note { display: flex; gap: 10px; background: #f4f4f6; border-radius: 7px; padding: 12px 14px; margin-top: 4px; }
+.sh-info-note svg { flex-shrink: 0; color: #9a9aa1; margin-top: 1px; }
+.sh-info-note p { font-size: 12.5px; color: #68686f; line-height: 1.5; margin: 0; }
+
+.sh-btn-danger { background: #fbeceb; color: #c8392c; }
+.sh-btn-danger:hover { background: #f7dcda; }
+.sh-btn-block { width: 100%; justify-content: center; box-sizing: border-box; }
+
+.sh-fav-btn { flex-shrink: 0; width: 28px; height: 28px; border: none; background: none; color: #9a9aa1; cursor: pointer; display: flex; align-items: center; justify-content: center; border-radius: 7px; }
+.sh-fav-btn:hover { background: #f4f4f6; color: #E0A62B; }
+.sh-fav-btn.sh-is-fav { color: #E0A62B; }
+.sh-fav-btn svg { fill: none; stroke: currentColor; display: block; }
+.sh-fav-btn.sh-is-fav svg { fill: currentColor; }

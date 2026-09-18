@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>Tableau blanc</title>
+<link rel="stylesheet" href="/css/shared.css">
+<link rel="stylesheet" href="/css/board.css">
+</head>
+<body class="board-page">
+
+  <div id="topbar">
+    <div class="topbar-left">
+      <h1 id="whiteboardTitle">…</h1>
+      <div class="subtitle" id="whiteboardSubtitle"></div>
+    </div>
+    <div class="topbar-right">
+      <div class="avatars" id="onlineAvatars"></div>
+      <div class="zoom-controls">
+        <button type="button" id="zoomOutBtn" class="icon-btn" title="Dézoomer">−</button>
+        <button type="button" id="zoomResetBtn" class="zoom-pct" title="Réinitialiser la vue"><span id="zoomPct">100%</span></button>
+        <button type="button" id="zoomInBtn" class="icon-btn" title="Zoomer">+</button>
+      </div>
+      <button type="button" class="primary-btn" id="addNoteBtn">+ Post-it</button>
+    </div>
+  </div>
+
+  <div id="canvasViewport">
+    <div id="canvasLayer"></div>
+  </div>
+  <div id="cursorLayer"></div>
+
+  <div class="hint-pill" id="hintPill">Molette = déplacer le tableau · Ctrl/Cmd + molette = zoomer</div>
+
+  <script src="/js/api.js"></script>
+  <script src="/js/cursors.js"></script>
+  <script src="/js/board.js"></script>
+</body>
+</html>
