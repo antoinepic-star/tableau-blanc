@@ -141,10 +141,7 @@
   addDrawerCloseBtn.addEventListener('click', closeAddDrawer);
   addDrawerOverlay.addEventListener('click', closeAddDrawer);
   addDrawer.querySelectorAll('.add-tile').forEach((btn) => {
-    btn.addEventListener('click', () => {
-      closeAddDrawer();
-      createElementOfType(btn.dataset.type);
-    });
+    btn.addEventListener('pointerdown', (e) => startTileDrag(e, btn));
   });
 
   function viewportCenterWorld() {
@@ -152,10 +149,67 @@
     return screenToWorld(rect.width / 2, rect.height / 2);
   }
 
+  function isPointOverCanvas(clientX, clientY) {
+    const r = viewportEl.getBoundingClientRect();
+    return clientX >= r.left && clientX <= r.right && clientY >= r.top && clientY <= r.bottom;
+  }
+
+  // Glisser-déposer d'un bloc du drawer vers le tableau : le drawer se ferme dès que le geste est
+  // reconnu comme un glissement (au-delà d'un petit seuil), une pastille suit le curseur, et le
+  // dépôt sur le canvas crée l'élément centré sur le point de relâchement. Un simple clic (sans
+  // dépasser le seuil) garde l'ancien comportement : création au centre de la vue courante.
+  function startTileDrag(e, btn) {
+    const type = btn.dataset.type;
+    const startX = e.clientX, startY = e.clientY;
+    let dragging = false;
+    let ghost = null;
+
+    function onMove(ev) {
+      if (!dragging && Math.hypot(ev.clientX - startX, ev.clientY - startY) > 6) {
+        dragging = true;
+        closeAddDrawer();
+        ghost = document.createElement('div');
+        ghost.className = 'drag-ghost';
+        ghost.appendChild(btn.querySelector('.add-tile-icon').cloneNode(true));
+        document.body.appendChild(ghost);
+      }
+      if (dragging) {
+        ghost.style.left = `${ev.clientX + 14}px`;
+        ghost.style.top = `${ev.clientY + 14}px`;
+        viewportEl.classList.toggle('is-drop-target', isPointOverCanvas(ev.clientX, ev.clientY));
+      }
+    }
+
+    function onUp(ev) {
+      window.removeEventListener('pointermove', onMove);
+      window.removeEventListener('pointerup', onUp);
+      viewportEl.classList.remove('is-drop-target');
+      if (ghost) ghost.remove();
+
+      if (!dragging) {
+        closeAddDrawer();
+        createElementOfType(type);
+        return;
+      }
+      if (isPointOverCanvas(ev.clientX, ev.clientY)) {
+        const r = viewportEl.getBoundingClientRect();
+        const { x: wx, y: wy } = screenToWorld(ev.clientX - r.left, ev.clientY - r.top);
+        placeNewElement(type, wx, wy);
+      }
+    }
+
+    window.addEventListener('pointermove', onMove);
+    window.addEventListener('pointerup', onUp);
+  }
+
   function createElementOfType(type) {
-    hideHint();
     const { x: wx, y: wy } = viewportCenterWorld();
-    const offset = (creationCount % 6) * 18;
+    placeNewElement(type, wx, wy, { cascade: true });
+  }
+
+  function placeNewElement(type, wx, wy, { cascade = false } = {}) {
+    hideHint();
+    const offset = cascade ? (creationCount % 6) * 18 : 0;
     creationCount++;
 
     if (type === 'note') {
