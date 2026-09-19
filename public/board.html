@@ -21,27 +21,7 @@
         <button type="button" id="zoomResetBtn" class="zoom-pct" title="Réinitialiser la vue"><span id="zoomPct">100%</span></button>
         <button type="button" id="zoomInBtn" class="icon-btn" title="Zoomer">+</button>
       </div>
-      <div class="add-menu-wrap">
-        <button type="button" class="primary-btn" id="addMenuBtn">+ Ajouter</button>
-        <div class="add-menu" id="addMenu">
-          <button type="button" class="add-menu-item" data-type="note">
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h13l3 3v13H4V4z"/><path d="M17 4v3h3"/></svg>
-            Post-it
-          </button>
-          <button type="button" class="add-menu-item" data-type="line">
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="5" y1="19" x2="19" y2="5"/></svg>
-            Trait
-          </button>
-          <button type="button" class="add-menu-item" data-type="text">
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 7 4 4 20 4 20 7"/><line x1="12" y1="4" x2="12" y2="20"/><line x1="9" y1="20" x2="15" y2="20"/></svg>
-            Texte
-          </button>
-          <button type="button" class="add-menu-item" data-type="image">
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg>
-            Image
-          </button>
-        </div>
-      </div>
+      <button type="button" class="primary-btn" id="addDrawerBtn">+ Ajouter</button>
       <input type="file" id="imageFileInput" accept="image/png,image/jpeg" hidden>
     </div>
   </div>
@@ -52,6 +32,44 @@
   <div id="cursorLayer"></div>
 
   <div class="hint-pill" id="hintPill">Molette = déplacer le tableau · Ctrl/Cmd + molette = zoomer</div>
+
+  <div class="add-drawer-overlay" id="addDrawerOverlay"></div>
+  <aside class="add-drawer" id="addDrawer">
+    <div class="add-drawer-header">
+      <h2>Ajouter un élément</h2>
+      <button type="button" class="add-drawer-close" id="addDrawerCloseBtn" aria-label="Fermer">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+      </button>
+    </div>
+    <div class="add-drawer-body">
+      <div class="add-tiles-grid">
+        <button type="button" class="add-tile" data-type="note">
+          <div class="add-tile-icon">
+            <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h13l3 3v13H4V4z"/><path d="M17 4v3h3"/></svg>
+          </div>
+          <span class="add-tile-label">Post-it</span>
+        </button>
+        <button type="button" class="add-tile" data-type="line">
+          <div class="add-tile-icon">
+            <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="5" y1="19" x2="19" y2="5"/></svg>
+          </div>
+          <span class="add-tile-label">Trait</span>
+        </button>
+        <button type="button" class="add-tile" data-type="text">
+          <div class="add-tile-icon">
+            <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 7 4 4 20 4 20 7"/><line x1="12" y1="4" x2="12" y2="20"/><line x1="9" y1="20" x2="15" y2="20"/></svg>
+          </div>
+          <span class="add-tile-label">Texte</span>
+        </button>
+        <button type="button" class="add-tile" data-type="image">
+          <div class="add-tile-icon">
+            <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg>
+          </div>
+          <span class="add-tile-label">Image</span>
+        </button>
+      </div>
+    </div>
+  </aside>
 
   <script src="/js/api.js"></script>
   <script src="/js/cursors.js"></script>

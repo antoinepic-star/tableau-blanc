@@ -13,8 +13,10 @@
   const layerEl = document.getElementById('canvasLayer');
   const zoomPctEl = document.getElementById('zoomPct');
   const hintPill = document.getElementById('hintPill');
-  const addMenuBtn = document.getElementById('addMenuBtn');
-  const addMenu = document.getElementById('addMenu');
+  const addDrawerBtn = document.getElementById('addDrawerBtn');
+  const addDrawer = document.getElementById('addDrawer');
+  const addDrawerOverlay = document.getElementById('addDrawerOverlay');
+  const addDrawerCloseBtn = document.getElementById('addDrawerCloseBtn');
   const imageFileInput = document.getElementById('imageFileInput');
 
   const elements = new Map(); // id -> { data, el, textEl? }
@@ -96,7 +98,7 @@
     if (e.target.closest('.element')) return;
     deselectElement();
     closeConfirmPopover();
-    addMenu.classList.remove('is-open');
+    closeAddDrawer();
     isPanning = true;
     panStartScreen = { x: e.clientX, y: e.clientY };
     panStartPan = { ...pan };
@@ -121,16 +123,26 @@
     viewportEl.classList.remove('is-panning');
   });
 
-  // ---------- Menu "+ Ajouter" ----------
+  // ---------- Drawer "Ajouter un élément" ----------
 
-  addMenuBtn.addEventListener('click', (e) => {
+  function openAddDrawer() {
+    addDrawer.classList.add('is-open');
+    addDrawerOverlay.classList.add('is-open');
+  }
+  function closeAddDrawer() {
+    addDrawer.classList.remove('is-open');
+    addDrawerOverlay.classList.remove('is-open');
+  }
+
+  addDrawerBtn.addEventListener('click', (e) => {
     e.stopPropagation();
-    addMenu.classList.toggle('is-open');
+    openAddDrawer();
   });
-  document.addEventListener('click', () => addMenu.classList.remove('is-open'));
-  addMenu.querySelectorAll('.add-menu-item').forEach((btn) => {
+  addDrawerCloseBtn.addEventListener('click', closeAddDrawer);
+  addDrawerOverlay.addEventListener('click', closeAddDrawer);
+  addDrawer.querySelectorAll('.add-tile').forEach((btn) => {
     btn.addEventListener('click', () => {
-      addMenu.classList.remove('is-open');
+      closeAddDrawer();
       createElementOfType(btn.dataset.type);
     });
   });

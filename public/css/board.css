@@ -53,25 +53,49 @@ body.board-page { overflow: hidden; height: 100vh; }
 }
 .zoom-pct:hover { color: var(--text); }
 
-/* ---------- Menu "+ Ajouter" ---------- */
+/* ---------- Drawer "Ajouter un élément" ---------- */
 
-.add-menu-wrap { position: relative; }
-.add-menu {
-  position: absolute; top: calc(100% + 8px); right: 0;
-  display: none; flex-direction: column; gap: 2px;
-  background: #fff; border-radius: 10px; padding: 6px;
-  box-shadow: 0 12px 32px rgba(20,20,40,0.18);
-  min-width: 170px; z-index: 50;
+.add-drawer-overlay {
+  position: fixed; inset: 0; background: rgba(20,20,30,0.35);
+  opacity: 0; pointer-events: none; transition: opacity 0.2s ease;
+  z-index: 90;
 }
-.add-menu.is-open { display: flex; }
-.add-menu-item {
-  display: flex; align-items: center; gap: 10px;
-  border: none; background: transparent; border-radius: 7px;
-  padding: 9px 10px; font-size: 13.5px; font-weight: 500; color: var(--text);
-  cursor: pointer; text-align: left; font-family: inherit;
+.add-drawer-overlay.is-open { opacity: 1; pointer-events: auto; }
+
+.add-drawer {
+  position: fixed; top: 0; right: -420px; bottom: 0; width: 400px; max-width: 90vw;
+  background: #fff; box-shadow: -8px 0 28px rgba(20,20,30,.15);
+  display: flex; flex-direction: column;
+  transition: right 0.25s cubic-bezier(.4,0,.2,1);
+  z-index: 91;
 }
-.add-menu-item:hover { background: #f4f4f6; }
-.add-menu-item svg { color: var(--text-muted); flex-shrink: 0; }
+.add-drawer.is-open { right: 0; }
+
+.add-drawer-header {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 26px 26px 4px;
+}
+.add-drawer-header h2 { font-size: 19px; font-weight: 700; color: var(--text); }
+.add-drawer-close {
+  width: 34px; height: 34px; border: none; background: transparent; border-radius: 8px;
+  color: var(--text-muted); cursor: pointer; display: flex; align-items: center; justify-content: center; flex-shrink: 0;
+}
+.add-drawer-close:hover { background: #f4f4f6; color: var(--text); }
+
+.add-drawer-body { padding: 22px 26px; overflow-y: auto; }
+
+.add-tiles-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+.add-tile {
+  display: flex; flex-direction: column; align-items: center; gap: 14px;
+  border: 1.5px solid var(--border); background: #fff; border-radius: 14px;
+  padding: 30px 12px; cursor: pointer; font-family: inherit; transition: border-color 0.15s, background 0.15s;
+}
+.add-tile:hover { border-color: var(--purple); background: #fdf8ec; }
+.add-tile-icon {
+  width: 52px; height: 52px; border-radius: 12px; background: var(--purple); color: #fff;
+  display: flex; align-items: center; justify-content: center; flex-shrink: 0;
+}
+.add-tile-label { font-size: 13.5px; font-weight: 600; color: var(--text); }
 
 /* ---------- Canvas ---------- */
 
