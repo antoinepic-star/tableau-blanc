@@ -3,6 +3,8 @@
   const FONT_SIZES = [12, 14, 16, 18, 22, 28, 36, 48];
   const LINE_THICKNESSES = [2, 4, 6, 10];
   const LINE_STYLES = [['solid', 'Continu'], ['dashed', 'Pointillés']];
+  const STROKE_WIDTHS = [0, 1, 2, 4, 6];
+  const RADIUS_PRESETS = [['Aucun', 0], ['Léger', 8], ['Moyen', 20], ['Complet', 999]];
   const MIN_W = 60;
   const MIN_H = 40;
   const MIN_LINE_LENGTH = 30;
@@ -11,6 +13,12 @@
   const MAX_IMAGE_BYTES = 4 * 1024 * 1024;
   const ZOOM_MIN = 0.2;
   const ZOOM_MAX = 2.5;
+  const TEXT_PAD_X_RATIO = 0.55;
+  const TEXT_PAD_Y_RATIO = 0.35;
+  const TEXT_LINE_HEIGHT_RATIO = 1.35;
+  const TEXT_MIN_CONTENT_WIDTH = 30;
+  const BOX_TYPES = ['note', 'text', 'image', 'rectangle']; // types "boîte" (points d'ancrage pour les connecteurs)
+  const UNLOCK_HOLD_MS = 2000;
 
   const viewportEl = document.getElementById('canvasViewport');
   const layerEl = document.getElementById('canvasLayer');
@@ -24,15 +32,18 @@
   const toolbarEl = document.getElementById('elementToolbar');
 
   const elements = new Map(); // id -> { data, el, textEl? }
+  const connectorsByElementId = new Map(); // elementId -> Set<connectorId>
   let pan = { x: 0, y: 0 };
   let zoom = 1;
   let creationCount = 0;
   let editingElementId = null;
   let selectedElementId = null;
+  let multiSelectedIds = new Set();
   let didInitialCenter = false;
   let pendingImagePlacement = null;
 
   function clamp(v, min, max) { return Math.max(min, Math.min(max, v)); }
+  function randomId() { return `g_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`; }
 
   function worldToScreen(x, y) { return { x: x * zoom + pan.x, y: y * zoom + pan.y }; }
   function screenToWorld(x, y) { return { x: (x - pan.x) / zoom, y: (y - pan.y) / zoom }; }
@@ -45,6 +56,7 @@
       const entry = elements.get(selectedElementId);
       if (entry) repositionToolbar(entry);
     }
+    if (multiSelectedIds.size >= 2) repositionMultiToolbar();
   }
 
   function getViewportPoint(e) {
@@ -54,7 +66,7 @@
 
   function hideHint() { hintPill.classList.add('is-hidden'); }
 
-  // ---------- Zoom / pan ----------
+  // ---------- Zoom / pan (molette et trackpad uniquement — le glisser du fond sert à la sélection) ----------
 
   viewportEl.addEventListener('wheel', (e) => {
     e.preventDefault();
@@ -98,43 +110,81 @@
     pan.y = rect.height / 2;
   }
 
-  let isPanning = false;
-  let panStartScreen = null;
-  let panStartPan = null;
+  // ---------- Sélection rectangle (glisser sur le fond) ----------
+
+  let isSelecting = false;
+  let selectionMoved = false;
+  let selectionStartScreen = null;
+  let selectionBoxEl = null;
+
+  function updateSelectionBoxVisual(x1, y1, x2, y2) {
+    if (!selectionBoxEl) {
+      selectionBoxEl = document.createElement('div');
+      selectionBoxEl.className = 'selection-box';
+      document.body.appendChild(selectionBoxEl);
+    }
+    const left = Math.min(x1, x2), top = Math.min(y1, y2);
+    selectionBoxEl.style.left = `${left}px`;
+    selectionBoxEl.style.top = `${top}px`;
+    selectionBoxEl.style.width = `${Math.abs(x2 - x1)}px`;
+    selectionBoxEl.style.height = `${Math.abs(y2 - y1)}px`;
+  }
+
+  function rectsIntersect(a, b) {
+    return a.left < b.right && a.right > b.left && a.top < b.bottom && a.bottom > b.top;
+  }
 
   viewportEl.addEventListener('pointerdown', (e) => {
     if (e.target.closest('.element')) return;
     deselectElement();
+    clearMultiSelection();
     closeConfirmPopover();
     closeAddDrawer();
-    isPanning = true;
-    panStartScreen = { x: e.clientX, y: e.clientY };
-    panStartPan = { ...pan };
+    isSelecting = true;
+    selectionMoved = false;
+    selectionStartScreen = { x: e.clientX, y: e.clientY };
     viewportEl.setPointerCapture(e.pointerId);
-    viewportEl.classList.add('is-panning');
     hideHint();
   });
 
   window.addEventListener('pointermove', (e) => {
-    if (isPanning) {
-      pan.x = panStartPan.x + (e.clientX - panStartScreen.x);
-      pan.y = panStartPan.y + (e.clientY - panStartScreen.y);
-      applyTransform();
+    if (isSelecting) {
+      const dx = e.clientX - selectionStartScreen.x;
+      const dy = e.clientY - selectionStartScreen.y;
+      if (!selectionMoved && Math.hypot(dx, dy) > 4) selectionMoved = true;
+      if (selectionMoved) updateSelectionBoxVisual(selectionStartScreen.x, selectionStartScreen.y, e.clientX, e.clientY);
     }
     const { x: sx, y: sy } = getViewportPoint(e);
     const { x: wx, y: wy } = screenToWorld(sx, sy);
     Realtime.notifyLocalPointer(wx, wy);
   });
 
-  window.addEventListener('pointerup', () => {
-    isPanning = false;
-    viewportEl.classList.remove('is-panning');
+  window.addEventListener('pointerup', (e) => {
+    if (!isSelecting) return;
+    isSelecting = false;
+    if (selectionBoxEl) { selectionBoxEl.remove(); selectionBoxEl = null; }
+    if (!selectionMoved) return;
+    const selRect = {
+      left: Math.min(selectionStartScreen.x, e.clientX),
+      right: Math.max(selectionStartScreen.x, e.clientX),
+      top: Math.min(selectionStartScreen.y, e.clientY),
+      bottom: Math.max(selectionStartScreen.y, e.clientY),
+    };
+    const captured = [];
+    elements.forEach((entry) => {
+      if (entry.data.type === 'connector' || entry.data.locked) return;
+      const r = entry.el.getBoundingClientRect();
+      if (rectsIntersect(selRect, r)) captured.push(entry.data.id);
+    });
+    if (captured.length === 1) selectElement(captured[0]);
+    else if (captured.length >= 2) setMultiSelection(captured);
   });
 
   // ---------- Drawer "Ajouter un élément" ----------
 
   function openAddDrawer() {
     deselectElement();
+    clearMultiSelection();
     addDrawer.classList.add('is-open');
     addDrawerOverlay.classList.add('is-open');
   }
@@ -229,9 +279,19 @@
       Api.createElement({ type: 'line', x: wx - 80 + offset, y: wy + offset, width: 160, height: 6, rotation: 0, color: '#1c1c28' })
         .catch(err => alert(err.message));
     } else if (type === 'text') {
-      Api.createElement({ type: 'text', x: wx - 110 + offset, y: wy - 30 + offset, width: 220, height: 60, color: '#1c1c28', fontSize: 18 })
+      const initial = computeTextBoxSize({ text: '', fontSize: 18, bold: false, italic: false });
+      Api.createElement({
+        type: 'text', x: wx - initial.width / 2 + offset, y: wy - initial.height / 2 + offset,
+        width: initial.width, height: initial.height, color: '#1c1c28', fontSize: 18,
+      })
         .then(data => { const entry = ensureRendered(data); entry.enterEditing?.(); })
         .catch(err => alert(err.message));
+    } else if (type === 'rectangle') {
+      const color = ELEMENT_COLORS[creationCount % ELEMENT_COLORS.length];
+      Api.createElement({
+        type: 'rectangle', x: wx - 110 + offset, y: wy - 70 + offset, width: 220, height: 140,
+        color, strokeWidth: 0, strokeColor: '#1c1c28', radius: 8,
+      }).catch(err => alert(err.message));
     } else if (type === 'image') {
       pendingImagePlacement = { wx, wy, offset };
       imageFileInput.value = '';
@@ -259,7 +319,7 @@
     reader.readAsDataURL(file);
   });
 
-  // ---------- Sélection ----------
+  // ---------- Sélection simple ----------
 
   function deselectElement() {
     if (selectedElementId && elements.has(selectedElementId)) {
@@ -270,6 +330,7 @@
   }
 
   function selectElement(id) {
+    clearMultiSelection();
     if (selectedElementId === id) return;
     deselectElement();
     selectedElementId = id;
@@ -280,9 +341,23 @@
 
   document.addEventListener('keydown', (e) => {
     if (editingElementId) return;
-    if ((e.key === 'Backspace' || e.key === 'Delete') && selectedElementId) {
+    if (e.key !== 'Backspace' && e.key !== 'Delete') return;
+    if (multiSelectedIds.size >= 2) {
+      e.preventDefault();
+      const ids = [...multiSelectedIds];
+      if (!confirm(`Supprimer ces ${ids.length} éléments ?`)) return;
+      ids.forEach((id) => {
+        const entry = elements.get(id);
+        if (!entry || entry.data.locked) return;
+        removeElementLocal(id);
+        Api.deleteElement(id).catch(() => {});
+      });
+      clearMultiSelection();
+      return;
+    }
+    if (selectedElementId) {
       const entry = elements.get(selectedElementId);
-      if (!entry) return;
+      if (!entry || entry.data.locked) return;
       e.preventDefault();
       showDeleteConfirm(entry, entry.el.getBoundingClientRect());
     }
@@ -329,7 +404,60 @@
     setTimeout(() => document.addEventListener('pointerdown', outsideClickHandler), 0);
   }
 
-  // ---------- Rendu des éléments ----------
+  // ---------- Mesure / redimensionnement automatique du texte ----------
+
+  let textMeasurer = null;
+  function measureTextWidth(text, fontSize, bold, italic) {
+    if (!textMeasurer) {
+      textMeasurer = document.createElement('span');
+      textMeasurer.style.cssText = 'position:absolute; visibility:hidden; white-space:pre; top:-9999px; left:-9999px; font-family:inherit;';
+      document.body.appendChild(textMeasurer);
+    }
+    textMeasurer.style.fontSize = `${fontSize}px`;
+    textMeasurer.style.fontWeight = bold ? '700' : '400';
+    textMeasurer.style.fontStyle = italic ? 'italic' : 'normal';
+    textMeasurer.textContent = text;
+    return textMeasurer.getBoundingClientRect().width;
+  }
+
+  function computeTextBoxSize(data) {
+    const size = data.fontSize || 18;
+    const raw = (data.text && data.text.length) ? data.text : 'Texte…';
+    const lines = raw.split('\n');
+    let maxLineWidth = 0;
+    lines.forEach((line) => {
+      const w = measureTextWidth(line.length ? line : ' ', size, data.bold, data.italic);
+      if (w > maxLineWidth) maxLineWidth = w;
+    });
+    const padX = size * TEXT_PAD_X_RATIO;
+    const padY = size * TEXT_PAD_Y_RATIO;
+    const lineHeight = size * TEXT_LINE_HEIGHT_RATIO;
+    return {
+      width: Math.max(TEXT_MIN_CONTENT_WIDTH, maxLineWidth) + padX * 2,
+      height: lines.length * lineHeight + padY * 2,
+      padX, padY, lineHeight,
+    };
+  }
+
+  function applyTextAutoSize(entry) {
+    if (entry.data.type !== 'text') return;
+    const { width, height, padX, padY, lineHeight } = computeTextBoxSize(entry.data);
+    entry.data.width = width;
+    entry.data.height = height;
+    entry.el.style.width = `${width}px`;
+    entry.el.style.height = `${height}px`;
+    if (entry.textEl) {
+      entry.textEl.style.top = `${padY}px`;
+      entry.textEl.style.bottom = `${padY}px`;
+      entry.textEl.style.left = `${padX}px`;
+      entry.textEl.style.right = `${padX}px`;
+      entry.textEl.style.lineHeight = `${lineHeight}px`;
+    }
+    updateConnectorsFor(entry.data.id);
+    if (selectedElementId === entry.data.id) repositionToolbar(entry);
+  }
+
+  // ---------- Rendu du toolbar flottant ----------
 
   function colorDropdownHtml(role, currentColor, allowNone, title) {
     const colors = allowNone ? [null, ...ELEMENT_COLORS] : ELEMENT_COLORS;
@@ -377,13 +505,53 @@
     `;
   }
 
+  function strokeWidthDropdownHtml(data) {
+    const w = data.strokeWidth || 0;
+    return `
+      <div class="toolbar-dropdown" data-role="strokewidth-wrap">
+        <button type="button" class="toolbar-dropdown-trigger" data-role="strokewidth-trigger" title="Épaisseur du contour">
+          <span class="toolbar-thickness-preview" style="height:${w ? clamp(w, 2, 10) : 2}px; opacity:${w ? 1 : 0.35}"></span>
+        </button>
+        <div class="toolbar-popover toolbar-thickness-popover" data-role="strokewidth-popover">
+          <div class="toolbar-thickness-row">
+            ${STROKE_WIDTHS.map(sw => `<button type="button" class="toolbar-thickness-option${w === sw ? ' is-active' : ''}" data-strokewidth="${sw}" title="${sw === 0 ? 'Aucun contour' : sw + 'px'}"><span class="toolbar-thickness-bar" style="height:${sw || 2}px; opacity:${sw ? 1 : 0.3}"></span></button>`).join('')}
+          </div>
+        </div>
+      </div>
+    `;
+  }
+
+  function radiusDropdownHtml(data) {
+    const r = data.radius || 0;
+    return `
+      <div class="toolbar-dropdown" data-role="radius-wrap">
+        <button type="button" class="toolbar-dropdown-trigger" data-role="radius-trigger" title="Arrondi des angles">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M9 4H8a4 4 0 0 0-4 4v1"/><path d="M4 16v1a3 3 0 0 0 3 3h1"/><path d="M15 20h1a3 3 0 0 0 3-3v-1"/><path d="M20 9V8a4 4 0 0 0-4-4h-1"/></svg>
+        </button>
+        <div class="toolbar-popover toolbar-format-popover" data-role="radius-popover">
+          ${RADIUS_PRESETS.map(([label, val]) => `<button type="button" class="element-format-btn${r === val ? ' is-active' : ''}" data-radius="${val}" title="${label}">${label.slice(0, 1)}</button>`).join('')}
+        </div>
+      </div>
+    `;
+  }
+
   function buildToolbarHtml(data) {
     let controls = '';
     if (data.type === 'note') {
       controls = colorDropdownHtml('color', data.color, false, 'Couleur');
-    } else if (data.type === 'line') {
+    } else if (data.type === 'line' || data.type === 'connector') {
       controls = colorDropdownHtml('color', data.color, false, 'Couleur')
         + thicknessDropdownHtml(data);
+      if (data.type === 'connector') {
+        controls += `
+          <button type="button" class="element-icon-btn element-arrow-start-btn${data.startCap === 'arrow' ? ' is-active' : ''}" title="Flèche au début">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="19" y1="12" x2="5" y2="12"/><polyline points="11 6 5 12 11 18"/></svg>
+          </button>
+          <button type="button" class="element-icon-btn element-arrow-end-btn${data.endCap === 'arrow' ? ' is-active' : ''}" title="Flèche à la fin">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="13 6 19 12 13 18"/></svg>
+          </button>
+        `;
+      }
     } else if (data.type === 'text') {
       controls = colorDropdownHtml('color', data.color, false, 'Couleur du texte')
         + colorDropdownHtml('bg', data.backgroundColor, true, 'Couleur de fond')
@@ -398,6 +566,11 @@
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 2v14a2 2 0 0 0 2 2h14"/><path d="M18 22V8a2 2 0 0 0-2-2H2"/></svg>
         </button>
       `;
+    } else if (data.type === 'rectangle') {
+      controls = colorDropdownHtml('color', data.color, false, 'Couleur de fond')
+        + strokeWidthDropdownHtml(data)
+        + colorDropdownHtml('stroke', data.strokeColor, false, 'Couleur du contour')
+        + radiusDropdownHtml(data);
     }
     const sep = controls ? '<span class="element-toolbar-sep"></span>' : '';
     return `
@@ -411,7 +584,39 @@
     `;
   }
 
-  // ---------- Barre d'outils flottante ----------
+  function iconAlignLeft() { return '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="4" y1="3" x2="4" y2="21"/><rect x="7" y="6" width="12" height="5"/><rect x="7" y="13" width="7" height="5"/></svg>'; }
+  function iconAlignCenter() { return '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="12" y1="3" x2="12" y2="21"/><rect x="6" y="6" width="12" height="5"/><rect x="8.5" y="13" width="7" height="5"/></svg>'; }
+  function iconAlignRight() { return '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="20" y1="3" x2="20" y2="21"/><rect x="5" y="6" width="12" height="5"/><rect x="10" y="13" width="7" height="5"/></svg>'; }
+  function iconGroup() { return '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="9" height="9" rx="1.5"/><rect x="12" y="12" width="9" height="9" rx="1.5"/></svg>'; }
+  function iconLock() { return '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>'; }
+
+  function groupMembers(groupId) {
+    if (!groupId) return [];
+    const ids = [];
+    elements.forEach((entry) => { if (entry.data.groupId === groupId) ids.push(entry.data.id); });
+    return ids;
+  }
+
+  function buildMultiToolbarHtml() {
+    const ids = [...multiSelectedIds];
+    const groupIds = new Set(ids.map(id => elements.get(id)?.data.groupId).filter(Boolean));
+    let isFullGroup = false;
+    if (groupIds.size === 1) {
+      const gid = [...groupIds][0];
+      const members = groupMembers(gid);
+      isFullGroup = members.length === ids.length && members.every(id => ids.includes(id));
+    }
+    return `
+      <button type="button" class="element-icon-btn" data-action="align-left" title="Aligner à gauche">${iconAlignLeft()}</button>
+      <button type="button" class="element-icon-btn" data-action="align-center" title="Centrer horizontalement">${iconAlignCenter()}</button>
+      <button type="button" class="element-icon-btn" data-action="align-right" title="Aligner à droite">${iconAlignRight()}</button>
+      <span class="element-toolbar-sep"></span>
+      <button type="button" class="element-icon-btn" data-action="${isFullGroup ? 'ungroup' : 'group'}" title="${isFullGroup ? 'Dégrouper' : 'Grouper'}">${iconGroup()}</button>
+      <button type="button" class="element-icon-btn" data-action="lock" title="Verrouiller">${iconLock()}</button>
+    `;
+  }
+
+  // ---------- Barre d'outils flottante (un seul nœud partagé, jamais imbriqué dans un élément) ----------
 
   function closeAllToolbarPopovers() {
     toolbarEl.querySelectorAll('.toolbar-popover.is-open').forEach(p => p.classList.remove('is-open'));
@@ -457,6 +662,189 @@
     }
   }
 
+  // ---------- Barre d'outils multi-sélection ----------
+
+  function multiSelectionBoundingRect() {
+    let rect = null;
+    multiSelectedIds.forEach((id) => {
+      const entry = elements.get(id);
+      if (!entry) return;
+      const r = entry.el.getBoundingClientRect();
+      if (!rect) rect = { left: r.left, top: r.top, right: r.right, bottom: r.bottom };
+      else {
+        rect.left = Math.min(rect.left, r.left);
+        rect.top = Math.min(rect.top, r.top);
+        rect.right = Math.max(rect.right, r.right);
+        rect.bottom = Math.max(rect.bottom, r.bottom);
+      }
+    });
+    return rect;
+  }
+
+  function repositionMultiToolbar() {
+    if (!toolbarEl.classList.contains('is-open-multi')) return;
+    const rect = multiSelectionBoundingRect();
+    if (!rect) return;
+    const tRect = toolbarEl.getBoundingClientRect();
+    let top = rect.top - tRect.height - 8;
+    if (top < 4) top = Math.min(rect.bottom + 8, window.innerHeight - tRect.height - 4);
+    const left = clamp(rect.left + (rect.right - rect.left) / 2 - tRect.width / 2, 4, window.innerWidth - tRect.width - 4);
+    toolbarEl.style.left = `${left}px`;
+    toolbarEl.style.top = `${top}px`;
+  }
+
+  function showMultiToolbar() {
+    toolbarEl.innerHTML = buildMultiToolbarHtml();
+    toolbarEl.classList.add('is-open', 'is-open-multi');
+    wireMultiToolbarControls();
+    repositionMultiToolbar();
+  }
+
+  function hideMultiToolbar() {
+    toolbarEl.classList.remove('is-open-multi');
+    if (!selectedElementId) hideToolbar();
+  }
+
+  function clearMultiSelection() {
+    multiSelectedIds.forEach((id) => {
+      const entry = elements.get(id);
+      if (entry) entry.el.classList.remove('is-multi-selected');
+    });
+    multiSelectedIds = new Set();
+    hideMultiToolbar();
+  }
+
+  function setMultiSelection(ids) {
+    deselectElement();
+    clearMultiSelection();
+    ids.forEach((id) => {
+      const entry = elements.get(id);
+      if (!entry || entry.data.locked) return;
+      multiSelectedIds.add(id);
+      entry.el.classList.add('is-multi-selected');
+    });
+    if (multiSelectedIds.size >= 2) showMultiToolbar();
+    else if (multiSelectedIds.size === 1) {
+      const onlyId = [...multiSelectedIds][0];
+      clearMultiSelection();
+      selectElement(onlyId);
+    }
+  }
+
+  function moveElementTo(entry, x, y) {
+    entry.data.x = x;
+    entry.data.y = y;
+    entry.el.style.left = `${x}px`;
+    entry.el.style.top = `${y}px`;
+    updateConnectorsFor(entry.data.id);
+    Api.updateElement(entry.data.id, { x, y }).then(applyRemoteUpdate).catch(() => {});
+  }
+
+  function wireMultiToolbarControls() {
+    toolbarEl.querySelectorAll('[data-action]').forEach((btn) => {
+      btn.addEventListener('pointerdown', e => e.stopPropagation());
+      btn.addEventListener('click', () => runMultiAction(btn.dataset.action));
+    });
+  }
+
+  function runMultiAction(action) {
+    const ids = [...multiSelectedIds];
+    const entries = ids.map(id => elements.get(id)).filter(Boolean);
+    if (!entries.length) return;
+
+    if (action === 'align-left') {
+      const minX = Math.min(...entries.map(en => en.data.x));
+      entries.forEach(en => moveElementTo(en, minX, en.data.y));
+    } else if (action === 'align-right') {
+      const maxRight = Math.max(...entries.map(en => en.data.x + en.data.width));
+      entries.forEach(en => moveElementTo(en, maxRight - en.data.width, en.data.y));
+    } else if (action === 'align-center') {
+      const minX = Math.min(...entries.map(en => en.data.x));
+      const maxRight = Math.max(...entries.map(en => en.data.x + en.data.width));
+      const centerX = (minX + maxRight) / 2;
+      entries.forEach(en => moveElementTo(en, centerX - en.data.width / 2, en.data.y));
+    } else if (action === 'group') {
+      const gid = randomId();
+      entries.forEach((en) => {
+        en.data.groupId = gid;
+        Api.updateElement(en.data.id, { groupId: gid }).catch(() => {});
+      });
+      showMultiToolbar();
+    } else if (action === 'ungroup') {
+      entries.forEach((en) => {
+        en.data.groupId = null;
+        Api.updateElement(en.data.id, { groupId: null }).catch(() => {});
+      });
+      showMultiToolbar();
+    } else if (action === 'lock') {
+      entries.forEach((en) => {
+        en.data.locked = true;
+        applyLockedState(en);
+        Api.updateElement(en.data.id, { locked: true }).catch(() => {});
+      });
+      clearMultiSelection();
+      return;
+    }
+    repositionMultiToolbar();
+  }
+
+  // ---------- Verrouillage ----------
+
+  function applyLockedState(entry) {
+    entry.el.classList.toggle('is-locked', !!entry.data.locked);
+    let badge = entry.el.querySelector('.lock-badge');
+    if (entry.data.locked && !badge) {
+      badge = document.createElement('div');
+      badge.className = 'lock-badge';
+      badge.innerHTML = '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>';
+      entry.el.appendChild(badge);
+    } else if (!entry.data.locked && badge) {
+      badge.remove();
+    }
+  }
+
+  function startUnlockHold(entry, e) {
+    const bar = document.createElement('div');
+    bar.className = 'lock-progress';
+    bar.innerHTML = '<div class="lock-progress-fill"></div>';
+    entry.el.appendChild(bar);
+    const fill = bar.querySelector('.lock-progress-fill');
+    const startTime = Date.now();
+    const startScreen = { x: e.clientX, y: e.clientY };
+    let done = false;
+    let raf = null;
+
+    function cleanup() {
+      done = true;
+      if (raf) cancelAnimationFrame(raf);
+      bar.remove();
+      window.removeEventListener('pointermove', onMove);
+      window.removeEventListener('pointerup', onUp);
+    }
+    function onMove(ev) {
+      if (Math.hypot(ev.clientX - startScreen.x, ev.clientY - startScreen.y) > 8) cleanup();
+    }
+    function onUp() { cleanup(); }
+    function tick() {
+      if (done) return;
+      const elapsed = Date.now() - startTime;
+      fill.style.width = `${Math.min(100, (elapsed / UNLOCK_HOLD_MS) * 100)}%`;
+      if (elapsed >= UNLOCK_HOLD_MS) {
+        cleanup();
+        entry.data.locked = false;
+        applyLockedState(entry);
+        Api.updateElement(entry.data.id, { locked: false }).catch(() => {});
+        return;
+      }
+      raf = requestAnimationFrame(tick);
+    }
+    window.addEventListener('pointermove', onMove);
+    window.addEventListener('pointerup', onUp);
+    raf = requestAnimationFrame(tick);
+  }
+
+  // ---------- Rendu des éléments ----------
+
   function renderElement(data) {
     const el = document.createElement('div');
     el.className = 'element';
@@ -469,22 +857,29 @@
     el.style.zIndex = data.zIndex;
 
     let textEl = null;
+    const anchorsHtml = BOX_TYPES.includes(data.type)
+      ? `<div class="connector-anchor" data-side="top"></div><div class="connector-anchor" data-side="right"></div><div class="connector-anchor" data-side="bottom"></div><div class="connector-anchor" data-side="left"></div>`
+      : '';
 
     if (data.type === 'note') {
       el.style.background = data.color;
       el.innerHTML = `
         <textarea class="element-text" placeholder="Écris ici…" maxlength="4000"></textarea>
         <div class="element-resize-handle"></div>
+        ${anchorsHtml}
       `;
       textEl = el.querySelector('.element-text');
       textEl.value = data.text || '';
     } else if (data.type === 'line') {
       el.style.transform = `rotate(${data.rotation}deg)`;
       el.innerHTML = `<div class="element-line-handle"></div>`;
+    } else if (data.type === 'connector') {
+      el.style.transform = `rotate(${data.rotation}deg)`;
+      el.innerHTML = `<div class="line-cap line-cap-start"></div><div class="line-cap line-cap-end"></div>`;
     } else if (data.type === 'text') {
       el.innerHTML = `
         <textarea class="element-text" placeholder="Texte…" maxlength="4000"></textarea>
-        <div class="element-resize-handle"></div>
+        ${anchorsHtml}
       `;
       textEl = el.querySelector('.element-text');
       textEl.value = data.text || '';
@@ -492,16 +887,30 @@
       el.innerHTML = `
         <img class="element-image-img" src="${data.imageData || ''}" draggable="false" alt="">
         <div class="element-resize-handle"></div>
+        ${anchorsHtml}
       `;
+    } else if (data.type === 'rectangle') {
+      el.innerHTML = `
+        <textarea class="element-text element-text-rect" placeholder="" maxlength="4000"></textarea>
+        <div class="element-resize-handle"></div>
+        ${anchorsHtml}
+      `;
+      textEl = el.querySelector('.element-text');
+      textEl.value = data.text || '';
     }
 
     layerEl.appendChild(el);
     const entry = { data, el, textEl };
     elements.set(data.id, entry);
 
-    if (data.type === 'text') { applyTextStyle(entry); applyElementBackground(entry); }
-    if (data.type === 'line') applyLineStyle(entry);
+    if (data.type === 'text') { applyTextStyle(entry); applyElementBackground(entry); applyTextAutoSize(entry); }
+    if (data.type === 'line' || data.type === 'connector') applyLineStyle(entry);
+    if (data.type === 'connector') applyConnectorCaps(entry);
     if (data.type === 'image') applyImageFilters(entry);
+    if (data.type === 'rectangle') applyRectangleStyle(entry);
+    applyLockedState(entry);
+
+    if (data.type === 'connector') { registerConnector(entry); renderConnectorGeometry(entry); }
 
     wireElementInteractions(entry);
     return entry;
@@ -514,15 +923,18 @@
   function removeElementLocal(id) {
     const entry = elements.get(id);
     if (!entry) return;
+    unregisterConnector(entry);
     entry.el.remove();
     elements.delete(id);
     if (selectedElementId === id) selectedElementId = null;
     if (editingElementId === id) editingElementId = null;
+    multiSelectedIds.delete(id);
   }
 
   function applyElementColor(entry) {
     if (entry.data.type === 'text') { if (entry.textEl) entry.textEl.style.color = entry.data.color; }
-    else if (entry.data.type === 'line') applyLineStyle(entry);
+    else if (entry.data.type === 'line' || entry.data.type === 'connector') applyLineStyle(entry);
+    else if (entry.data.type === 'rectangle') applyRectangleStyle(entry);
     else entry.el.style.background = entry.data.color;
   }
 
@@ -545,10 +957,18 @@
     entry.el.style.borderRadius = entry.data.backgroundColor ? '4px' : '0';
   }
 
-  // Trait continu = simple aplat de couleur ; pointillés = dégradé répété le long de la longueur
-  // (l'élément est une barre pivotée, donc "vers la droite" correspond toujours à la longueur du trait).
+  function applyRectangleStyle(entry) {
+    if (entry.data.type !== 'rectangle') return;
+    entry.el.style.background = entry.data.color;
+    entry.el.style.border = entry.data.strokeWidth ? `${entry.data.strokeWidth}px solid ${entry.data.strokeColor || '#1c1c28'}` : 'none';
+    const r = entry.data.radius || 0;
+    entry.el.style.borderRadius = r >= 999 ? '999px' : `${r}px`;
+  }
+
+  // Trait/connecteur continu = simple aplat de couleur ; pointillés = dégradé répété le long de la
+  // longueur (l'élément est une barre pivotée, donc "vers la droite" correspond toujours à sa longueur).
   function applyLineStyle(entry) {
-    if (entry.data.type !== 'line') return;
+    if (entry.data.type !== 'line' && entry.data.type !== 'connector') return;
     const { color, height } = entry.data;
     if (entry.data.lineStyle === 'dashed') {
       const dash = Math.max(6, height * 2.2);
@@ -559,11 +979,33 @@
     }
   }
 
+  function capArrowHtml(color, thickness) {
+    const s = clamp(thickness * 2.4, 10, 20);
+    return `<svg width="${s + 4}" height="${s}" viewBox="0 0 ${s + 4} ${s}"><polygon points="0,0 ${s + 4},${s / 2} 0,${s}" fill="${color}"/></svg>`;
+  }
+
+  function applyConnectorCaps(entry) {
+    if (entry.data.type !== 'connector') return;
+    const startEl = entry.el.querySelector('.line-cap-start');
+    const endEl = entry.el.querySelector('.line-cap-end');
+    if (startEl) startEl.innerHTML = entry.data.startCap === 'arrow' ? capArrowHtml(entry.data.color, entry.data.height) : '';
+    if (endEl) endEl.innerHTML = entry.data.endCap === 'arrow' ? capArrowHtml(entry.data.color, entry.data.height) : '';
+  }
+
   function applyRemoteUpdate(data) {
     const entry = elements.get(data.id);
     if (!entry) { renderElement(data); return; }
     entry.data = data;
+    applyLockedState(entry);
     if (entry.dragging || entry.resizing || entry.cropping) return; // ne pas écraser une interaction locale en cours
+
+    if (data.type === 'connector') {
+      applyLineStyle(entry);
+      applyConnectorCaps(entry);
+      renderConnectorGeometry(entry);
+      refreshToolbarIfSelected(entry);
+      return entry;
+    }
 
     entry.el.style.left = `${data.x}px`;
     entry.el.style.top = `${data.y}px`;
@@ -581,13 +1023,154 @@
       if (document.activeElement !== entry.textEl) entry.textEl.value = data.text || '';
       applyTextStyle(entry);
       applyElementBackground(entry);
+      applyTextAutoSize(entry);
     } else if (data.type === 'image') {
       entry.el.querySelector('.element-image-img').src = data.imageData || '';
       applyImageFilters(entry);
+    } else if (data.type === 'rectangle') {
+      if (document.activeElement !== entry.textEl) entry.textEl.value = data.text || '';
+      applyRectangleStyle(entry);
     }
 
+    updateConnectorsFor(data.id);
     refreshToolbarIfSelected(entry);
     return entry;
+  }
+
+  // ---------- Connecteurs ----------
+
+  function registerConnector(entry) {
+    if (entry.data.type !== 'connector') return;
+    [entry.data.fromElementId, entry.data.toElementId].forEach((elId) => {
+      if (!elId) return;
+      if (!connectorsByElementId.has(elId)) connectorsByElementId.set(elId, new Set());
+      connectorsByElementId.get(elId).add(entry.data.id);
+    });
+  }
+
+  function unregisterConnector(entry) {
+    if (entry.data.type !== 'connector') return;
+    [entry.data.fromElementId, entry.data.toElementId].forEach((elId) => {
+      connectorsByElementId.get(elId)?.delete(entry.data.id);
+    });
+  }
+
+  function updateConnectorsFor(elementId) {
+    const ids = connectorsByElementId.get(elementId);
+    if (!ids || !ids.size) return;
+    ids.forEach((cid) => {
+      const centry = elements.get(cid);
+      if (centry) renderConnectorGeometry(centry);
+    });
+  }
+
+  function connectorAnchorWorldPoint(elId, side) {
+    const entry = elements.get(elId);
+    if (!entry) return null;
+    const d = entry.data;
+    if (side === 'top') return { x: d.x + d.width / 2, y: d.y };
+    if (side === 'bottom') return { x: d.x + d.width / 2, y: d.y + d.height };
+    if (side === 'left') return { x: d.x, y: d.y + d.height / 2 };
+    return { x: d.x + d.width, y: d.y + d.height / 2 };
+  }
+
+  function renderConnectorGeometry(entry) {
+    const from = connectorAnchorWorldPoint(entry.data.fromElementId, entry.data.fromSide);
+    const to = connectorAnchorWorldPoint(entry.data.toElementId, entry.data.toSide);
+    if (!from || !to) return;
+    const dx = to.x - from.x, dy = to.y - from.y;
+    const width = Math.max(2, Math.hypot(dx, dy));
+    const rotation = Math.atan2(dy, dx) * (180 / Math.PI);
+    entry.data.x = from.x;
+    entry.data.y = from.y;
+    entry.data.width = width;
+    entry.data.rotation = rotation;
+    entry.el.style.left = `${from.x}px`;
+    entry.el.style.top = `${from.y}px`;
+    entry.el.style.width = `${width}px`;
+    entry.el.style.transform = `rotate(${rotation}deg)`;
+  }
+
+  function anchorScreenPoint(entry, side) {
+    const r = entry.el.getBoundingClientRect();
+    if (side === 'top') return { x: r.left + r.width / 2, y: r.top };
+    if (side === 'bottom') return { x: r.left + r.width / 2, y: r.bottom };
+    if (side === 'left') return { x: r.left, y: r.top + r.height / 2 };
+    return { x: r.right, y: r.top + r.height / 2 };
+  }
+
+  function startLinking(fromEntry, fromSide, e) {
+    closeConfirmPopover();
+    // Les points d'ancrage d'un élément ne sont visibles (et donc "cliquables") que sur l'élément
+    // sélectionné — mais un seul élément peut être sélectionné à la fois. Pendant le glissement d'un
+    // lien, on montre temporairement les points de TOUS les éléments pour pouvoir viser la cible.
+    document.body.classList.add('is-linking');
+    const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    svg.setAttribute('class', 'link-ghost-svg');
+    svg.innerHTML = '<line class="link-ghost-line" x1="0" y1="0" x2="0" y2="0"/>';
+    document.body.appendChild(svg);
+    const line = svg.querySelector('line');
+
+    const start = anchorScreenPoint(fromEntry, fromSide);
+    line.setAttribute('x1', start.x); line.setAttribute('y1', start.y);
+    line.setAttribute('x2', start.x); line.setAttribute('y2', start.y);
+
+    // Un point d'ancrage de 12px est un petit cible à viser précisément à la souris : plutôt que
+    // d'exiger un survol pixel-perfect (elementFromPoint), on "aimante" vers le point le plus proche
+    // dans un rayon raisonnable, comme le fait Miro/Figma pour les connecteurs.
+    const SNAP_RADIUS = 22;
+    function currentAnchorUnderPointer(ev) {
+      let closest = null, closestDist = SNAP_RADIUS;
+      document.querySelectorAll('.connector-anchor').forEach((dot) => {
+        if (getComputedStyle(dot).display === 'none') return;
+        const hostEl = dot.closest('.element');
+        if (!hostEl || hostEl.dataset.id === fromEntry.data.id) return;
+        const r = dot.getBoundingClientRect();
+        const dist = Math.hypot(ev.clientX - (r.left + r.width / 2), ev.clientY - (r.top + r.height / 2));
+        if (dist < closestDist) { closestDist = dist; closest = dot; }
+      });
+      return closest;
+    }
+
+    function onMove(ev) {
+      line.setAttribute('x2', ev.clientX); line.setAttribute('y2', ev.clientY);
+      document.querySelectorAll('.connector-anchor.is-hover-target').forEach(d => d.classList.remove('is-hover-target'));
+      const dot = currentAnchorUnderPointer(ev);
+      if (dot) dot.classList.add('is-hover-target');
+    }
+
+    function onUp(ev) {
+      window.removeEventListener('pointermove', onMove);
+      window.removeEventListener('pointerup', onUp);
+      // Chercher l'ancre cible AVANT de retirer la classe is-linking : c'est elle qui rend les
+      // ancres des éléments non sélectionnés visibles/détectables pendant le geste.
+      const dot = currentAnchorUnderPointer(ev);
+      document.body.classList.remove('is-linking');
+      svg.remove();
+      document.querySelectorAll('.connector-anchor.is-hover-target').forEach(d => d.classList.remove('is-hover-target'));
+      if (!dot) return;
+      const toEl = dot.closest('.element');
+      const toId = toEl.dataset.id;
+      const toSide = dot.dataset.side;
+      Api.createElement({
+        type: 'connector', fromElementId: fromEntry.data.id, fromSide, toElementId: toId, toSide,
+        color: '#1c1c28', height: 2, lineStyle: 'solid', endCap: 'arrow', startCap: 'none',
+      }).catch(err => alert(err.message));
+    }
+
+    window.addEventListener('pointermove', onMove);
+    window.addEventListener('pointerup', onUp);
+  }
+
+  function wireConnectorAnchors(entry) {
+    if (!BOX_TYPES.includes(entry.data.type)) return;
+    entry.el.querySelectorAll('.connector-anchor').forEach((dot) => {
+      dot.addEventListener('pointerdown', (e) => {
+        if (entry.data.locked) return;
+        e.stopPropagation();
+        startLinking(entry, dot.dataset.side, e);
+      });
+    });
   }
 
   // ---------- Interactions communes (barre d'outils, glisser, édition, redimensionnement) ----------
@@ -603,7 +1186,9 @@
       type: d.type, x: d.x + 24, y: d.y + 24, width: d.width, height: d.height, rotation: d.rotation,
       color: d.color, text: d.text, fontSize: d.fontSize, bold: d.bold, italic: d.italic,
       underline: d.underline, strikethrough: d.strikethrough, imageData: d.imageData, grayscale: d.grayscale,
-      lineStyle: d.lineStyle, backgroundColor: d.backgroundColor,
+      lineStyle: d.lineStyle, backgroundColor: d.backgroundColor, strokeWidth: d.strokeWidth, strokeColor: d.strokeColor,
+      radius: d.radius, startCap: d.startCap, endCap: d.endCap,
+      fromElementId: d.fromElementId, fromSide: d.fromSide, toElementId: d.toElementId, toSide: d.toSide,
     }).catch(err => alert(err.message));
   }
 
@@ -652,6 +1237,7 @@
         entry.data[key] = !entry.data[key];
         btn.classList.toggle('is-active', entry.data[key]);
         applyTextStyle(entry);
+        if (key === 'bold' || key === 'italic') applyTextAutoSize(entry);
         Api.updateElement(entry.data.id, { [key]: entry.data[key] }).catch(() => {});
       });
     });
@@ -670,6 +1256,7 @@
         entry.data.lineStyle = style;
         entry.el.style.height = `${h}px`;
         applyLineStyle(entry);
+        if (entry.data.type === 'connector') applyConnectorCaps(entry);
         popover.querySelectorAll('.toolbar-thickness-option').forEach(o => o.classList.remove('is-active'));
         opt.classList.add('is-active');
         const preview = trigger.querySelector('.toolbar-thickness-preview');
@@ -682,20 +1269,93 @@
     });
   }
 
+  function wireStrokeWidthDropdown(entry) {
+    const parts = wireDropdownToggle('strokewidth');
+    if (!parts) return;
+    const { trigger, popover } = parts;
+    popover.querySelectorAll('.toolbar-thickness-option').forEach((opt) => {
+      opt.addEventListener('pointerdown', e => e.stopPropagation());
+      opt.addEventListener('click', () => {
+        const w = Number(opt.dataset.strokewidth);
+        entry.data.strokeWidth = w;
+        applyRectangleStyle(entry);
+        popover.querySelectorAll('.toolbar-thickness-option').forEach(o => o.classList.remove('is-active'));
+        opt.classList.add('is-active');
+        const preview = trigger.querySelector('.toolbar-thickness-preview');
+        preview.style.height = `${w ? clamp(w, 2, 10) : 2}px`;
+        preview.style.opacity = w ? 1 : 0.35;
+        popover.classList.remove('is-open');
+        Api.updateElement(entry.data.id, { strokeWidth: w }).catch(() => {});
+      });
+    });
+  }
+
+  function wireRadiusDropdown(entry) {
+    const parts = wireDropdownToggle('radius');
+    if (!parts) return;
+    const { popover } = parts;
+    popover.querySelectorAll('[data-radius]').forEach((opt) => {
+      opt.addEventListener('pointerdown', e => e.stopPropagation());
+      opt.addEventListener('click', () => {
+        const r = Number(opt.dataset.radius);
+        entry.data.radius = r;
+        applyRectangleStyle(entry);
+        popover.querySelectorAll('[data-radius]').forEach(o => o.classList.remove('is-active'));
+        opt.classList.add('is-active');
+        popover.classList.remove('is-open');
+        Api.updateElement(entry.data.id, { radius: r }).catch(() => {});
+      });
+    });
+  }
+
   function wireToolbarControls(entry) {
     const id = entry.data.id;
     const type = entry.data.type;
 
-    if (type === 'note' || type === 'line' || type === 'text') {
+    if (type === 'note' || type === 'line' || type === 'text' || type === 'rectangle' || type === 'connector') {
       wireColorDropdown(entry, 'color', (color) => {
         entry.data.color = color;
         applyElementColor(entry);
+        if (type === 'connector') applyConnectorCaps(entry);
         Api.updateElement(id, { color }).catch(err => alert(err.message));
       });
     }
 
-    if (type === 'line') {
+    if (type === 'line' || type === 'connector') {
       wireThicknessDropdown(entry);
+    }
+
+    if (type === 'connector') {
+      const startBtn = toolbarEl.querySelector('.element-arrow-start-btn');
+      if (startBtn) {
+        startBtn.addEventListener('pointerdown', e => e.stopPropagation());
+        startBtn.addEventListener('click', () => {
+          entry.data.startCap = entry.data.startCap === 'arrow' ? 'none' : 'arrow';
+          startBtn.classList.toggle('is-active', entry.data.startCap === 'arrow');
+          applyConnectorCaps(entry);
+          Api.updateElement(id, { startCap: entry.data.startCap }).catch(() => {});
+        });
+      }
+      const endBtn = toolbarEl.querySelector('.element-arrow-end-btn');
+      if (endBtn) {
+        endBtn.addEventListener('pointerdown', e => e.stopPropagation());
+        endBtn.addEventListener('click', () => {
+          entry.data.endCap = entry.data.endCap === 'arrow' ? 'none' : 'arrow';
+          endBtn.classList.toggle('is-active', entry.data.endCap === 'arrow');
+          applyConnectorCaps(entry);
+          Api.updateElement(id, { endCap: entry.data.endCap }).catch(() => {});
+        });
+      }
+    }
+
+    if (type === 'rectangle') {
+      wireColorDropdown(entry, 'stroke', (color) => {
+        entry.data.strokeColor = color;
+        applyRectangleStyle(entry);
+        Api.updateElement(id, { strokeColor: color }).catch(() => {});
+      });
+      wireStrokeWidthDropdown(entry);
+      wireRadiusDropdown(entry);
     }
 
     if (type === 'text') {
@@ -712,7 +1372,8 @@
           const size = Number(fontSizeSelect.value);
           entry.data.fontSize = size;
           applyTextStyle(entry);
-          Api.updateElement(id, { fontSize: size }).catch(() => {});
+          applyTextAutoSize(entry);
+          Api.updateElement(id, { fontSize: size, width: entry.data.width, height: entry.data.height }).catch(() => {});
         });
       }
     }
@@ -753,22 +1414,28 @@
       editingElementId = null;
       if (save) {
         entry.data.text = textEl.value;
-        Api.updateElement(id, { text: textEl.value }).catch(() => {});
+        const patch = { text: textEl.value };
+        if (entry.data.type === 'text') { patch.width = entry.data.width; patch.height = entry.data.height; }
+        Api.updateElement(id, patch).catch(() => {});
       }
     }
 
     let textSaveTimer = null;
     textEl.addEventListener('input', () => {
+      entry.data.text = textEl.value;
+      if (entry.data.type === 'text') applyTextAutoSize(entry);
       clearTimeout(textSaveTimer);
       textSaveTimer = setTimeout(() => {
-        entry.data.text = textEl.value;
-        Api.updateElement(id, { text: textEl.value }).catch(() => {});
+        const patch = { text: textEl.value };
+        if (entry.data.type === 'text') { patch.width = entry.data.width; patch.height = entry.data.height; }
+        Api.updateElement(id, patch).catch(() => {});
       }, 600);
     });
     textEl.addEventListener('blur', () => { clearTimeout(textSaveTimer); stopEditing(true); });
     textEl.addEventListener('pointerdown', (e) => { if (el.classList.contains('is-editing')) e.stopPropagation(); });
 
     entry.enterEditing = function enterEditing() {
+      if (entry.data.locked) return;
       selectElement(id);
       editingElementId = id;
       el.classList.add('is-editing');
@@ -777,14 +1444,100 @@
     };
   }
 
+  // Déplacement groupé : utilisé à la fois pour un déplacement multi-sélection (rectangle de
+  // sélection) et pour un groupe permanent (grouper) — un geste sur un seul membre déplace tout le
+  // lot ensemble.
+  function activeGroupIdsFor(entry) {
+    if (entry.data.groupId) {
+      const members = groupMembers(entry.data.groupId);
+      if (members.length > 1) return members;
+    }
+    if (multiSelectedIds.has(entry.data.id) && multiSelectedIds.size > 1) return [...multiSelectedIds];
+    return null;
+  }
+
+  function startGroupDrag(ids, entry, e) {
+    const isRealGroup = !!entry.data.groupId;
+    const startScreen = { x: e.clientX, y: e.clientY };
+    const startPositions = new Map();
+    ids.forEach((mid) => {
+      const en = elements.get(mid);
+      if (en) startPositions.set(mid, { x: en.data.x, y: en.data.y });
+    });
+    let moved = false;
+    let lastLive = 0;
+
+    function onMove(ev) {
+      const dxScreen = ev.clientX - startScreen.x;
+      const dyScreen = ev.clientY - startScreen.y;
+      if (!moved && (Math.abs(dxScreen) > 4 || Math.abs(dyScreen) > 4)) moved = true;
+      if (!moved) return;
+      ids.forEach((mid) => {
+        const en = elements.get(mid);
+        const start = startPositions.get(mid);
+        if (!en || !start) return;
+        const nx = start.x + dxScreen / zoom;
+        const ny = start.y + dyScreen / zoom;
+        en.data.x = nx; en.data.y = ny;
+        en.el.style.left = `${nx}px`; en.el.style.top = `${ny}px`;
+        en.dragging = true;
+        en.el.classList.add('is-dragging');
+        updateConnectorsFor(mid);
+      });
+      repositionMultiToolbar();
+      const now = Date.now();
+      if (now - lastLive > 40) {
+        lastLive = now;
+        ids.forEach((mid) => { const en = elements.get(mid); if (en) Api.liveElement(mid, { x: en.data.x, y: en.data.y }); });
+      }
+    }
+
+    function onUp() {
+      window.removeEventListener('pointermove', onMove);
+      window.removeEventListener('pointerup', onUp);
+      ids.forEach((mid) => {
+        const en = elements.get(mid);
+        if (!en) return;
+        en.dragging = false;
+        en.el.classList.remove('is-dragging');
+      });
+      if (moved) {
+        ids.forEach((mid) => {
+          const en = elements.get(mid);
+          if (en) Api.updateElement(mid, { x: en.data.x, y: en.data.y, bringToFront: true }).then(applyRemoteUpdate).catch(() => {});
+        });
+      } else if (!isRealGroup) {
+        clearMultiSelection();
+        selectElement(entry.data.id);
+      }
+    }
+
+    window.addEventListener('pointermove', onMove);
+    window.addEventListener('pointerup', onUp);
+  }
+
   function wireBodyDrag(entry) {
     const { el } = entry;
     const id = entry.data.id;
     let dragState = null;
 
     el.addEventListener('pointerdown', (e) => {
-      if (e.target.closest('.element-resize-handle') || e.target.closest('.element-line-handle')) return;
-      if (el.classList.contains('is-editing') || entry.cropping) return;
+      if (e.target.closest('.element-resize-handle') || e.target.closest('.element-line-handle') || e.target.closest('.connector-anchor')) return;
+      if (entry.data.locked) { e.stopPropagation(); startUnlockHold(entry, e); return; }
+      if (entry.cropping) return;
+      // Pas de garde sur is-editing ici : un clic sur le textarea lui-même stoppe déjà la
+      // propagation (cf. wireTextEditing) quand on édite, donc seul un clic sur le bord — hors
+      // textarea — arrive jusqu'ici, et il doit pouvoir démarrer un glisser même en édition.
+
+      const groupIds = activeGroupIdsFor(entry);
+      if (groupIds) {
+        e.stopPropagation();
+        closeConfirmPopover();
+        setMultiSelection(groupIds);
+        startGroupDrag(groupIds, entry, e);
+        return;
+      }
+
       e.stopPropagation();
       selectElement(id);
       closeConfirmPopover();
@@ -812,6 +1565,7 @@
       el.style.left = `${newX}px`;
       el.style.top = `${newY}px`;
       repositionToolbar(entry);
+      updateConnectorsFor(id);
       const now = Date.now();
       if (now - (entry._lastLive || 0) > 40) {
         entry._lastLive = now;
@@ -832,6 +1586,17 @@
         entry.enterEditing();
       }
     });
+
+    // Double-clic : entre en édition même si l'élément appartient à un groupe (sinon un clic simple
+    // sur un membre de groupe sélectionne toujours tout le groupe, sans moyen d'éditer son texte).
+    if (entry.enterEditingBypassGroup !== false) {
+      el.addEventListener('dblclick', (e) => {
+        if (entry.data.locked || !entry.enterEditing) return;
+        e.stopPropagation();
+        clearMultiSelection();
+        entry.enterEditing();
+      });
+    }
   }
 
   function wireCornerResize(entry) {
@@ -841,7 +1606,7 @@
     let resizeState = null;
 
     handle.addEventListener('pointerdown', (e) => {
-      if (entry.cropping) return;
+      if (entry.cropping || entry.data.locked) return;
       e.stopPropagation();
       selectElement(entry.data.id);
       resizeState = {
@@ -872,6 +1637,7 @@
       entry.el.style.width = `${newW}px`;
       entry.el.style.height = `${newH}px`;
       repositionToolbar(entry);
+      updateConnectorsFor(entry.data.id);
       const now = Date.now();
       if (now - (entry._lastLive || 0) > 40) {
         entry._lastLive = now;
@@ -897,6 +1663,7 @@
     let state = null;
 
     handle.addEventListener('pointerdown', (e) => {
+      if (entry.data.locked) return;
       e.stopPropagation();
       selectElement(entry.data.id);
       state = { pointerId: e.pointerId };
@@ -935,11 +1702,21 @@
     });
   }
 
+  function wireConnectorSelect(entry) {
+    entry.el.addEventListener('pointerdown', (e) => {
+      e.stopPropagation();
+      selectElement(entry.data.id);
+      closeConfirmPopover();
+    });
+  }
+
   function wireElementInteractions(entry) {
-    if (entry.data.type === 'note' || entry.data.type === 'text') wireTextEditing(entry);
+    if (entry.data.type === 'connector') { wireConnectorSelect(entry); return; }
+    if (entry.data.type === 'note' || entry.data.type === 'text' || entry.data.type === 'rectangle') wireTextEditing(entry);
+    wireConnectorAnchors(entry);
     wireBodyDrag(entry);
     if (entry.data.type === 'line') wireLineHandle(entry);
-    else wireCornerResize(entry);
+    else if (entry.data.type !== 'text') wireCornerResize(entry);
   }
 
   // ---------- Rognage d'image ----------
@@ -948,7 +1725,7 @@
   // interaction plus simple qu'un rectangle à la fois déplaçable et redimensionnable.
 
   function enterCropMode(entry) {
-    if (entry.data.type !== 'image' || entry.cropping) return;
+    if (entry.data.type !== 'image' || entry.cropping || entry.data.locked) return;
     closeConfirmPopover();
     hideToolbar();
     entry.cropping = true;
@@ -1069,6 +1846,7 @@
     imgEl.src = newImageData;
 
     exitCropMode(entry);
+    updateConnectorsFor(entry.data.id);
 
     Api.updateElement(entry.data.id, {
       imageData: newImageData, width: cropDisplayW, height: cropDisplayH, x: newX, y: newY, bringToFront: true,
@@ -1091,6 +1869,7 @@
       entry.data.rotation = rotation;
       entry.el.style.transform = `rotate(${rotation}deg)`;
     }
+    updateConnectorsFor(id);
     if (selectedElementId === id) repositionToolbar(entry);
   });
 
@@ -1104,6 +1883,9 @@
     centerView();
     applyTransform();
     whiteboard.elements.forEach(renderElement);
+    // Second passage : un connecteur peut avoir été rendu avant ses deux ancres (ordre par z_index),
+    // on recalcule donc sa géométrie une fois tous les éléments présents.
+    elements.forEach((entry) => { if (entry.data.type === 'connector') renderConnectorGeometry(entry); });
     didInitialCenter = true;
 
     Realtime.connect({ toScreen: worldToScreen });

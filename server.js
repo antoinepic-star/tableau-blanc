@@ -81,7 +81,10 @@ const ELEMENT_DEFAULTS = {
   line: { width: 160, height: 6, color: '#1c1c28' },
   text: { width: 220, height: 60, color: '#1c1c28', fontSize: 18 },
   image: { width: 240, height: 240, color: null },
+  rectangle: { width: 220, height: 140, color: ELEMENT_COLORS[0] },
+  connector: { width: 0, height: 0, color: '#1c1c28' },
 };
+const ELEMENT_TYPES = Object.keys(ELEMENT_DEFAULTS);
 
 async function initDb() {
   // Table historique (avant l'ajout des traits/textes/images) : renommée une fois, sans effet
@@ -124,6 +127,15 @@ async function initDb() {
       end_cap TEXT NOT NULL DEFAULT 'none',
       line_style TEXT NOT NULL DEFAULT 'solid',
       background_color TEXT,
+      stroke_width REAL NOT NULL DEFAULT 0,
+      stroke_color TEXT,
+      radius REAL NOT NULL DEFAULT 0,
+      group_id TEXT,
+      locked INTEGER NOT NULL DEFAULT 0,
+      from_element_id TEXT,
+      from_side TEXT,
+      to_element_id TEXT,
+      to_side TEXT,
       z_index INTEGER NOT NULL DEFAULT 0,
       created_at INTEGER DEFAULT (unixepoch()),
       updated_at INTEGER DEFAULT (unixepoch()),
@@ -152,6 +164,15 @@ async function initDb() {
     "ALTER TABLE whiteboard_elements ADD COLUMN end_cap TEXT NOT NULL DEFAULT 'none'",
     "ALTER TABLE whiteboard_elements ADD COLUMN line_style TEXT NOT NULL DEFAULT 'solid'",
     'ALTER TABLE whiteboard_elements ADD COLUMN background_color TEXT',
+    'ALTER TABLE whiteboard_elements ADD COLUMN stroke_width REAL NOT NULL DEFAULT 0',
+    'ALTER TABLE whiteboard_elements ADD COLUMN stroke_color TEXT',
+    'ALTER TABLE whiteboard_elements ADD COLUMN radius REAL NOT NULL DEFAULT 0',
+    'ALTER TABLE whiteboard_elements ADD COLUMN group_id TEXT',
+    'ALTER TABLE whiteboard_elements ADD COLUMN locked INTEGER NOT NULL DEFAULT 0',
+    'ALTER TABLE whiteboard_elements ADD COLUMN from_element_id TEXT',
+    'ALTER TABLE whiteboard_elements ADD COLUMN from_side TEXT',
+    'ALTER TABLE whiteboard_elements ADD COLUMN to_element_id TEXT',
+    'ALTER TABLE whiteboard_elements ADD COLUMN to_side TEXT',
   ]) {
     try { await turso.execute(sql); } catch (_) {}
   }
@@ -511,7 +532,7 @@ app.post('/api/whiteboards/:whiteboardId/cursor', whiteboardAuth, (req, res) => 
 // TABLEAU : ÉLÉMENTS (post-it, trait, texte, image)
 // =====================
 
-const ELEMENT_LABELS = { note: 'post-it', line: 'trait', text: 'bloc de texte', image: 'image' };
+const ELEMENT_LABELS = { note: 'post-it', line: 'trait', text: 'bloc de texte', image: 'image', rectangle: 'rectangle', connector: 'connecteur' };
 
 function parseElement(row) {
   return {
@@ -535,6 +556,15 @@ function parseElement(row) {
     endCap: row.end_cap,
     lineStyle: row.line_style,
     backgroundColor: row.background_color,
+    strokeWidth: row.stroke_width,
+    strokeColor: row.stroke_color,
+    radius: row.radius,
+    groupId: row.group_id,
+    locked: !!row.locked,
+    fromElementId: row.from_element_id,
+    fromSide: row.from_side,
+    toElementId: row.to_element_id,
+    toSide: row.to_side,
     zIndex: row.z_index,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
@@ -556,23 +586,27 @@ app.get('/api/whiteboards/:whiteboardId', whiteboardAuth, ah(async (req, res) =>
 }));
 
 app.post('/api/whiteboards/:whiteboardId/elements', whiteboardAuth, ah(async (req, res) => {
-  const type = ['note', 'line', 'text', 'image'].includes(req.body?.type) ? req.body.type : 'note';
+  const type = ELEMENT_TYPES.includes(req.body?.type) ? req.body.type : 'note';
   const defaults = ELEMENT_DEFAULTS[type];
   const {
     x, y, width, height, rotation, color, text, fontSize, bold, italic, underline, strikethrough, imageData, grayscale,
-    startCap, endCap, lineStyle, backgroundColor,
+    startCap, endCap, lineStyle, backgroundColor, strokeWidth, strokeColor, radius, groupId, locked,
+    fromElementId, fromSide, toElementId, toSide,
   } = req.body || {};
   const { max } = await tursoGet('SELECT MAX(z_index) as max FROM whiteboard_elements WHERE whiteboard_id = ?', [req.params.whiteboardId]);
   const zIndex = (max ?? -1) + 1;
   const id = uuidv4();
   const columns = ['id', 'whiteboard_id', 'type', 'x', 'y', 'width', 'height', 'rotation', 'color', 'text', 'font_size',
-    'bold', 'italic', 'underline', 'strikethrough', 'image_data', 'grayscale', 'start_cap', 'end_cap', 'line_style', 'background_color', 'z_index'];
+    'bold', 'italic', 'underline', 'strikethrough', 'image_data', 'grayscale', 'start_cap', 'end_cap', 'line_style', 'background_color',
+    'stroke_width', 'stroke_color', 'radius', 'group_id', 'locked', 'from_element_id', 'from_side', 'to_element_id', 'to_side', 'z_index'];
   const values = [
     id, req.params.whiteboardId, type, x ?? 0, y ?? 0,
     width ?? defaults.width, height ?? defaults.height, rotation ?? 0,
     color ?? defaults.color ?? '#1c1c28', text || '', fontSize ?? defaults.fontSize ?? null,
     bold ? 1 : 0, italic ? 1 : 0, underline ? 1 : 0, strikethrough ? 1 : 0, imageData || null, grayscale ? 1 : 0,
-    startCap || 'none', endCap || 'none', lineStyle || 'solid', backgroundColor || null, zIndex,
+    startCap || 'none', endCap || 'none', lineStyle || 'solid', backgroundColor || null,
+    strokeWidth ?? 0, strokeColor || null, radius ?? 0, groupId || null, locked ? 1 : 0,
+    fromElementId || null, fromSide || null, toElementId || null, toSide || null, zIndex,
   ];
   await tursoRun(
     `INSERT INTO whiteboard_elements (${columns.join(', ')}) VALUES (${columns.map(() => '?').join(', ')})`,
@@ -596,6 +630,7 @@ app.patch('/api/whiteboards/:whiteboardId/elements/:id', whiteboardAuth, ah(asyn
   const {
     x, y, width, height, rotation, color, text, fontSize, bold, italic, underline, strikethrough, imageData, grayscale,
     startCap, endCap, lineStyle, backgroundColor, bringToFront,
+    strokeWidth, strokeColor, radius, groupId, locked, fromElementId, fromSide, toElementId, toSide,
   } = req.body || {};
 
   let zIndex = existing.z_index;
@@ -623,6 +658,15 @@ app.patch('/api/whiteboards/:whiteboardId/elements/:id', whiteboardAuth, ah(asyn
     end_cap: endCap ?? existing.end_cap,
     line_style: lineStyle ?? existing.line_style,
     background_color: backgroundColor !== undefined ? backgroundColor : existing.background_color,
+    stroke_width: strokeWidth ?? existing.stroke_width,
+    stroke_color: strokeColor !== undefined ? strokeColor : existing.stroke_color,
+    radius: radius ?? existing.radius,
+    group_id: groupId !== undefined ? groupId : existing.group_id,
+    locked: locked != null ? (locked ? 1 : 0) : existing.locked,
+    from_element_id: fromElementId !== undefined ? fromElementId : existing.from_element_id,
+    from_side: fromSide !== undefined ? fromSide : existing.from_side,
+    to_element_id: toElementId !== undefined ? toElementId : existing.to_element_id,
+    to_side: toSide !== undefined ? toSide : existing.to_side,
     z_index: zIndex,
   };
   const setColumns = Object.keys(next);
@@ -648,7 +692,17 @@ app.post('/api/whiteboards/:whiteboardId/elements/:id/live', whiteboardAuth, (re
 app.delete('/api/whiteboards/:whiteboardId/elements/:id', whiteboardAuth, ah(async (req, res) => {
   const existing = await tursoGet('SELECT * FROM whiteboard_elements WHERE id = ? AND whiteboard_id = ?', [req.params.id, req.params.whiteboardId]);
   if (!existing) return res.status(404).json({ error: 'Introuvable' });
+  // Un connecteur ancré à cet élément n'a plus de sens une fois l'élément supprimé — on le supprime
+  // en cascade et on informe les autres clients pour qu'ils retirent le trait de leur canvas.
+  const orphanConnectors = await tursoAll(
+    'SELECT id FROM whiteboard_elements WHERE whiteboard_id = ? AND type = ? AND (from_element_id = ? OR to_element_id = ?)',
+    [req.params.whiteboardId, 'connector', req.params.id, req.params.id]
+  );
   await tursoRun('DELETE FROM whiteboard_elements WHERE id = ?', [req.params.id]);
+  for (const c of orphanConnectors) {
+    await tursoRun('DELETE FROM whiteboard_elements WHERE id = ?', [c.id]);
+    broadcast('element:deleted', { id: c.id }, req.params.whiteboardId);
+  }
   const whiteboard = await tursoGet('SELECT client_name, workshop_name FROM whiteboards WHERE id = ?', [req.params.whiteboardId]);
   await logActivity('element_deleted', req.user.name, whiteboard?.client_name, whiteboard?.workshop_name, `${ELEMENT_LABELS[existing.type]} supprimé`);
   await touchWhiteboard(req.params.whiteboardId);
