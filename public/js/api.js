@@ -59,5 +59,8 @@ const Api = (() => {
     liveElement: (id, patch) => request('POST', `${base}/elements/${id}/live`, patch).catch(() => {}),
     deleteElement: (id) => request('DELETE', `${base}/elements/${id}`),
     sendCursor: (x, y) => request('POST', `${base}/cursor`, { x, y }).catch(() => {}),
+    toggleReaction: (elementId, emoji) => request('POST', `${base}/elements/${elementId}/reactions`, { emoji }),
+    getComments: (elementId) => request('GET', `${base}/elements/${elementId}/comments`),
+    createComment: (elementId, text) => request('POST', `${base}/elements/${elementId}/comments`, { text }),
   };
 })();

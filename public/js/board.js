@@ -19,6 +19,8 @@
   const TEXT_MIN_CONTENT_WIDTH = 30;
   const BOX_TYPES = ['note', 'text', 'image', 'rectangle']; // types "boîte" (points d'ancrage pour les connecteurs)
   const UNLOCK_HOLD_MS = 2000;
+  const REACTION_EMOJIS = ['❤️', '✅', '👍', '🔥', '🚀', '💡', '🤷‍♂️', '❌'];
+  const COMMENT_RELATIVE_DAYS = 7; // au-delà, on affiche la date plutôt que "il y a X jours"
 
   const viewportEl = document.getElementById('canvasViewport');
   const layerEl = document.getElementById('canvasLayer');
@@ -30,6 +32,12 @@
   const addDrawerCloseBtn = document.getElementById('addDrawerCloseBtn');
   const imageFileInput = document.getElementById('imageFileInput');
   const toolbarEl = document.getElementById('elementToolbar');
+  const commentDrawer = document.getElementById('commentDrawer');
+  const commentDrawerOverlay = document.getElementById('commentDrawerOverlay');
+  const commentDrawerCloseBtn = document.getElementById('commentDrawerCloseBtn');
+  const commentDrawerBody = document.getElementById('commentDrawerBody');
+  const commentInput = document.getElementById('commentInput');
+  const commentSendBtn = document.getElementById('commentSendBtn');
 
   const elements = new Map(); // id -> { data, el, textEl? }
   const connectorsByElementId = new Map(); // elementId -> Set<connectorId>
@@ -38,6 +46,8 @@
   let creationCount = 0;
   let editingElementId = null;
   let selectedElementId = null;
+  let myName = null;
+  let activeCommentElementId = null;
   let multiSelectedIds = new Set();
   let didInitialCenter = false;
   let pendingImagePlacement = null;
@@ -585,6 +595,9 @@
     const sep = controls ? '<span class="element-toolbar-sep"></span>' : '';
     return `
       ${controls}${sep}
+      ${reactionDropdownHtml(data)}
+      <button type="button" class="element-icon-btn element-comment-btn" title="Commenter">${iconComment()}</button>
+      <span class="element-toolbar-sep"></span>
       <button type="button" class="element-icon-btn element-lock-btn" title="Verrouiller">${iconLock()}</button>
       <button type="button" class="element-icon-btn element-duplicate-btn" title="Dupliquer">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15H4a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h10a1 1 0 0 1 1 1v1"/></svg>
@@ -619,6 +632,24 @@
   function iconGroup() { return '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="9" height="9" rx="1.5"/><rect x="12" y="12" width="9" height="9" rx="1.5"/></svg>'; }
   function iconUngroup() { return '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="2" width="8" height="8" rx="1.5"/><rect x="14" y="14" width="8" height="8" rx="1.5"/><line x1="9.5" y1="9.5" x2="14.5" y2="14.5" stroke-dasharray="2 2"/></svg>'; }
   function iconLock() { return '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>'; }
+  function iconComment() { return '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H8l-5 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>'; }
+  function iconReaction() { return '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M8 13.5s1.5 2 4 2 4-2 4-2"/><line x1="9" y1="9.5" x2="9.01" y2="9.5"/><line x1="15" y1="9.5" x2="15.01" y2="9.5"/></svg>'; }
+
+  // Un seul bouton "réagir" avec un popover d'émojis (même schéma que les popovers de couleur) : le
+  // déclencheur affiche l'émoji choisi par CE participant s'il y en a un, sinon une icône neutre.
+  function reactionDropdownHtml(data) {
+    const mine = (data.reactions || []).find(r => r.actorName === myName);
+    return `
+      <div class="toolbar-dropdown" data-role="reaction-wrap">
+        <button type="button" class="toolbar-dropdown-trigger" data-role="reaction-trigger" title="Réagir">
+          ${mine ? `<span class="toolbar-reaction-current">${mine.emoji}</span>` : iconReaction()}
+        </button>
+        <div class="toolbar-popover toolbar-reaction-popover" data-role="reaction-popover">
+          ${REACTION_EMOJIS.map(e => `<button type="button" class="toolbar-reaction-option${mine && mine.emoji === e ? ' is-active' : ''}" data-emoji="${e}">${e}</button>`).join('')}
+        </div>
+      </div>
+    `;
+  }
 
   function groupMembers(groupId) {
     if (!groupId) return [];
@@ -899,6 +930,28 @@
     }
   }
 
+  // Petites pastilles accrochées sous l'élément (réactions groupées par émoji + nombre de
+  // commentaires), toujours visibles — pas seulement à la sélection — pour rester repérables
+  // au premier coup d'œil, comme sur Miro/Figma.
+  function updateElementBadges(entry) {
+    const reactions = entry.data.reactions || [];
+    const commentCount = entry.data.commentCount || 0;
+    let badges = entry.el.querySelector('.element-badges');
+    if (!reactions.length && !commentCount) { if (badges) badges.remove(); return; }
+    if (!badges) {
+      badges = document.createElement('div');
+      badges.className = 'element-badges';
+      entry.el.appendChild(badges);
+    }
+    const counts = new Map();
+    reactions.forEach((r) => counts.set(r.emoji, (counts.get(r.emoji) || 0) + 1));
+    const chips = [...counts.entries()]
+      .map(([emoji, n]) => `<span class="element-badge-chip">${emoji}${n > 1 ? ` ${n}` : ''}</span>`)
+      .join('');
+    const commentChip = commentCount ? `<span class="element-badge-chip">${iconComment()} ${commentCount}</span>` : '';
+    badges.innerHTML = chips + commentChip;
+  }
+
   function wireUnlockButton(entry) {
     const btn = toolbarEl.querySelector('.unlock-hold-btn');
     if (!btn) return;
@@ -1018,6 +1071,7 @@
     if (data.type === 'image') applyImageFilters(entry);
     if (data.type === 'rectangle') { applyRectangleStyle(entry); autoGrowRectangleTextarea(entry); }
     applyLockedState(entry);
+    updateElementBadges(entry);
 
     if (data.type === 'connector') { registerConnector(entry); renderConnectorGeometry(entry); }
 
@@ -1117,8 +1171,15 @@
   function applyRemoteUpdate(data) {
     const entry = elements.get(data.id);
     if (!entry) { renderElement(data); return; }
+    // Le PATCH élément (déplacement, couleur, etc.) ne renvoie pas les réactions/commentaires — ce
+    // n'est pas son rôle — donc on les préserve explicitement au lieu de les perdre en écrasant data.
+    const prevReactions = entry.data.reactions;
+    const prevCommentCount = entry.data.commentCount;
     entry.data = data;
+    if (data.reactions === undefined) entry.data.reactions = prevReactions;
+    if (data.commentCount === undefined) entry.data.commentCount = prevCommentCount;
     applyLockedState(entry);
+    updateElementBadges(entry);
     if (entry.dragging || entry.resizing || entry.cropping) return; // ne pas écraser une interaction locale en cours
 
     if (data.type === 'connector') {
@@ -1350,6 +1411,27 @@
     });
   }
 
+  // Un seul émoji par participant : le serveur gère lui-même le "toggle/remplace" et renvoie la
+  // liste à jour, qu'on applique directement (la même mise à jour arrive aussi en écho par SSE,
+  // sans effet puisqu'elle pose la même liste).
+  function wireReactionDropdown(entry) {
+    const parts = wireDropdownToggle('reaction');
+    if (!parts) return;
+    const { popover } = parts;
+    popover.querySelectorAll('.toolbar-reaction-option').forEach((opt) => {
+      opt.addEventListener('pointerdown', e => e.stopPropagation());
+      opt.addEventListener('click', () => {
+        const emoji = opt.dataset.emoji;
+        popover.classList.remove('is-open');
+        Api.toggleReaction(entry.data.id, emoji).then(({ reactions }) => {
+          entry.data.reactions = reactions;
+          updateElementBadges(entry);
+          refreshToolbarIfSelected(entry);
+        }).catch(() => {});
+      });
+    });
+  }
+
   function wireFormatDropdown(entry) {
     const parts = wireDropdownToggle('format');
     if (!parts) return;
@@ -1519,6 +1601,13 @@
         cropBtn.addEventListener('pointerdown', e => e.stopPropagation());
         cropBtn.addEventListener('click', () => enterCropMode(entry));
       }
+    }
+
+    wireReactionDropdown(entry);
+    const commentBtn = toolbarEl.querySelector('.element-comment-btn');
+    if (commentBtn) {
+      commentBtn.addEventListener('pointerdown', e => e.stopPropagation());
+      commentBtn.addEventListener('click', () => openCommentDrawer(entry));
     }
 
     const lockBtn = toolbarEl.querySelector('.element-lock-btn');
@@ -2016,6 +2105,104 @@
     }).then(applyRemoteUpdate).catch(err => alert(err.message));
   }
 
+  // ---------- Commentaires (drawer par élément) ----------
+
+  function formatRelativeTime(unixSeconds) {
+    const now = Date.now() / 1000;
+    const diff = Math.max(0, now - unixSeconds);
+    if (diff < 60) return "à l'instant";
+    if (diff < 3600) return `il y a ${Math.floor(diff / 60)} min`;
+    if (diff < 86400) return `il y a ${Math.floor(diff / 3600)} h`;
+    if (diff < COMMENT_RELATIVE_DAYS * 86400) return `il y a ${Math.floor(diff / 86400)} j`;
+    const d = new Date(unixSeconds * 1000);
+    const sameYear = d.getFullYear() === new Date().getFullYear();
+    return d.toLocaleDateString('fr-FR', sameYear ? { day: 'numeric', month: 'long' } : { day: 'numeric', month: 'long', year: 'numeric' });
+  }
+
+  // Construit le DOM via textContent (jamais innerHTML) pour le nom et le texte : ce sont des
+  // champs libres saisis par les participants, à ne jamais interpréter comme du HTML.
+  function renderCommentItem(comment) {
+    const div = document.createElement('div');
+    div.className = 'comment-item';
+
+    const header = document.createElement('div');
+    header.className = 'comment-item-header';
+    const avatar = document.createElement('span');
+    avatar.className = 'comment-item-avatar';
+    avatar.style.background = comment.actorColor || '#8a8a9a';
+    avatar.textContent = (comment.actorName || '?').trim().slice(0, 1).toUpperCase();
+    const name = document.createElement('span');
+    name.className = 'comment-item-name';
+    name.textContent = comment.actorName;
+    const time = document.createElement('span');
+    time.className = 'comment-item-time';
+    time.textContent = formatRelativeTime(comment.createdAt);
+    header.append(avatar, name, time);
+
+    const text = document.createElement('div');
+    text.className = 'comment-item-text';
+    text.textContent = comment.text;
+
+    div.append(header, text);
+    return div;
+  }
+
+  const renderedCommentIds = new Set();
+
+  function appendCommentToDrawerIfNew(comment) {
+    if (renderedCommentIds.has(comment.id)) return;
+    renderedCommentIds.add(comment.id);
+    const empty = commentDrawerBody.querySelector('.comment-drawer-empty');
+    if (empty) empty.remove();
+    commentDrawerBody.appendChild(renderCommentItem(comment));
+    commentDrawerBody.scrollTop = commentDrawerBody.scrollHeight;
+  }
+
+  function openCommentDrawer(entry) {
+    activeCommentElementId = entry.data.id;
+    renderedCommentIds.clear();
+    commentDrawerBody.innerHTML = '<div class="comment-drawer-empty">Chargement…</div>';
+    commentDrawer.classList.add('is-open');
+    commentDrawerOverlay.classList.add('is-open');
+    closeAllToolbarPopovers();
+    const elementId = entry.data.id;
+    Api.getComments(elementId).then((comments) => {
+      if (activeCommentElementId !== elementId) return; // le drawer a changé/fermé entre-temps
+      commentDrawerBody.innerHTML = comments.length ? '' : '<div class="comment-drawer-empty">Aucun commentaire pour le moment.</div>';
+      comments.forEach(appendCommentToDrawerIfNew);
+    }).catch(() => {
+      if (activeCommentElementId === elementId) commentDrawerBody.innerHTML = '<div class="comment-drawer-empty">Erreur de chargement.</div>';
+    });
+    requestAnimationFrame(() => commentInput.focus());
+  }
+
+  function closeCommentDrawer() {
+    activeCommentElementId = null;
+    commentDrawer.classList.remove('is-open');
+    commentDrawerOverlay.classList.remove('is-open');
+    commentInput.value = '';
+  }
+
+  // Pas de mise à jour optimiste ici : on laisse l'écho SSE (element:comment, reçu aussi par
+  // l'auteur) faire tout l'affichage, comme pour la création d'élément — ça évite tout risque de
+  // doublon si la réponse HTTP et l'écho SSE arrivent dans un ordre différent.
+  function sendComment() {
+    const text = commentInput.value.trim();
+    if (!text || !activeCommentElementId) return;
+    commentInput.value = '';
+    commentSendBtn.disabled = true;
+    Api.createComment(activeCommentElementId, text)
+      .catch(err => alert(err.message))
+      .finally(() => { commentSendBtn.disabled = false; });
+  }
+
+  commentDrawerCloseBtn.addEventListener('click', closeCommentDrawer);
+  commentDrawerOverlay.addEventListener('click', closeCommentDrawer);
+  commentSendBtn.addEventListener('click', sendComment);
+  commentInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendComment(); }
+  });
+
   // ---------- Temps réel ----------
 
   Realtime.on('element:created', (element) => { if (!elements.has(element.id)) renderElement(element); });
@@ -2036,12 +2223,30 @@
     if (selectedElementId === id) repositionToolbar(entry);
   });
 
+  Realtime.on('element:reactions', ({ elementId, reactions }) => {
+    const entry = elements.get(elementId);
+    if (!entry) return;
+    entry.data.reactions = reactions;
+    updateElementBadges(entry);
+    refreshToolbarIfSelected(entry);
+  });
+
+  Realtime.on('element:comment', ({ elementId, comment }) => {
+    const entry = elements.get(elementId);
+    if (entry) {
+      entry.data.commentCount = (entry.data.commentCount || 0) + 1;
+      updateElementBadges(entry);
+    }
+    if (activeCommentElementId === elementId) appendCommentToDrawerIfNew(comment);
+  });
+
   // ---------- Chargement initial ----------
 
   Api.getWhiteboard().then((whiteboard) => {
     document.getElementById('whiteboardTitle').textContent = whiteboard.workshopName;
     document.getElementById('whiteboardSubtitle').textContent = `${whiteboard.clientName} — ${whiteboard.projectName}`;
     document.title = whiteboard.workshopName;
+    myName = whiteboard.me?.name || null;
 
     centerView();
     applyTransform();

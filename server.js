@@ -146,6 +146,17 @@ async function initDb() {
       id TEXT PRIMARY KEY, event_type TEXT NOT NULL, actor_name TEXT NOT NULL,
       client_name TEXT, project_name TEXT, detail TEXT, created_at INTEGER DEFAULT (unixepoch())
     )`,
+    // Un seul émoji par (élément, participant) — la contrainte est gérée côté appli (pas de UNIQUE
+    // SQL) pour pouvoir remplacer proprement une réaction existante en une seule requête de lecture.
+    `CREATE TABLE IF NOT EXISTS whiteboard_reactions (
+      id TEXT PRIMARY KEY, whiteboard_id TEXT NOT NULL, element_id TEXT NOT NULL,
+      actor_name TEXT NOT NULL, emoji TEXT NOT NULL, created_at INTEGER DEFAULT (unixepoch())
+    )`,
+    `CREATE TABLE IF NOT EXISTS whiteboard_comments (
+      id TEXT PRIMARY KEY, whiteboard_id TEXT NOT NULL, element_id TEXT NOT NULL,
+      actor_name TEXT NOT NULL, actor_color TEXT, text TEXT NOT NULL,
+      created_at INTEGER DEFAULT (unixepoch())
+    )`,
   ], 'write');
 
   // Ajout des colonnes trait/texte/image (ignore l'erreur si la colonne existe déjà — même
@@ -365,6 +376,8 @@ app.delete('/api/admin/whiteboards/:id', superadminAuth, ah(async (req, res) => 
   const whiteboard = await tursoGet('SELECT * FROM whiteboards WHERE id = ?', [req.params.id]);
   if (!whiteboard) return res.status(404).json({ error: 'Introuvable' });
   await tursoRun('DELETE FROM whiteboard_elements WHERE whiteboard_id = ?', [req.params.id]);
+  await tursoRun('DELETE FROM whiteboard_reactions WHERE whiteboard_id = ?', [req.params.id]);
+  await tursoRun('DELETE FROM whiteboard_comments WHERE whiteboard_id = ?', [req.params.id]);
   await tursoRun('DELETE FROM whiteboards WHERE id = ?', [req.params.id]);
   await logActivity('whiteboard_deleted', req.admin.name, whiteboard.client_name, whiteboard.workshop_name);
   res.json({ ok: true });
@@ -534,6 +547,19 @@ app.post('/api/whiteboards/:whiteboardId/cursor', whiteboardAuth, (req, res) => 
 
 const ELEMENT_LABELS = { note: 'post-it', line: 'trait', text: 'bloc de texte', image: 'image', rectangle: 'rectangle', connector: 'connecteur' };
 
+const REACTION_EMOJIS = ['❤️', '✅', '👍', '🔥', '🚀', '💡', '🤷‍♂️', '❌'];
+
+function parseComment(row) {
+  return {
+    id: row.id,
+    elementId: row.element_id,
+    actorName: row.actor_name,
+    actorColor: row.actor_color,
+    text: row.text,
+    createdAt: row.created_at,
+  };
+}
+
 function parseElement(row) {
   return {
     id: row.id,
@@ -575,12 +601,27 @@ app.get('/api/whiteboards/:whiteboardId', whiteboardAuth, ah(async (req, res) =>
   const whiteboard = await tursoGet('SELECT * FROM whiteboards WHERE id = ?', [req.params.whiteboardId]);
   if (!whiteboard) return res.status(404).json({ error: 'Introuvable' });
   const elementRows = await tursoAll('SELECT * FROM whiteboard_elements WHERE whiteboard_id = ? ORDER BY z_index', [req.params.whiteboardId]);
+  // Réactions et nombre de commentaires chargés en vrac pour tout le tableau (pas un aller-retour
+  // par élément) et rattachés ici, pour que le canvas affiche les badges dès le premier rendu.
+  const reactionRows = await tursoAll('SELECT element_id, emoji, actor_name FROM whiteboard_reactions WHERE whiteboard_id = ?', [req.params.whiteboardId]);
+  const commentCountRows = await tursoAll('SELECT element_id, COUNT(*) as n FROM whiteboard_comments WHERE whiteboard_id = ? GROUP BY element_id', [req.params.whiteboardId]);
+  const reactionsByElement = new Map();
+  for (const r of reactionRows) {
+    if (!reactionsByElement.has(r.element_id)) reactionsByElement.set(r.element_id, []);
+    reactionsByElement.get(r.element_id).push({ emoji: r.emoji, actorName: r.actor_name });
+  }
+  const commentCountByElement = new Map(commentCountRows.map(r => [r.element_id, r.n]));
   res.json({
     id: whiteboard.id,
     clientName: whiteboard.client_name,
     projectName: whiteboard.project_name,
     workshopName: whiteboard.workshop_name,
-    elements: elementRows.map(parseElement),
+    elements: elementRows.map((row) => {
+      const el = parseElement(row);
+      el.reactions = reactionsByElement.get(row.id) || [];
+      el.commentCount = commentCountByElement.get(row.id) || 0;
+      return el;
+    }),
     me: req.user,
   });
 }));
@@ -699,8 +740,12 @@ app.delete('/api/whiteboards/:whiteboardId/elements/:id', whiteboardAuth, ah(asy
     [req.params.whiteboardId, 'connector', req.params.id, req.params.id]
   );
   await tursoRun('DELETE FROM whiteboard_elements WHERE id = ?', [req.params.id]);
+  await tursoRun('DELETE FROM whiteboard_reactions WHERE element_id = ?', [req.params.id]);
+  await tursoRun('DELETE FROM whiteboard_comments WHERE element_id = ?', [req.params.id]);
   for (const c of orphanConnectors) {
     await tursoRun('DELETE FROM whiteboard_elements WHERE id = ?', [c.id]);
+    await tursoRun('DELETE FROM whiteboard_reactions WHERE element_id = ?', [c.id]);
+    await tursoRun('DELETE FROM whiteboard_comments WHERE element_id = ?', [c.id]);
     broadcast('element:deleted', { id: c.id }, req.params.whiteboardId);
   }
   const whiteboard = await tursoGet('SELECT client_name, workshop_name FROM whiteboards WHERE id = ?', [req.params.whiteboardId]);
@@ -708,6 +753,59 @@ app.delete('/api/whiteboards/:whiteboardId/elements/:id', whiteboardAuth, ah(asy
   await touchWhiteboard(req.params.whiteboardId);
   broadcast('element:deleted', { id: req.params.id }, req.params.whiteboardId);
   res.json({ ok: true });
+}));
+
+// =====================
+// RÉACTIONS ET COMMENTAIRES (par élément)
+// =====================
+
+// Un seul émoji par participant et par élément : re-cliquer le même le retire, cliquer un autre le
+// remplace. On renvoie/diffuse la liste complète des réactions de l'élément (plus simple qu'un diff,
+// et le volume par élément reste minime).
+app.post('/api/whiteboards/:whiteboardId/elements/:elementId/reactions', whiteboardAuth, ah(async (req, res) => {
+  const { emoji } = req.body || {};
+  if (!REACTION_EMOJIS.includes(emoji)) return res.status(400).json({ error: 'Émoji invalide' });
+  const element = await tursoGet('SELECT id FROM whiteboard_elements WHERE id = ? AND whiteboard_id = ?', [req.params.elementId, req.params.whiteboardId]);
+  if (!element) return res.status(404).json({ error: 'Introuvable' });
+  const existing = await tursoGet(
+    'SELECT * FROM whiteboard_reactions WHERE element_id = ? AND actor_name = ?',
+    [req.params.elementId, req.user.name]
+  );
+  if (existing) await tursoRun('DELETE FROM whiteboard_reactions WHERE id = ?', [existing.id]);
+  if (!existing || existing.emoji !== emoji) {
+    await tursoRun(
+      'INSERT INTO whiteboard_reactions (id, whiteboard_id, element_id, actor_name, emoji) VALUES (?, ?, ?, ?, ?)',
+      [uuidv4(), req.params.whiteboardId, req.params.elementId, req.user.name, emoji]
+    );
+  }
+  const rows = await tursoAll('SELECT emoji, actor_name FROM whiteboard_reactions WHERE element_id = ?', [req.params.elementId]);
+  const reactions = rows.map(r => ({ emoji: r.emoji, actorName: r.actor_name }));
+  broadcast('element:reactions', { elementId: req.params.elementId, reactions }, req.params.whiteboardId);
+  res.json({ reactions });
+}));
+
+app.get('/api/whiteboards/:whiteboardId/elements/:elementId/comments', whiteboardAuth, ah(async (req, res) => {
+  const rows = await tursoAll(
+    'SELECT * FROM whiteboard_comments WHERE element_id = ? AND whiteboard_id = ? ORDER BY created_at ASC',
+    [req.params.elementId, req.params.whiteboardId]
+  );
+  res.json(rows.map(parseComment));
+}));
+
+app.post('/api/whiteboards/:whiteboardId/elements/:elementId/comments', whiteboardAuth, ah(async (req, res) => {
+  const text = (req.body?.text || '').trim().slice(0, 2000);
+  if (!text) return res.status(400).json({ error: 'Commentaire vide' });
+  const element = await tursoGet('SELECT id FROM whiteboard_elements WHERE id = ? AND whiteboard_id = ?', [req.params.elementId, req.params.whiteboardId]);
+  if (!element) return res.status(404).json({ error: 'Introuvable' });
+  const id = uuidv4();
+  await tursoRun(
+    'INSERT INTO whiteboard_comments (id, whiteboard_id, element_id, actor_name, actor_color, text) VALUES (?, ?, ?, ?, ?, ?)',
+    [id, req.params.whiteboardId, req.params.elementId, req.user.name, req.user.color, text]
+  );
+  const row = await tursoGet('SELECT * FROM whiteboard_comments WHERE id = ?', [id]);
+  const comment = parseComment(row);
+  broadcast('element:comment', { elementId: req.params.elementId, comment }, req.params.whiteboardId);
+  res.json(comment);
 }));
 
 // SPA routes
