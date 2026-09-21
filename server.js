@@ -724,6 +724,52 @@ app.patch('/api/whiteboards/:whiteboardId/elements/:id', whiteboardAuth, ah(asyn
   res.json(element);
 }));
 
+// Déplacement groupé (fin de glisser d'une sélection multiple ou d'un groupe permanent) : une seule
+// requête pour toutes les positions, avec un unique passage au premier plan calculé pour tout le lot
+// d'un coup. Avant ce endpoint, le client envoyait un PATCH par élément avec bringToFront: true —
+// chacun recalculait indépendamment MAX(z_index), ce qui pouvait attribuer le même z_index à deux
+// éléments du lot (un élément passant sous un autre qui était pourtant dessus), et les N réponses
+// arrivaient à des moments différents (éléments qui ne bougent pas tous en même temps à l'écran).
+app.post('/api/whiteboards/:whiteboardId/elements/batch-move', whiteboardAuth, ah(async (req, res) => {
+  const { moves, bringToFront } = req.body || {};
+  if (!Array.isArray(moves) || !moves.length) return res.status(400).json({ error: 'Requête invalide' });
+
+  const ids = moves.map(m => m.id);
+  const placeholders = ids.map(() => '?').join(',');
+  const existingRows = await tursoAll(
+    `SELECT * FROM whiteboard_elements WHERE whiteboard_id = ? AND id IN (${placeholders})`,
+    [req.params.whiteboardId, ...ids]
+  );
+  const existingById = new Map(existingRows.map(r => [r.id, r]));
+
+  const zIndexById = new Map();
+  if (bringToFront) {
+    // Garde l'ordre relatif que le lot avait déjà (son propre empilement interne) plutôt que l'ordre
+    // d'arrivée dans la requête, pour ne pas mélanger la pile en la faisant passer au premier plan.
+    const ordered = [...existingRows].sort((a, b) => a.z_index - b.z_index);
+    const { max } = await tursoGet('SELECT MAX(z_index) as max FROM whiteboard_elements WHERE whiteboard_id = ?', [req.params.whiteboardId]);
+    let next = (max ?? -1) + 1;
+    ordered.forEach((row) => { zIndexById.set(row.id, next); next += 1; });
+  }
+
+  const updated = [];
+  for (const move of moves) {
+    const existing = existingById.get(move.id);
+    if (!existing) continue;
+    const zIndex = zIndexById.has(move.id) ? zIndexById.get(move.id) : existing.z_index;
+    await tursoRun(
+      'UPDATE whiteboard_elements SET x = ?, y = ?, z_index = ?, updated_at = unixepoch() WHERE id = ?',
+      [move.x, move.y, zIndex, move.id]
+    );
+    const row = await tursoGet('SELECT * FROM whiteboard_elements WHERE id = ?', [move.id]);
+    updated.push(parseElement(row));
+  }
+
+  await touchWhiteboard(req.params.whiteboardId);
+  broadcast('elements:updated', { elements: updated }, req.params.whiteboardId);
+  res.json({ elements: updated });
+}));
+
 // Diffusion "live" pendant un drag/resize/rotation (pas de persistance ni d'activité) : la valeur
 // finale est persistée séparément via PATCH au relâchement, comme le curseur de souris.
 app.post('/api/whiteboards/:whiteboardId/elements/:id/live', whiteboardAuth, (req, res) => {

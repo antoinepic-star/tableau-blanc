@@ -1198,6 +1198,7 @@
     // pas son rôle — donc on les préserve explicitement au lieu de les perdre en écrasant data.
     const prevVotes = entry.data.votes;
     const prevCommentCount = entry.data.commentCount;
+    const prevImageData = entry.data.imageData;
     entry.data = data;
     if (data.votes === undefined) entry.data.votes = prevVotes;
     if (data.commentCount === undefined) entry.data.commentCount = prevCommentCount;
@@ -1231,7 +1232,9 @@
       applyElementBackground(entry);
       applyTextAutoSize(entry);
     } else if (data.type === 'image') {
-      entry.el.querySelector('.element-image-img').src = data.imageData || '';
+      // Réassigner le src (même identique) force le navigateur à redécoder l'image, souvent plusieurs
+      // Mo en base64 — visible comme un flash "disparaît puis réapparaît" sur un simple déplacement.
+      if (data.imageData !== prevImageData) entry.el.querySelector('.element-image-img').src = data.imageData || '';
       applyImageFilters(entry);
     } else if (data.type === 'rectangle') {
       if (document.activeElement !== entry.textEl) entry.textEl.value = data.text || '';
@@ -1770,16 +1773,25 @@
         if (en) en.el.classList.remove('is-dragging');
       });
       if (moved) {
-        // entry.dragging reste vrai jusqu'à la réponse du PATCH final : sinon un écho "element:dragging"
-        // encore en vol (le dernier envoyé pendant le glisser) peut arriver après coup et écraser la
-        // position définitive par une valeur intermédiaire plus ancienne.
-        ids.forEach((mid) => {
+        // entry.dragging reste vrai jusqu'à la réponse : sinon un écho "element:dragging" encore en
+        // vol (le dernier envoyé pendant le glisser) peut arriver après coup et écraser la position
+        // définitive par une valeur intermédiaire plus ancienne.
+        // Une seule requête groupée pour tout le lot plutôt qu'un PATCH par élément : ça évite que les
+        // éléments arrivent à destination à des moments différents, et que deux d'entre eux se
+        // disputent le même z_index (calculé indépendamment par élément avec bringToFront individuel).
+        const moves = ids.map((mid) => {
           const en = elements.get(mid);
-          if (!en) return;
-          Api.updateElement(mid, { x: en.data.x, y: en.data.y, bringToFront: true })
-            .then((data) => { en.dragging = false; applyRemoteUpdate(data); })
-            .catch(() => { en.dragging = false; });
-        });
+          return en ? { id: mid, x: en.data.x, y: en.data.y } : null;
+        }).filter(Boolean);
+        Api.updateElementsBatch(moves)
+          .then(({ elements: updated }) => {
+            updated.forEach((data) => {
+              const en = elements.get(data.id);
+              if (en) en.dragging = false;
+              applyRemoteUpdate(data);
+            });
+          })
+          .catch(() => { ids.forEach((mid) => { const en = elements.get(mid); if (en) en.dragging = false; }); });
       } else {
         ids.forEach((mid) => { const en = elements.get(mid); if (en) en.dragging = false; });
         if (!isRealGroup) {
@@ -2270,6 +2282,7 @@
 
   Realtime.on('element:created', (element) => { if (!elements.has(element.id)) renderElement(element); });
   Realtime.on('element:updated', applyRemoteUpdate);
+  Realtime.on('elements:updated', ({ elements: updatedElements }) => updatedElements.forEach(applyRemoteUpdate));
   Realtime.on('element:deleted', ({ id }) => removeElementLocal(id));
   Realtime.on('element:dragging', ({ id, x, y, width, height, rotation }) => {
     const entry = elements.get(id);

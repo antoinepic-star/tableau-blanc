@@ -56,6 +56,7 @@ const Api = (() => {
     getWhiteboard: () => request('GET', base),
     createElement: (element) => request('POST', `${base}/elements`, element || {}),
     updateElement,
+    updateElementsBatch: (moves, bringToFront = true) => request('POST', `${base}/elements/batch-move`, { moves, bringToFront }),
     liveElement: (id, patch) => request('POST', `${base}/elements/${id}/live`, patch).catch(() => {}),
     deleteElement: (id) => request('DELETE', `${base}/elements/${id}`),
     sendCursor: (x, y) => request('POST', `${base}/cursor`, { x, y }).catch(() => {}),
