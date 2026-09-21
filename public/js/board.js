@@ -4,6 +4,7 @@
   const MIN_W = 60;
   const MIN_H = 40;
   const MIN_LINE_LENGTH = 30;
+  const MIN_CROP_SIZE = 24;
   const MAX_IMAGE_DIM = 320;
   const MAX_IMAGE_BYTES = 4 * 1024 * 1024;
   const ZOOM_MIN = 0.2;
@@ -331,7 +332,15 @@
         ${FONT_SIZES.map(s => `<option value="${s}"${Number(data.fontSize) === s ? ' selected' : ''}>${s}</option>`).join('')}
       </select>
     ` : '';
-    const prefix = swatches + textControls;
+    const imageControls = data.type === 'image' ? `
+      <button type="button" class="element-icon-btn element-grayscale-btn${data.grayscale ? ' is-active' : ''}" title="Noir et blanc">
+        <svg width="14" height="14" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="2"/><path d="M12 3a9 9 0 0 1 0 18z" fill="currentColor"/></svg>
+      </button>
+      <button type="button" class="element-icon-btn element-crop-btn" title="Rogner">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 2v14a2 2 0 0 0 2 2h14"/><path d="M18 22V8a2 2 0 0 0-2-2H2"/></svg>
+      </button>
+    ` : '';
+    const prefix = swatches + textControls + imageControls;
     const sep = prefix ? '<span class="element-toolbar-sep"></span>' : '';
     return `
       ${prefix}${sep}
@@ -395,6 +404,7 @@
 
     if (data.type === 'text') applyTextStyle(entry);
     if (data.type === 'line') updateLineToolbarCounterRotation(entry);
+    if (data.type === 'image') applyImageFilters(entry);
 
     wireElementInteractions(entry);
     return entry;
@@ -441,7 +451,7 @@
     const entry = elements.get(data.id);
     if (!entry) { renderElement(data); return; }
     entry.data = data;
-    if (entry.dragging || entry.resizing) return; // ne pas écraser une interaction locale en cours
+    if (entry.dragging || entry.resizing || entry.cropping) return; // ne pas écraser une interaction locale en cours
 
     entry.el.style.left = `${data.x}px`;
     entry.el.style.top = `${data.y}px`;
@@ -461,6 +471,9 @@
       applyTextStyle(entry);
     } else if (data.type === 'image') {
       entry.el.querySelector('.element-image-img').src = data.imageData || '';
+      applyImageFilters(entry);
+      const grayscaleBtn = entry.el.querySelector('.element-grayscale-btn');
+      if (grayscaleBtn) grayscaleBtn.classList.toggle('is-active', !!data.grayscale);
     }
 
     entry.el.querySelectorAll('.element-swatch').forEach(sw => sw.classList.toggle('is-active', sw.dataset.color === data.color));
@@ -476,12 +489,17 @@
 
   // ---------- Interactions communes (barre d'outils, glisser, édition, redimensionnement) ----------
 
+  function applyImageFilters(entry) {
+    const img = entry.el.querySelector('.element-image-img');
+    if (img) img.classList.toggle('is-grayscale', !!entry.data.grayscale);
+  }
+
   function duplicateElement(entry) {
     const d = entry.data;
     Api.createElement({
       type: d.type, x: d.x + 24, y: d.y + 24, width: d.width, height: d.height, rotation: d.rotation,
       color: d.color, text: d.text, fontSize: d.fontSize, bold: d.bold, italic: d.italic,
-      underline: d.underline, strikethrough: d.strikethrough, imageData: d.imageData,
+      underline: d.underline, strikethrough: d.strikethrough, imageData: d.imageData, grayscale: d.grayscale,
     }).catch(err => alert(err.message));
   }
 
@@ -525,6 +543,24 @@
         applyTextStyle(entry);
         Api.updateElement(id, { fontSize: size }).catch(() => {});
       });
+    }
+
+    const grayscaleBtn = toolbar.querySelector('.element-grayscale-btn');
+    if (grayscaleBtn) {
+      grayscaleBtn.addEventListener('pointerdown', e => e.stopPropagation());
+      grayscaleBtn.addEventListener('click', () => {
+        selectElement(id);
+        entry.data.grayscale = !entry.data.grayscale;
+        grayscaleBtn.classList.toggle('is-active', entry.data.grayscale);
+        applyImageFilters(entry);
+        Api.updateElement(id, { grayscale: entry.data.grayscale }).catch(() => {});
+      });
+    }
+
+    const cropBtn = toolbar.querySelector('.element-crop-btn');
+    if (cropBtn) {
+      cropBtn.addEventListener('pointerdown', e => e.stopPropagation());
+      cropBtn.addEventListener('click', () => { selectElement(id); enterCropMode(entry); });
     }
 
     const dupBtn = toolbar.querySelector('.element-duplicate-btn');
@@ -576,7 +612,7 @@
 
     el.addEventListener('pointerdown', (e) => {
       if (e.target.closest('.element-resize-handle') || e.target.closest('.element-line-handle') || e.target.closest('.element-toolbar')) return;
-      if (el.classList.contains('is-editing')) return;
+      if (el.classList.contains('is-editing') || entry.cropping) return;
       e.stopPropagation();
       selectElement(id);
       closeConfirmPopover();
@@ -632,6 +668,7 @@
     let resizeState = null;
 
     handle.addEventListener('pointerdown', (e) => {
+      if (entry.cropping) return;
       e.stopPropagation();
       selectElement(entry.data.id);
       resizeState = {
@@ -730,6 +767,137 @@
     wireBodyDrag(entry);
     if (entry.data.type === 'line') wireLineHandle(entry);
     else wireCornerResize(entry);
+  }
+
+  // ---------- Rognage d'image ----------
+  // Quatre poignées de bord (haut/bas/gauche/droite) plutôt qu'un rectangle déplaçable : combinées,
+  // elles permettent d'atteindre n'importe quel sous-rectangle aligné sur les axes, pour une
+  // interaction plus simple qu'un rectangle à la fois déplaçable et redimensionnable.
+
+  function enterCropMode(entry) {
+    if (entry.data.type !== 'image' || entry.cropping) return;
+    closeConfirmPopover();
+    entry.cropping = true;
+    entry.el.classList.add('is-cropping');
+
+    const crop = { top: 0, right: 0, bottom: 0, left: 0 };
+    entry._cropState = crop;
+
+    const overlay = document.createElement('div');
+    overlay.className = 'crop-overlay';
+    overlay.innerHTML = `
+      <div class="crop-mask crop-mask-top"></div>
+      <div class="crop-mask crop-mask-bottom"></div>
+      <div class="crop-mask crop-mask-left"></div>
+      <div class="crop-mask crop-mask-right"></div>
+      <div class="crop-rect-border"></div>
+      <div class="crop-edge-handle crop-edge-top" data-edge="top"></div>
+      <div class="crop-edge-handle crop-edge-bottom" data-edge="bottom"></div>
+      <div class="crop-edge-handle crop-edge-left" data-edge="left"></div>
+      <div class="crop-edge-handle crop-edge-right" data-edge="right"></div>
+      <div class="crop-toolbar">
+        <button type="button" class="crop-toolbar-btn crop-toolbar-cancel">Annuler</button>
+        <button type="button" class="crop-toolbar-btn crop-toolbar-confirm">Rogner</button>
+      </div>
+    `;
+    overlay.addEventListener('pointerdown', (e) => e.stopPropagation());
+    entry.el.appendChild(overlay);
+    entry._cropOverlay = overlay;
+
+    function render() {
+      const w = entry.data.width, h = entry.data.height;
+      overlay.querySelector('.crop-mask-top').style.cssText = `top:0; left:0; right:0; height:${crop.top}px;`;
+      overlay.querySelector('.crop-mask-bottom').style.cssText = `bottom:0; left:0; right:0; height:${crop.bottom}px;`;
+      overlay.querySelector('.crop-mask-left').style.cssText = `top:${crop.top}px; left:0; width:${crop.left}px; height:${h - crop.top - crop.bottom}px;`;
+      overlay.querySelector('.crop-mask-right').style.cssText = `top:${crop.top}px; right:0; width:${crop.right}px; height:${h - crop.top - crop.bottom}px;`;
+      overlay.querySelector('.crop-rect-border').style.cssText = `top:${crop.top}px; left:${crop.left}px; right:${crop.right}px; bottom:${crop.bottom}px;`;
+      const midY = crop.top + (h - crop.top - crop.bottom) / 2;
+      const midX = crop.left + (w - crop.left - crop.right) / 2;
+      overlay.querySelector('.crop-edge-top').style.cssText = `top:${crop.top}px; left:${midX}px;`;
+      overlay.querySelector('.crop-edge-bottom').style.cssText = `top:${h - crop.bottom}px; left:${midX}px;`;
+      overlay.querySelector('.crop-edge-left').style.cssText = `left:${crop.left}px; top:${midY}px;`;
+      overlay.querySelector('.crop-edge-right').style.cssText = `left:${w - crop.right}px; top:${midY}px;`;
+    }
+    render();
+
+    overlay.querySelectorAll('.crop-edge-handle').forEach((handle) => {
+      const edge = handle.dataset.edge;
+      let state = null;
+      handle.addEventListener('pointerdown', (e) => {
+        e.stopPropagation();
+        state = { startScreen: { x: e.clientX, y: e.clientY }, start: { ...crop } };
+        handle.setPointerCapture(e.pointerId);
+      });
+      handle.addEventListener('pointermove', (e) => {
+        if (!state) return;
+        const dxWorld = (e.clientX - state.startScreen.x) / zoom;
+        const dyWorld = (e.clientY - state.startScreen.y) / zoom;
+        const w = entry.data.width, h = entry.data.height;
+        if (edge === 'top') crop.top = clamp(state.start.top + dyWorld, 0, h - crop.bottom - MIN_CROP_SIZE);
+        else if (edge === 'bottom') crop.bottom = clamp(state.start.bottom - dyWorld, 0, h - crop.top - MIN_CROP_SIZE);
+        else if (edge === 'left') crop.left = clamp(state.start.left + dxWorld, 0, w - crop.right - MIN_CROP_SIZE);
+        else if (edge === 'right') crop.right = clamp(state.start.right - dxWorld, 0, w - crop.left - MIN_CROP_SIZE);
+        render();
+      });
+      handle.addEventListener('pointerup', (e) => {
+        if (!state) return;
+        handle.releasePointerCapture(e.pointerId);
+        state = null;
+      });
+    });
+
+    overlay.querySelector('.crop-toolbar-cancel').addEventListener('click', () => exitCropMode(entry));
+    overlay.querySelector('.crop-toolbar-confirm').addEventListener('click', () => confirmCrop(entry));
+  }
+
+  function exitCropMode(entry) {
+    if (entry._cropOverlay) { entry._cropOverlay.remove(); entry._cropOverlay = null; }
+    entry.cropping = false;
+    entry._cropState = null;
+    entry.el.classList.remove('is-cropping');
+  }
+
+  function confirmCrop(entry) {
+    const crop = entry._cropState;
+    const imgEl = entry.el.querySelector('.element-image-img');
+    const displayW = entry.data.width, displayH = entry.data.height;
+    const naturalW = imgEl.naturalWidth || displayW;
+    const naturalH = imgEl.naturalHeight || displayH;
+    const scaleX = naturalW / displayW;
+    const scaleY = naturalH / displayH;
+
+    const cropDisplayW = displayW - crop.left - crop.right;
+    const cropDisplayH = displayH - crop.top - crop.bottom;
+    const naturalX = Math.round(crop.left * scaleX);
+    const naturalY = Math.round(crop.top * scaleY);
+    const naturalCropW = Math.max(1, Math.round(cropDisplayW * scaleX));
+    const naturalCropH = Math.max(1, Math.round(cropDisplayH * scaleY));
+
+    const canvas = document.createElement('canvas');
+    canvas.width = naturalCropW;
+    canvas.height = naturalCropH;
+    canvas.getContext('2d').drawImage(imgEl, naturalX, naturalY, naturalCropW, naturalCropH, 0, 0, naturalCropW, naturalCropH);
+    const newImageData = canvas.toDataURL('image/png');
+
+    const newX = entry.data.x + crop.left;
+    const newY = entry.data.y + crop.top;
+
+    entry.data.imageData = newImageData;
+    entry.data.width = cropDisplayW;
+    entry.data.height = cropDisplayH;
+    entry.data.x = newX;
+    entry.data.y = newY;
+    entry.el.style.left = `${newX}px`;
+    entry.el.style.top = `${newY}px`;
+    entry.el.style.width = `${cropDisplayW}px`;
+    entry.el.style.height = `${cropDisplayH}px`;
+    imgEl.src = newImageData;
+
+    exitCropMode(entry);
+
+    Api.updateElement(entry.data.id, {
+      imageData: newImageData, width: cropDisplayW, height: cropDisplayH, x: newX, y: newY, bringToFront: true,
+    }).then(applyRemoteUpdate).catch(err => alert(err.message));
   }
 
   // ---------- Temps réel ----------

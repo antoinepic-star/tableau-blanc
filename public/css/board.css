@@ -149,7 +149,9 @@ body.board-page { overflow: hidden; height: 100vh; }
   cursor: nwse-resize;
   background: linear-gradient(135deg, transparent 50%, rgba(0,0,0,0.25) 50%);
   border-radius: 0 0 8px 0;
+  display: none;
 }
+.element.is-selected .element-resize-handle { display: block; }
 
 /* ---- Trait ---- */
 .element[data-type="line"] {
@@ -159,8 +161,9 @@ body.board-page { overflow: hidden; height: 100vh; }
 .element-line-handle {
   position: absolute; top: 50%; right: -8px; width: 16px; height: 16px; margin-top: -8px;
   border-radius: 50%; background: #fff; border: 2px solid var(--purple); cursor: alias;
+  display: none;
 }
-.element[data-type="line"]:not(:hover):not(.is-selected):not(.is-dragging):not(.is-resizing) .element-line-handle { opacity: 0; pointer-events: none; }
+.element[data-type="line"].is-selected .element-line-handle { display: block; }
 
 /* ---- Texte ---- */
 .element[data-type="text"] {
@@ -171,11 +174,39 @@ body.board-page { overflow: hidden; height: 100vh; }
 }
 .element[data-type="text"]:not(.is-editing) .element-text { cursor: grab; pointer-events: none; }
 .element[data-type="text"].is-dragging, .element[data-type="text"].is-resizing { cursor: grabbing; }
+.element[data-type="text"].is-selected { outline: 1.5px dashed var(--purple); outline-offset: 4px; }
 
 /* ---- Image ---- */
 .element[data-type="image"] { cursor: grab; }
 .element[data-type="image"].is-dragging, .element[data-type="image"].is-resizing { cursor: grabbing; }
 .element-image-img { width: 100%; height: 100%; object-fit: fill; pointer-events: none; border-radius: 4px; display: block; }
+.element-image-img.is-grayscale { filter: saturate(0); }
+
+/* ---- Rognage d'image ---- */
+.crop-overlay { position: absolute; inset: 0; cursor: default; }
+.crop-mask { position: absolute; background: rgba(20,20,30,0.55); pointer-events: none; }
+.crop-rect-border { position: absolute; border: 2px dashed #fff; box-shadow: 0 0 0 1px rgba(0,0,0,0.3); pointer-events: none; }
+.crop-edge-handle {
+  position: absolute; background: var(--purple); border: 2px solid #fff; border-radius: 4px;
+  box-shadow: 0 1px 4px rgba(0,0,0,0.35);
+}
+.crop-edge-top, .crop-edge-bottom { width: 40px; height: 8px; margin-left: -20px; cursor: ns-resize; }
+.crop-edge-left, .crop-edge-right { width: 8px; height: 40px; margin-top: -20px; cursor: ew-resize; }
+
+.crop-toolbar {
+  position: absolute; top: -40px; left: 0;
+  display: flex; align-items: center; gap: 6px;
+  background: #fff; border-radius: 8px; padding: 5px;
+  box-shadow: 0 4px 14px rgba(20,20,40,0.18);
+}
+.crop-toolbar-btn {
+  border: none; border-radius: 6px; padding: 6px 12px; font-size: 12.5px; font-weight: 600;
+  cursor: pointer; font-family: inherit;
+}
+.crop-toolbar-cancel { background: #f4f4f6; color: var(--text); }
+.crop-toolbar-cancel:hover { background: #e8e8ec; }
+.crop-toolbar-confirm { background: var(--purple); color: #fff; }
+.crop-toolbar-confirm:hover { background: var(--purple-dark); }
 
 /* ---------- Barre d'outils flottante (commune à tous les types) ---------- */
 
@@ -186,7 +217,7 @@ body.board-page { overflow: hidden; height: 100vh; }
   box-shadow: 0 4px 14px rgba(20,20,40,0.18);
   white-space: nowrap;
 }
-.element:hover .element-toolbar, .element.is-selected .element-toolbar { display: flex; }
+.element.is-selected .element-toolbar { display: flex; }
 
 .element-swatch {
   width: 18px; height: 18px; border-radius: 50%; border: 2px solid transparent; cursor: pointer; flex-shrink: 0; padding: 0;
@@ -217,6 +248,9 @@ body.board-page { overflow: hidden; height: 100vh; }
 }
 .element-icon-btn:hover { background: #f4f4f6; color: var(--text); }
 .element-icon-btn.element-delete-btn:hover { background: #fbeceb; color: #c8392c; }
+.element-icon-btn.is-active { background: var(--purple); color: #fff; }
+
+.element.is-cropping .element-toolbar { display: none !important; }
 
 /* ---------- Popin de confirmation de suppression ---------- */
 
