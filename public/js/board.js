@@ -1199,12 +1199,22 @@
     const prevVotes = entry.data.votes;
     const prevCommentCount = entry.data.commentCount;
     const prevImageData = entry.data.imageData;
+    const isInteracting = entry.dragging || entry.resizing || entry.cropping;
+    // Un écho distant (une réponse ou une diffusion en retard d'un AUTRE glisser encore en vol) ne
+    // doit jamais écraser la position/taille/pile qu'un glisser LOCAL est en train de piloter, même
+    // seulement dans les données (sans toucher au DOM, cf. le "return" plus bas) : sinon, au
+    // relâchement, on lit entry.data.x/y pour construire le batch-move et on persiste par erreur
+    // cette valeur périmée — l'élément "saute" à un ancien endroit après coup.
+    const prevTransform = isInteracting
+      ? { x: entry.data.x, y: entry.data.y, width: entry.data.width, height: entry.data.height, rotation: entry.data.rotation, zIndex: entry.data.zIndex }
+      : null;
     entry.data = data;
     if (data.votes === undefined) entry.data.votes = prevVotes;
     if (data.commentCount === undefined) entry.data.commentCount = prevCommentCount;
+    if (prevTransform) Object.assign(entry.data, prevTransform);
     applyLockedState(entry);
     updateElementBadges(entry);
-    if (entry.dragging || entry.resizing || entry.cropping) return; // ne pas écraser une interaction locale en cours
+    if (isInteracting) return; // ne pas écraser une interaction locale en cours
 
     if (data.type === 'connector') {
       applyLineStyle(entry);
