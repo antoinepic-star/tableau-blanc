@@ -66,6 +66,24 @@
 
   function hideHint() { hintPill.classList.add('is-hidden'); }
 
+  // Message furtif non bloquant — contrairement à alert(), il n'interrompt pas un geste en cours.
+  let activeToastTimer = null;
+  function showToast(message) {
+    let toast = document.querySelector('.app-toast');
+    if (!toast) {
+      toast = document.createElement('div');
+      toast.className = 'app-toast';
+      document.body.appendChild(toast);
+    }
+    toast.textContent = message;
+    clearTimeout(activeToastTimer);
+    requestAnimationFrame(() => toast.classList.add('is-visible'));
+    activeToastTimer = setTimeout(() => {
+      toast.classList.remove('is-visible');
+      setTimeout(() => toast.remove(), 250);
+    }, 3200);
+  }
+
   // ---------- Zoom / pan (molette et trackpad uniquement — le glisser du fond sert à la sélection) ----------
 
   viewportEl.addEventListener('wheel', (e) => {
@@ -575,6 +593,7 @@
     const sep = controls ? '<span class="element-toolbar-sep"></span>' : '';
     return `
       ${controls}${sep}
+      <button type="button" class="element-icon-btn element-lock-btn" title="Verrouiller">${iconLock()}</button>
       <button type="button" class="element-icon-btn element-duplicate-btn" title="Dupliquer">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15H4a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h10a1 1 0 0 1 1 1v1"/></svg>
       </button>
@@ -584,10 +603,23 @@
     `;
   }
 
+  // Barre affichée à la place du toolbar normal quand l'élément sélectionné est verrouillé : un
+  // seul bouton "appui long pour déverrouiller", dont le fond se remplit pendant l'appui (façon Miro).
+  function buildLockedToolbarHtml() {
+    return `
+      <button type="button" class="unlock-hold-btn">
+        <span class="unlock-hold-fill"></span>
+        <svg class="unlock-hold-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>
+        <span class="unlock-hold-label">Appui long pour déverrouiller</span>
+      </button>
+    `;
+  }
+
   function iconAlignLeft() { return '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="4" y1="3" x2="4" y2="21"/><rect x="7" y="6" width="12" height="5"/><rect x="7" y="13" width="7" height="5"/></svg>'; }
   function iconAlignCenter() { return '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="12" y1="3" x2="12" y2="21"/><rect x="6" y="6" width="12" height="5"/><rect x="8.5" y="13" width="7" height="5"/></svg>'; }
   function iconAlignRight() { return '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="20" y1="3" x2="20" y2="21"/><rect x="5" y="6" width="12" height="5"/><rect x="10" y="13" width="7" height="5"/></svg>'; }
   function iconGroup() { return '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="9" height="9" rx="1.5"/><rect x="12" y="12" width="9" height="9" rx="1.5"/></svg>'; }
+  function iconUngroup() { return '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="2" width="8" height="8" rx="1.5"/><rect x="14" y="14" width="8" height="8" rx="1.5"/><line x1="9.5" y1="9.5" x2="14.5" y2="14.5" stroke-dasharray="2 2"/></svg>'; }
   function iconLock() { return '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>'; }
 
   function groupMembers(groupId) {
@@ -595,6 +627,10 @@
     const ids = [];
     elements.forEach((entry) => { if (entry.data.groupId === groupId) ids.push(entry.data.id); });
     return ids;
+  }
+
+  function groupHasLockedMember(groupId) {
+    return groupMembers(groupId).some((id) => elements.get(id)?.data.locked);
   }
 
   function buildMultiToolbarHtml() {
@@ -611,7 +647,7 @@
       <button type="button" class="element-icon-btn" data-action="align-center" title="Centrer horizontalement">${iconAlignCenter()}</button>
       <button type="button" class="element-icon-btn" data-action="align-right" title="Aligner à droite">${iconAlignRight()}</button>
       <span class="element-toolbar-sep"></span>
-      <button type="button" class="element-icon-btn" data-action="${isFullGroup ? 'ungroup' : 'group'}" title="${isFullGroup ? 'Dégrouper' : 'Grouper'}">${iconGroup()}</button>
+      <button type="button" class="element-icon-btn${isFullGroup ? ' is-active' : ''}" data-action="${isFullGroup ? 'ungroup' : 'group'}" title="${isFullGroup ? 'Dégrouper' : 'Grouper'}">${isFullGroup ? iconUngroup() : iconGroup()}</button>
       <button type="button" class="element-icon-btn" data-action="lock" title="Verrouiller">${iconLock()}</button>
     `;
   }
@@ -637,6 +673,13 @@
   }
 
   function showToolbarFor(entry) {
+    if (entry.data.locked) {
+      toolbarEl.innerHTML = buildLockedToolbarHtml();
+      toolbarEl.classList.add('is-open');
+      wireUnlockButton(entry);
+      repositionToolbar(entry);
+      return;
+    }
     toolbarEl.innerHTML = buildToolbarHtml(entry.data);
     toolbarEl.classList.add('is-open');
     wireToolbarControls(entry);
@@ -751,6 +794,11 @@
     const ids = [...multiSelectedIds];
     const entries = ids.map(id => elements.get(id)).filter(Boolean);
     if (!entries.length) return;
+    const isAlign = action === 'align-left' || action === 'align-right' || action === 'align-center';
+    if (isAlign && entries.some(en => en.data.locked)) {
+      showToast("Cette sélection contient des éléments verrouillés : dégroupe-la d'abord si tu veux les aligner.");
+      return;
+    }
 
     if (action === 'align-left') {
       const minX = Math.min(...entries.map(en => en.data.x));
@@ -790,56 +838,63 @@
 
   // ---------- Verrouillage ----------
 
+  // Pastille discrète (pas de fond plein) : juste assez visible pour repérer un élément verrouillé
+  // sans attirer l'œil ; l'action se passe dans le toolbar au clic (cf buildLockedToolbarHtml).
   function applyLockedState(entry) {
     entry.el.classList.toggle('is-locked', !!entry.data.locked);
     let badge = entry.el.querySelector('.lock-badge');
     if (entry.data.locked && !badge) {
       badge = document.createElement('div');
       badge.className = 'lock-badge';
-      badge.innerHTML = '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>';
+      badge.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>';
       entry.el.appendChild(badge);
     } else if (!entry.data.locked && badge) {
       badge.remove();
     }
   }
 
-  function startUnlockHold(entry, e) {
-    const bar = document.createElement('div');
-    bar.className = 'lock-progress';
-    bar.innerHTML = '<div class="lock-progress-fill"></div>';
-    entry.el.appendChild(bar);
-    const fill = bar.querySelector('.lock-progress-fill');
+  function wireUnlockButton(entry) {
+    const btn = toolbarEl.querySelector('.unlock-hold-btn');
+    if (!btn) return;
+    btn.addEventListener('pointerdown', (e) => {
+      e.stopPropagation();
+      startUnlockHold(entry, btn);
+    });
+  }
+
+  // Le remplissage se fait DANS le bouton du toolbar (comme Miro) — plus d'overlay sur l'élément
+  // lui-même. On annule si le bouton est relâché ou si le pointeur le quitte avant la fin.
+  function startUnlockHold(entry, btn) {
+    const fill = btn.querySelector('.unlock-hold-fill');
     const startTime = Date.now();
-    const startScreen = { x: e.clientX, y: e.clientY };
     let done = false;
     let raf = null;
 
     function cleanup() {
       done = true;
       if (raf) cancelAnimationFrame(raf);
-      bar.remove();
-      window.removeEventListener('pointermove', onMove);
+      if (fill) fill.style.width = '0%';
       window.removeEventListener('pointerup', onUp);
-    }
-    function onMove(ev) {
-      if (Math.hypot(ev.clientX - startScreen.x, ev.clientY - startScreen.y) > 8) cleanup();
+      btn.removeEventListener('pointerleave', onLeave);
     }
     function onUp() { cleanup(); }
+    function onLeave() { cleanup(); }
     function tick() {
       if (done) return;
       const elapsed = Date.now() - startTime;
-      fill.style.width = `${Math.min(100, (elapsed / UNLOCK_HOLD_MS) * 100)}%`;
+      if (fill) fill.style.width = `${Math.min(100, (elapsed / UNLOCK_HOLD_MS) * 100)}%`;
       if (elapsed >= UNLOCK_HOLD_MS) {
         cleanup();
         entry.data.locked = false;
         applyLockedState(entry);
         Api.updateElement(entry.data.id, { locked: false }).catch(() => {});
+        if (selectedElementId === entry.data.id) showToolbarFor(entry);
         return;
       }
       raf = requestAnimationFrame(tick);
     }
-    window.addEventListener('pointermove', onMove);
     window.addEventListener('pointerup', onUp);
+    btn.addEventListener('pointerleave', onLeave);
     raf = requestAnimationFrame(tick);
   }
 
@@ -1396,6 +1451,17 @@
       }
     }
 
+    const lockBtn = toolbarEl.querySelector('.element-lock-btn');
+    if (lockBtn) {
+      lockBtn.addEventListener('pointerdown', e => e.stopPropagation());
+      lockBtn.addEventListener('click', () => {
+        entry.data.locked = true;
+        applyLockedState(entry);
+        Api.updateElement(entry.data.id, { locked: true }).catch(() => {});
+        showToolbarFor(entry);
+      });
+    }
+
     const dupBtn = toolbarEl.querySelector('.element-duplicate-btn');
     dupBtn.addEventListener('pointerdown', e => e.stopPropagation());
     dupBtn.addEventListener('click', () => duplicateElement(entry));
@@ -1523,7 +1589,9 @@
 
     el.addEventListener('pointerdown', (e) => {
       if (e.target.closest('.element-resize-handle') || e.target.closest('.element-line-handle') || e.target.closest('.connector-anchor')) return;
-      if (entry.data.locked) { e.stopPropagation(); startUnlockHold(entry, e); return; }
+      // Verrouillé : juste sélectionner (montre le bouton "appui long pour déverrouiller" dans le
+      // toolbar) — le décompte de déverrouillage se déclenche sur ce bouton, pas sur l'élément lui-même.
+      if (entry.data.locked) { e.stopPropagation(); selectElement(id); closeConfirmPopover(); return; }
       if (entry.cropping) return;
       // Pas de garde sur is-editing ici : un clic sur le textarea lui-même stoppe déjà la
       // propagation (cf. wireTextEditing) quand on édite, donc seul un clic sur le bord — hors
@@ -1533,6 +1601,11 @@
       if (groupIds) {
         e.stopPropagation();
         closeConfirmPopover();
+        if (entry.data.groupId && groupHasLockedMember(entry.data.groupId)) {
+          setMultiSelection(groupIds);
+          showToast("Ce groupe contient des éléments verrouillés : dégroupe-le d'abord si tu veux déplacer celui-ci.");
+          return;
+        }
         setMultiSelection(groupIds);
         startGroupDrag(groupIds, entry, e);
         return;
