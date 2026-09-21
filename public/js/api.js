@@ -38,12 +38,24 @@ const Api = (() => {
 
   const base = `/api/whiteboards/${whiteboardId}`;
 
+  // Le PATCH élément fait un lire-modifier-écrire côté serveur : si deux PATCH pour le même
+  // élément partent en parallèle (ex. double-clic rapide sur un toggle), ils peuvent être traités
+  // dans le désordre et le dernier à se terminer "gagne", même si ce n'est pas le dernier envoyé.
+  // On chaîne les PATCH par élément pour garantir que chacun parte une fois le précédent terminé.
+  const updateChains = new Map();
+  function updateElement(id, patch) {
+    const prev = updateChains.get(id) || Promise.resolve();
+    const next = prev.catch(() => {}).then(() => request('PATCH', `${base}/elements/${id}`, patch));
+    updateChains.set(id, next);
+    return next;
+  }
+
   return {
     token,
     whiteboardId,
     getWhiteboard: () => request('GET', base),
     createElement: (element) => request('POST', `${base}/elements`, element || {}),
-    updateElement: (id, patch) => request('PATCH', `${base}/elements/${id}`, patch),
+    updateElement,
     liveElement: (id, patch) => request('POST', `${base}/elements/${id}/live`, patch).catch(() => {}),
     deleteElement: (id) => request('DELETE', `${base}/elements/${id}`),
     sendCursor: (x, y) => request('POST', `${base}/cursor`, { x, y }).catch(() => {}),

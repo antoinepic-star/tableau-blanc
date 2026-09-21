@@ -122,6 +122,7 @@ async function initDb() {
       grayscale INTEGER NOT NULL DEFAULT 0,
       start_cap TEXT NOT NULL DEFAULT 'none',
       end_cap TEXT NOT NULL DEFAULT 'none',
+      line_style TEXT NOT NULL DEFAULT 'solid',
       background_color TEXT,
       z_index INTEGER NOT NULL DEFAULT 0,
       created_at INTEGER DEFAULT (unixepoch()),
@@ -149,6 +150,7 @@ async function initDb() {
     'ALTER TABLE whiteboard_elements ADD COLUMN grayscale INTEGER NOT NULL DEFAULT 0',
     "ALTER TABLE whiteboard_elements ADD COLUMN start_cap TEXT NOT NULL DEFAULT 'none'",
     "ALTER TABLE whiteboard_elements ADD COLUMN end_cap TEXT NOT NULL DEFAULT 'none'",
+    "ALTER TABLE whiteboard_elements ADD COLUMN line_style TEXT NOT NULL DEFAULT 'solid'",
     'ALTER TABLE whiteboard_elements ADD COLUMN background_color TEXT',
   ]) {
     try { await turso.execute(sql); } catch (_) {}
@@ -531,6 +533,7 @@ function parseElement(row) {
     grayscale: !!row.grayscale,
     startCap: row.start_cap,
     endCap: row.end_cap,
+    lineStyle: row.line_style,
     backgroundColor: row.background_color,
     zIndex: row.z_index,
     createdAt: row.created_at,
@@ -557,19 +560,19 @@ app.post('/api/whiteboards/:whiteboardId/elements', whiteboardAuth, ah(async (re
   const defaults = ELEMENT_DEFAULTS[type];
   const {
     x, y, width, height, rotation, color, text, fontSize, bold, italic, underline, strikethrough, imageData, grayscale,
-    startCap, endCap, backgroundColor,
+    startCap, endCap, lineStyle, backgroundColor,
   } = req.body || {};
   const { max } = await tursoGet('SELECT MAX(z_index) as max FROM whiteboard_elements WHERE whiteboard_id = ?', [req.params.whiteboardId]);
   const zIndex = (max ?? -1) + 1;
   const id = uuidv4();
   const columns = ['id', 'whiteboard_id', 'type', 'x', 'y', 'width', 'height', 'rotation', 'color', 'text', 'font_size',
-    'bold', 'italic', 'underline', 'strikethrough', 'image_data', 'grayscale', 'start_cap', 'end_cap', 'background_color', 'z_index'];
+    'bold', 'italic', 'underline', 'strikethrough', 'image_data', 'grayscale', 'start_cap', 'end_cap', 'line_style', 'background_color', 'z_index'];
   const values = [
     id, req.params.whiteboardId, type, x ?? 0, y ?? 0,
     width ?? defaults.width, height ?? defaults.height, rotation ?? 0,
     color ?? defaults.color ?? '#1c1c28', text || '', fontSize ?? defaults.fontSize ?? null,
     bold ? 1 : 0, italic ? 1 : 0, underline ? 1 : 0, strikethrough ? 1 : 0, imageData || null, grayscale ? 1 : 0,
-    startCap || 'none', endCap || 'none', backgroundColor || null, zIndex,
+    startCap || 'none', endCap || 'none', lineStyle || 'solid', backgroundColor || null, zIndex,
   ];
   await tursoRun(
     `INSERT INTO whiteboard_elements (${columns.join(', ')}) VALUES (${columns.map(() => '?').join(', ')})`,
@@ -592,7 +595,7 @@ app.patch('/api/whiteboards/:whiteboardId/elements/:id', whiteboardAuth, ah(asyn
   if (!existing) return res.status(404).json({ error: 'Introuvable' });
   const {
     x, y, width, height, rotation, color, text, fontSize, bold, italic, underline, strikethrough, imageData, grayscale,
-    startCap, endCap, backgroundColor, bringToFront,
+    startCap, endCap, lineStyle, backgroundColor, bringToFront,
   } = req.body || {};
 
   let zIndex = existing.z_index;
@@ -618,6 +621,7 @@ app.patch('/api/whiteboards/:whiteboardId/elements/:id', whiteboardAuth, ah(asyn
     grayscale: grayscale != null ? (grayscale ? 1 : 0) : existing.grayscale,
     start_cap: startCap ?? existing.start_cap,
     end_cap: endCap ?? existing.end_cap,
+    line_style: lineStyle ?? existing.line_style,
     background_color: backgroundColor !== undefined ? backgroundColor : existing.background_color,
     z_index: zIndex,
   };

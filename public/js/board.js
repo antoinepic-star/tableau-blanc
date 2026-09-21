@@ -1,8 +1,8 @@
 (() => {
-  const ELEMENT_COLORS = ['#FFF176', '#FFCC80', '#F8BBD0', '#EF9A9A', '#A5D6A7', '#80CBC4', '#90CAF9', '#CE93D8'];
+  const ELEMENT_COLORS = ['#FFF176', '#FFCC80', '#F8BBD0', '#EF9A9A', '#A5D6A7', '#80CBC4', '#90CAF9', '#CE93D8', '#FFFFFF', '#989898', '#232323'];
   const FONT_SIZES = [12, 14, 16, 18, 22, 28, 36, 48];
   const LINE_THICKNESSES = [2, 4, 6, 10];
-  const CAP_OPTIONS = [['none', 'Aucune'], ['arrow', 'Flèche'], ['dot', 'Point']];
+  const LINE_STYLES = [['solid', 'Continu'], ['dashed', 'Pointillés']];
   const MIN_W = 60;
   const MIN_H = 40;
   const MIN_LINE_LENGTH = 30;
@@ -331,12 +331,6 @@
 
   // ---------- Rendu des éléments ----------
 
-  function capIconSvg(cap) {
-    if (cap === 'arrow') return `<svg width="20" height="14" viewBox="0 0 20 14"><line x1="1" y1="7" x2="14" y2="7" stroke="currentColor" stroke-width="2"/><polygon points="13,2 19,7 13,12" fill="currentColor"/></svg>`;
-    if (cap === 'dot') return `<svg width="20" height="14" viewBox="0 0 20 14"><line x1="1" y1="7" x2="15" y2="7" stroke="currentColor" stroke-width="2"/><circle cx="17" cy="7" r="3" fill="currentColor"/></svg>`;
-    return `<svg width="20" height="14" viewBox="0 0 20 14"><line x1="1" y1="7" x2="19" y2="7" stroke="currentColor" stroke-width="2"/></svg>`;
-  }
-
   function colorDropdownHtml(role, currentColor, allowNone, title) {
     const colors = allowNone ? [null, ...ELEMENT_COLORS] : ELEMENT_COLORS;
     return `
@@ -366,24 +360,18 @@
   }
 
   function thicknessDropdownHtml(data) {
+    const currentStyle = data.lineStyle || 'solid';
     return `
       <div class="toolbar-dropdown" data-role="thickness-wrap">
-        <button type="button" class="toolbar-dropdown-trigger" data-role="thickness-trigger" title="Épaisseur">
-          <span class="toolbar-thickness-preview" style="height:${clamp(data.height, 2, 12)}px"></span>
+        <button type="button" class="toolbar-dropdown-trigger" data-role="thickness-trigger" title="Épaisseur et style">
+          <span class="toolbar-thickness-preview${currentStyle === 'dashed' ? ' is-dashed' : ''}" style="height:${clamp(data.height, 2, 12)}px"></span>
         </button>
         <div class="toolbar-popover toolbar-thickness-popover" data-role="thickness-popover">
-          ${LINE_THICKNESSES.map(t => `<button type="button" class="toolbar-thickness-option${data.height === t ? ' is-active' : ''}" data-thickness="${t}"><span class="toolbar-thickness-bar" style="height:${t}px"></span></button>`).join('')}
-        </div>
-      </div>
-    `;
-  }
-
-  function capDropdownHtml(role, current, title) {
-    return `
-      <div class="toolbar-dropdown" data-role="${role}-wrap">
-        <button type="button" class="toolbar-dropdown-trigger" data-role="${role}-trigger" title="${title}">${capIconSvg(current)}</button>
-        <div class="toolbar-popover toolbar-cap-popover" data-role="${role}-popover">
-          ${CAP_OPTIONS.map(([v, label]) => `<button type="button" class="toolbar-cap-option${current === v ? ' is-active' : ''}" data-cap="${v}" title="${label}">${capIconSvg(v)}</button>`).join('')}
+          ${LINE_STYLES.map(([style, label]) => `
+            <div class="toolbar-thickness-row">
+              ${LINE_THICKNESSES.map(t => `<button type="button" class="toolbar-thickness-option${data.height === t && currentStyle === style ? ' is-active' : ''}" data-thickness="${t}" data-style="${style}" title="${label} ${t}px"><span class="toolbar-thickness-bar${style === 'dashed' ? ' is-dashed' : ''}" style="height:${t}px"></span></button>`).join('')}
+            </div>
+          `).join('')}
         </div>
       </div>
     `;
@@ -395,9 +383,7 @@
       controls = colorDropdownHtml('color', data.color, false, 'Couleur');
     } else if (data.type === 'line') {
       controls = colorDropdownHtml('color', data.color, false, 'Couleur')
-        + thicknessDropdownHtml(data)
-        + capDropdownHtml('startCap', data.startCap, 'Extrémité de départ')
-        + capDropdownHtml('endCap', data.endCap, 'Extrémité de fin');
+        + thicknessDropdownHtml(data);
     } else if (data.type === 'text') {
       controls = colorDropdownHtml('color', data.color, false, 'Couleur du texte')
         + colorDropdownHtml('bg', data.backgroundColor, true, 'Couleur de fond')
@@ -459,7 +445,16 @@
 
   function refreshToolbarIfSelected(entry) {
     if (selectedElementId !== entry.data.id || !toolbarEl.classList.contains('is-open')) return;
+    // Un écho serveur (bringToFront, etc.) peut arriver pendant que l'utilisateur vient d'ouvrir un
+    // popover (couleur, épaisseur...) : le rebuild ci-dessous recrée le DOM du toolbar, ce qui le
+    // refermerait aussitôt. On mémorise le popover ouvert pour le rouvrir après reconstruction.
+    const openPopover = toolbarEl.querySelector('.toolbar-popover.is-open');
+    const openRole = openPopover ? openPopover.dataset.role : null;
     showToolbarFor(entry);
+    if (openRole) {
+      const popover = toolbarEl.querySelector(`[data-role="${openRole}"]`);
+      if (popover) popover.classList.add('is-open');
+    }
   }
 
   function renderElement(data) {
@@ -484,13 +479,8 @@
       textEl = el.querySelector('.element-text');
       textEl.value = data.text || '';
     } else if (data.type === 'line') {
-      el.style.background = data.color;
       el.style.transform = `rotate(${data.rotation}deg)`;
-      el.innerHTML = `
-        <div class="line-cap line-cap-start"></div>
-        <div class="line-cap line-cap-end"></div>
-        <div class="element-line-handle"></div>
-      `;
+      el.innerHTML = `<div class="element-line-handle"></div>`;
     } else if (data.type === 'text') {
       el.innerHTML = `
         <textarea class="element-text" placeholder="Texte…" maxlength="4000"></textarea>
@@ -510,7 +500,7 @@
     elements.set(data.id, entry);
 
     if (data.type === 'text') { applyTextStyle(entry); applyElementBackground(entry); }
-    if (data.type === 'line') applyLineCaps(entry);
+    if (data.type === 'line') applyLineStyle(entry);
     if (data.type === 'image') applyImageFilters(entry);
 
     wireElementInteractions(entry);
@@ -532,6 +522,7 @@
 
   function applyElementColor(entry) {
     if (entry.data.type === 'text') { if (entry.textEl) entry.textEl.style.color = entry.data.color; }
+    else if (entry.data.type === 'line') applyLineStyle(entry);
     else entry.el.style.background = entry.data.color;
   }
 
@@ -554,20 +545,18 @@
     entry.el.style.borderRadius = entry.data.backgroundColor ? '4px' : '0';
   }
 
-  function capContentHtml(cap, color, thickness, pointsOutwardRight) {
-    if (!cap || cap === 'none') return '';
-    const s = clamp(thickness * 2, 8, 20);
-    if (cap === 'dot') return `<div style="width:${s}px;height:${s}px;border-radius:50%;background:${color};"></div>`;
-    const rotate = pointsOutwardRight ? 0 : 180;
-    return `<svg width="${s + 4}" height="${s}" viewBox="0 0 ${s + 4} ${s}" style="transform:rotate(${rotate}deg)"><polygon points="0,0 ${s + 4},${s / 2} 0,${s}" fill="${color}"/></svg>`;
-  }
-
-  function applyLineCaps(entry) {
+  // Trait continu = simple aplat de couleur ; pointillés = dégradé répété le long de la longueur
+  // (l'élément est une barre pivotée, donc "vers la droite" correspond toujours à la longueur du trait).
+  function applyLineStyle(entry) {
     if (entry.data.type !== 'line') return;
-    const startEl = entry.el.querySelector('.line-cap-start');
-    const endEl = entry.el.querySelector('.line-cap-end');
-    if (startEl) startEl.innerHTML = capContentHtml(entry.data.startCap, entry.data.color, entry.data.height, false);
-    if (endEl) endEl.innerHTML = capContentHtml(entry.data.endCap, entry.data.color, entry.data.height, true);
+    const { color, height } = entry.data;
+    if (entry.data.lineStyle === 'dashed') {
+      const dash = Math.max(6, height * 2.2);
+      const gap = Math.max(5, height * 1.6);
+      entry.el.style.background = `repeating-linear-gradient(to right, ${color} 0, ${color} ${dash}px, transparent ${dash}px, transparent ${dash + gap}px)`;
+    } else {
+      entry.el.style.background = color;
+    }
   }
 
   function applyRemoteUpdate(data) {
@@ -583,9 +572,8 @@
     entry.el.style.zIndex = data.zIndex;
 
     if (data.type === 'line') {
-      entry.el.style.background = data.color;
       entry.el.style.transform = `rotate(${data.rotation}deg)`;
-      applyLineCaps(entry);
+      applyLineStyle(entry);
     } else if (data.type === 'note') {
       entry.el.style.background = data.color;
       if (document.activeElement !== entry.textEl) entry.textEl.value = data.text || '';
@@ -615,7 +603,7 @@
       type: d.type, x: d.x + 24, y: d.y + 24, width: d.width, height: d.height, rotation: d.rotation,
       color: d.color, text: d.text, fontSize: d.fontSize, bold: d.bold, italic: d.italic,
       underline: d.underline, strikethrough: d.strikethrough, imageData: d.imageData, grayscale: d.grayscale,
-      startCap: d.startCap, endCap: d.endCap, backgroundColor: d.backgroundColor,
+      lineStyle: d.lineStyle, backgroundColor: d.backgroundColor,
     }).catch(err => alert(err.message));
   }
 
@@ -677,34 +665,19 @@
       opt.addEventListener('pointerdown', e => e.stopPropagation());
       opt.addEventListener('click', () => {
         const h = Number(opt.dataset.thickness);
+        const style = opt.dataset.style;
         entry.data.height = h;
+        entry.data.lineStyle = style;
         entry.el.style.height = `${h}px`;
-        applyLineCaps(entry);
+        applyLineStyle(entry);
         popover.querySelectorAll('.toolbar-thickness-option').forEach(o => o.classList.remove('is-active'));
         opt.classList.add('is-active');
-        trigger.querySelector('.toolbar-thickness-preview').style.height = `${h}px`;
+        const preview = trigger.querySelector('.toolbar-thickness-preview');
+        preview.style.height = `${h}px`;
+        preview.classList.toggle('is-dashed', style === 'dashed');
         popover.classList.remove('is-open');
-        Api.updateElement(entry.data.id, { height: h }).catch(() => {});
+        Api.updateElement(entry.data.id, { height: h, lineStyle: style }).catch(() => {});
         repositionToolbar(entry);
-      });
-    });
-  }
-
-  function wireCapDropdown(entry, role) {
-    const parts = wireDropdownToggle(role);
-    if (!parts) return;
-    const { trigger, popover } = parts;
-    popover.querySelectorAll('.toolbar-cap-option').forEach((opt) => {
-      opt.addEventListener('pointerdown', e => e.stopPropagation());
-      opt.addEventListener('click', () => {
-        const cap = opt.dataset.cap;
-        entry.data[role] = cap;
-        applyLineCaps(entry);
-        popover.querySelectorAll('.toolbar-cap-option').forEach(o => o.classList.remove('is-active'));
-        opt.classList.add('is-active');
-        trigger.innerHTML = capIconSvg(cap);
-        popover.classList.remove('is-open');
-        Api.updateElement(entry.data.id, { [role]: cap }).catch(() => {});
       });
     });
   }
@@ -717,15 +690,12 @@
       wireColorDropdown(entry, 'color', (color) => {
         entry.data.color = color;
         applyElementColor(entry);
-        if (type === 'line') applyLineCaps(entry);
         Api.updateElement(id, { color }).catch(err => alert(err.message));
       });
     }
 
     if (type === 'line') {
       wireThicknessDropdown(entry);
-      wireCapDropdown(entry, 'startCap');
-      wireCapDropdown(entry, 'endCap');
     }
 
     if (type === 'text') {

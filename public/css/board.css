@@ -164,12 +164,6 @@ body.board-page { overflow: hidden; height: 100vh; }
   display: none;
 }
 .element[data-type="line"].is-selected .element-line-handle { display: block; }
-.line-cap {
-  position: absolute; top: 50%; width: 28px; height: 28px; transform: translate(-50%, -50%);
-  display: flex; align-items: center; justify-content: center; pointer-events: none;
-}
-.line-cap-start { left: 0; }
-.line-cap-end { left: 100%; }
 
 /* ---- Texte ---- */
 .element[data-type="text"] {
@@ -267,7 +261,7 @@ body.board-page { overflow: hidden; height: 100vh; }
 }
 .toolbar-color-dot-none { background: repeating-conic-gradient(#ddd 0% 25%, #fff 0% 50%) 0 0/8px 8px; }
 .toolbar-color-swatch {
-  width: 24px; height: 24px; border-radius: 50%; border: 2px solid transparent; cursor: pointer; padding: 0;
+  width: 24px; height: 24px; border-radius: 50%; border: 2px solid rgba(0,0,0,0.1); cursor: pointer; padding: 0;
 }
 .toolbar-color-swatch.is-active { border-color: var(--text); }
 .toolbar-color-swatch.is-none { background: repeating-conic-gradient(#ddd 0% 25%, #fff 0% 50%) 0 0/8px 8px; }
@@ -284,7 +278,8 @@ body.board-page { overflow: hidden; height: 100vh; }
 .element-format-btn.is-underline { text-decoration: underline; }
 .element-format-btn.is-strike { text-decoration: line-through; }
 
-.toolbar-thickness-popover.is-open { display: flex; gap: 4px; }
+.toolbar-thickness-popover.is-open { display: flex; flex-direction: column; gap: 4px; }
+.toolbar-thickness-row { display: flex; gap: 4px; }
 .toolbar-thickness-option {
   width: 34px; height: 30px; border: none; background: transparent; border-radius: 6px;
   cursor: pointer; display: flex; align-items: center; justify-content: center;
@@ -292,14 +287,10 @@ body.board-page { overflow: hidden; height: 100vh; }
 .toolbar-thickness-option:hover { background: #f4f4f6; }
 .toolbar-thickness-option.is-active { background: var(--purple-light, #fbf1dd); }
 .toolbar-thickness-bar, .toolbar-thickness-preview { display: block; width: 18px; border-radius: 2px; background: var(--text); }
-
-.toolbar-cap-popover.is-open { display: flex; gap: 2px; }
-.toolbar-cap-option {
-  width: 34px; height: 28px; border: none; background: transparent; border-radius: 6px;
-  cursor: pointer; display: flex; align-items: center; justify-content: center; color: var(--text);
+.toolbar-thickness-bar.is-dashed, .toolbar-thickness-preview.is-dashed {
+  background: repeating-linear-gradient(to right, var(--text) 0 4px, transparent 4px 7px);
+  border-radius: 0;
 }
-.toolbar-cap-option:hover { background: #f4f4f6; }
-.toolbar-cap-option.is-active { background: var(--purple); color: #fff; }
 
 /* ---------- Popin de confirmation de suppression ---------- */
 
