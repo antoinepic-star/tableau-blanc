@@ -4,7 +4,7 @@
   const LINE_THICKNESSES = [2, 4, 6, 10];
   const LINE_STYLES = [['solid', 'Continu'], ['dashed', 'Pointillés']];
   const STROKE_WIDTHS = [0, 1, 2, 4, 6];
-  const RADIUS_PRESETS = [['Aucun', 0], ['Léger', 8], ['Moyen', 20], ['Complet', 999]];
+  const RADIUS_PRESETS = [['Aucun', 0, 0], ['Léger', 8, 3], ['Moyen', 20, 6], ['Complet', 999, 8]];
   const MIN_W = 60;
   const MIN_H = 40;
   const MIN_LINE_LENGTH = 30;
@@ -54,7 +54,10 @@
     Realtime.repositionAll();
     if (selectedElementId) {
       const entry = elements.get(selectedElementId);
-      if (entry) repositionToolbar(entry);
+      if (entry) {
+        repositionToolbar(entry);
+        if (entry.data.locked) showGroupFrame(entry);
+      }
     }
     if (multiSelectedIds.size >= 2) repositionMultiToolbar();
   }
@@ -65,24 +68,6 @@
   }
 
   function hideHint() { hintPill.classList.add('is-hidden'); }
-
-  // Message furtif non bloquant — contrairement à alert(), il n'interrompt pas un geste en cours.
-  let activeToastTimer = null;
-  function showToast(message) {
-    let toast = document.querySelector('.app-toast');
-    if (!toast) {
-      toast = document.createElement('div');
-      toast.className = 'app-toast';
-      document.body.appendChild(toast);
-    }
-    toast.textContent = message;
-    clearTimeout(activeToastTimer);
-    requestAnimationFrame(() => toast.classList.add('is-visible'));
-    activeToastTimer = setTimeout(() => {
-      toast.classList.remove('is-visible');
-      setTimeout(() => toast.remove(), 250);
-    }, 3200);
-  }
 
   // ---------- Zoom / pan (molette et trackpad uniquement — le glisser du fond sert à la sélection) ----------
 
@@ -190,7 +175,7 @@
     };
     const captured = [];
     elements.forEach((entry) => {
-      if (entry.data.type === 'connector' || entry.data.locked) return;
+      if (entry.data.locked) return;
       const r = entry.el.getBoundingClientRect();
       if (rectsIntersect(selRect, r)) captured.push(entry.data.id);
     });
@@ -539,15 +524,22 @@
     `;
   }
 
+  function radiusIconSvg(iconRx) {
+    return `<svg width="18" height="18" viewBox="0 0 18 18"><rect x="2" y="2" width="14" height="14" rx="${iconRx}" fill="none" stroke="currentColor" stroke-width="2"/></svg>`;
+  }
+
   function radiusDropdownHtml(data) {
     const r = data.radius || 0;
+    const current = RADIUS_PRESETS.find(([, val]) => val === r) || RADIUS_PRESETS[0];
     return `
       <div class="toolbar-dropdown" data-role="radius-wrap">
         <button type="button" class="toolbar-dropdown-trigger" data-role="radius-trigger" title="Arrondi des angles">
-          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M9 4H8a4 4 0 0 0-4 4v1"/><path d="M4 16v1a3 3 0 0 0 3 3h1"/><path d="M15 20h1a3 3 0 0 0 3-3v-1"/><path d="M20 9V8a4 4 0 0 0-4-4h-1"/></svg>
+          ${radiusIconSvg(current[2])}
         </button>
-        <div class="toolbar-popover toolbar-format-popover" data-role="radius-popover">
-          ${RADIUS_PRESETS.map(([label, val]) => `<button type="button" class="element-format-btn${r === val ? ' is-active' : ''}" data-radius="${val}" title="${label}">${label.slice(0, 1)}</button>`).join('')}
+        <div class="toolbar-popover toolbar-thickness-popover" data-role="radius-popover">
+          <div class="toolbar-thickness-row">
+            ${RADIUS_PRESETS.map(([label, val, iconRx]) => `<button type="button" class="toolbar-thickness-option${r === val ? ' is-active' : ''}" data-radius="${val}" title="${label}">${radiusIconSvg(iconRx)}</button>`).join('')}
+          </div>
         </div>
       </div>
     `;
@@ -605,12 +597,18 @@
 
   // Barre affichée à la place du toolbar normal quand l'élément sélectionné est verrouillé : un
   // seul bouton "appui long pour déverrouiller", dont le fond se remplit pendant l'appui (façon Miro).
-  function buildLockedToolbarHtml() {
+  // Le verrouillage étant toujours appliqué à un groupe entier d'un coup (jamais élément par élément
+  // au sein d'un groupe), le libellé précise le nombre d'éléments quand il s'agit d'un groupe.
+  function buildLockedToolbarHtml(entry) {
+    const members = entry.data.groupId ? groupMembers(entry.data.groupId) : [];
+    const label = members.length > 1
+      ? `Appui long pour déverrouiller le groupe (${members.length} éléments)`
+      : 'Appui long pour déverrouiller';
     return `
       <button type="button" class="unlock-hold-btn">
         <span class="unlock-hold-fill"></span>
         <svg class="unlock-hold-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>
-        <span class="unlock-hold-label">Appui long pour déverrouiller</span>
+        <span class="unlock-hold-label">${label}</span>
       </button>
     `;
   }
@@ -627,10 +625,6 @@
     const ids = [];
     elements.forEach((entry) => { if (entry.data.groupId === groupId) ids.push(entry.data.id); });
     return ids;
-  }
-
-  function groupHasLockedMember(groupId) {
-    return groupMembers(groupId).some((id) => elements.get(id)?.data.locked);
   }
 
   function buildMultiToolbarHtml() {
@@ -674,12 +668,14 @@
 
   function showToolbarFor(entry) {
     if (entry.data.locked) {
-      toolbarEl.innerHTML = buildLockedToolbarHtml();
+      toolbarEl.innerHTML = buildLockedToolbarHtml(entry);
       toolbarEl.classList.add('is-open');
       wireUnlockButton(entry);
       repositionToolbar(entry);
+      showGroupFrame(entry);
       return;
     }
+    hideGroupFrame();
     toolbarEl.innerHTML = buildToolbarHtml(entry.data);
     toolbarEl.classList.add('is-open');
     wireToolbarControls(entry);
@@ -689,6 +685,47 @@
   function hideToolbar() {
     toolbarEl.classList.remove('is-open');
     toolbarEl.innerHTML = '';
+    hideGroupFrame();
+  }
+
+  // ---------- Cadre de groupe (visible quand un élément verrouillé appartenant à un groupe est
+  // sélectionné, puisque le clic ne montre alors que lui seul, pas toute la multi-sélection) ----------
+
+  let groupFrameEl = null;
+  function ensureGroupFrameEl() {
+    if (!groupFrameEl) {
+      groupFrameEl = document.createElement('div');
+      groupFrameEl.className = 'group-frame';
+      document.body.appendChild(groupFrameEl);
+    }
+    return groupFrameEl;
+  }
+
+  function showGroupFrame(entry) {
+    const members = entry.data.groupId ? groupMembers(entry.data.groupId).map(id => elements.get(id)).filter(Boolean) : [];
+    if (members.length < 2) { hideGroupFrame(); return; }
+    const frame = ensureGroupFrameEl();
+    let rect = null;
+    members.forEach((en) => {
+      const r = en.el.getBoundingClientRect();
+      if (!rect) rect = { left: r.left, top: r.top, right: r.right, bottom: r.bottom };
+      else {
+        rect.left = Math.min(rect.left, r.left);
+        rect.top = Math.min(rect.top, r.top);
+        rect.right = Math.max(rect.right, r.right);
+        rect.bottom = Math.max(rect.bottom, r.bottom);
+      }
+    });
+    const pad = 8;
+    frame.style.left = `${rect.left - pad}px`;
+    frame.style.top = `${rect.top - pad}px`;
+    frame.style.width = `${rect.right - rect.left + pad * 2}px`;
+    frame.style.height = `${rect.bottom - rect.top + pad * 2}px`;
+    frame.classList.add('is-visible');
+  }
+
+  function hideGroupFrame() {
+    if (groupFrameEl) groupFrameEl.classList.remove('is-visible');
   }
 
   function refreshToolbarIfSelected(entry) {
@@ -794,23 +831,23 @@
     const ids = [...multiSelectedIds];
     const entries = ids.map(id => elements.get(id)).filter(Boolean);
     if (!entries.length) return;
+    // Un connecteur n'a pas de position propre (dérivée de ses deux ancres) : l'aligner n'a pas de
+    // sens, et il serait de toute façon aussitôt "remis à sa place" au prochain recalcul.
+    const movable = entries.filter(en => en.data.type !== 'connector');
     const isAlign = action === 'align-left' || action === 'align-right' || action === 'align-center';
-    if (isAlign && entries.some(en => en.data.locked)) {
-      showToast("Cette sélection contient des éléments verrouillés : dégroupe-la d'abord si tu veux les aligner.");
-      return;
-    }
+    if (isAlign && !movable.length) return;
 
     if (action === 'align-left') {
-      const minX = Math.min(...entries.map(en => en.data.x));
-      entries.forEach(en => moveElementTo(en, minX, en.data.y));
+      const minX = Math.min(...movable.map(en => en.data.x));
+      movable.forEach(en => moveElementTo(en, minX, en.data.y));
     } else if (action === 'align-right') {
-      const maxRight = Math.max(...entries.map(en => en.data.x + en.data.width));
-      entries.forEach(en => moveElementTo(en, maxRight - en.data.width, en.data.y));
+      const maxRight = Math.max(...movable.map(en => en.data.x + en.data.width));
+      movable.forEach(en => moveElementTo(en, maxRight - en.data.width, en.data.y));
     } else if (action === 'align-center') {
-      const minX = Math.min(...entries.map(en => en.data.x));
-      const maxRight = Math.max(...entries.map(en => en.data.x + en.data.width));
+      const minX = Math.min(...movable.map(en => en.data.x));
+      const maxRight = Math.max(...movable.map(en => en.data.x + en.data.width));
       const centerX = (minX + maxRight) / 2;
-      entries.forEach(en => moveElementTo(en, centerX - en.data.width / 2, en.data.y));
+      movable.forEach(en => moveElementTo(en, centerX - en.data.width / 2, en.data.y));
     } else if (action === 'group') {
       const gid = randomId();
       entries.forEach((en) => {
@@ -825,10 +862,19 @@
       });
       showMultiToolbar();
     } else if (action === 'lock') {
+      // Toujours verrouiller le(s) groupe(s) entier(s), même si la sélection (ex. rectangle de
+      // sélection) n'en capturait qu'une partie — jamais un verrouillage partiel d'un groupe.
+      const idsToLock = new Set();
       entries.forEach((en) => {
+        if (en.data.groupId) groupMembers(en.data.groupId).forEach(id => idsToLock.add(id));
+        else idsToLock.add(en.data.id);
+      });
+      idsToLock.forEach((id) => {
+        const en = elements.get(id);
+        if (!en) return;
         en.data.locked = true;
         applyLockedState(en);
-        Api.updateElement(en.data.id, { locked: true }).catch(() => {});
+        Api.updateElement(id, { locked: true }).catch(() => {});
       });
       clearMultiSelection();
       return;
@@ -885,9 +931,15 @@
       if (fill) fill.style.width = `${Math.min(100, (elapsed / UNLOCK_HOLD_MS) * 100)}%`;
       if (elapsed >= UNLOCK_HOLD_MS) {
         cleanup();
-        entry.data.locked = false;
-        applyLockedState(entry);
-        Api.updateElement(entry.data.id, { locked: false }).catch(() => {});
+        // Déverrouille tout le groupe d'un coup (symétrique du verrouillage) — jamais un seul membre.
+        const ids = entry.data.groupId ? groupMembers(entry.data.groupId) : [entry.data.id];
+        ids.forEach((id) => {
+          const en = elements.get(id);
+          if (!en) return;
+          en.data.locked = false;
+          applyLockedState(en);
+          Api.updateElement(id, { locked: false }).catch(() => {});
+        });
         if (selectedElementId === entry.data.id) showToolbarFor(entry);
         return;
       }
@@ -946,7 +998,9 @@
       `;
     } else if (data.type === 'rectangle') {
       el.innerHTML = `
-        <textarea class="element-text element-text-rect" placeholder="" maxlength="4000"></textarea>
+        <div class="element-text-frame">
+          <textarea class="element-text element-text-rect" placeholder="" maxlength="4000"></textarea>
+        </div>
         <div class="element-resize-handle"></div>
         ${anchorsHtml}
       `;
@@ -962,7 +1016,7 @@
     if (data.type === 'line' || data.type === 'connector') applyLineStyle(entry);
     if (data.type === 'connector') applyConnectorCaps(entry);
     if (data.type === 'image') applyImageFilters(entry);
-    if (data.type === 'rectangle') applyRectangleStyle(entry);
+    if (data.type === 'rectangle') { applyRectangleStyle(entry); autoGrowRectangleTextarea(entry); }
     applyLockedState(entry);
 
     if (data.type === 'connector') { registerConnector(entry); renderConnectorGeometry(entry); }
@@ -1020,6 +1074,16 @@
     entry.el.style.borderRadius = r >= 999 ? '999px' : `${r}px`;
   }
 
+  // Un textarea ne peut pas centrer verticalement son propre contenu : on le laisse plutôt grandir à
+  // la hauteur exacte de son texte (comme un textarea auto-expansif classique), et c'est le cadre
+  // parent (.element-text-frame, en flex) qui centre cette boîte plus courte dans le rectangle.
+  function autoGrowRectangleTextarea(entry) {
+    if (entry.data.type !== 'rectangle' || !entry.textEl) return;
+    const t = entry.textEl;
+    t.style.height = '0px';
+    t.style.height = `${t.scrollHeight}px`;
+  }
+
   // Trait/connecteur continu = simple aplat de couleur ; pointillés = dégradé répété le long de la
   // longueur (l'élément est une barre pivotée, donc "vers la droite" correspond toujours à sa longueur).
   function applyLineStyle(entry) {
@@ -1034,17 +1098,20 @@
     }
   }
 
-  function capArrowHtml(color, thickness) {
+  // pointLeft=true pour l'extrémité de départ : la pointe doit rentrer VERS l'élément d'origine (donc
+  // vers la gauche, dans l'espace local du connecteur), pas repartir dans le sens du trait.
+  function capArrowHtml(color, thickness, pointLeft) {
     const s = clamp(thickness * 2.4, 10, 20);
-    return `<svg width="${s + 4}" height="${s}" viewBox="0 0 ${s + 4} ${s}"><polygon points="0,0 ${s + 4},${s / 2} 0,${s}" fill="${color}"/></svg>`;
+    const points = pointLeft ? `${s + 4},0 0,${s / 2} ${s + 4},${s}` : `0,0 ${s + 4},${s / 2} 0,${s}`;
+    return `<svg width="${s + 4}" height="${s}" viewBox="0 0 ${s + 4} ${s}"><polygon points="${points}" fill="${color}"/></svg>`;
   }
 
   function applyConnectorCaps(entry) {
     if (entry.data.type !== 'connector') return;
     const startEl = entry.el.querySelector('.line-cap-start');
     const endEl = entry.el.querySelector('.line-cap-end');
-    if (startEl) startEl.innerHTML = entry.data.startCap === 'arrow' ? capArrowHtml(entry.data.color, entry.data.height) : '';
-    if (endEl) endEl.innerHTML = entry.data.endCap === 'arrow' ? capArrowHtml(entry.data.color, entry.data.height) : '';
+    if (startEl) startEl.innerHTML = entry.data.startCap === 'arrow' ? capArrowHtml(entry.data.color, entry.data.height, true) : '';
+    if (endEl) endEl.innerHTML = entry.data.endCap === 'arrow' ? capArrowHtml(entry.data.color, entry.data.height, false) : '';
   }
 
   function applyRemoteUpdate(data) {
@@ -1085,6 +1152,7 @@
     } else if (data.type === 'rectangle') {
       if (document.activeElement !== entry.textEl) entry.textEl.value = data.text || '';
       applyRectangleStyle(entry);
+      autoGrowRectangleTextarea(entry);
     }
 
     updateConnectorsFor(data.id);
@@ -1348,7 +1416,7 @@
   function wireRadiusDropdown(entry) {
     const parts = wireDropdownToggle('radius');
     if (!parts) return;
-    const { popover } = parts;
+    const { trigger, popover } = parts;
     popover.querySelectorAll('[data-radius]').forEach((opt) => {
       opt.addEventListener('pointerdown', e => e.stopPropagation());
       opt.addEventListener('click', () => {
@@ -1357,6 +1425,8 @@
         applyRectangleStyle(entry);
         popover.querySelectorAll('[data-radius]').forEach(o => o.classList.remove('is-active'));
         opt.classList.add('is-active');
+        const preset = RADIUS_PRESETS.find(([, val]) => val === r);
+        if (preset) trigger.innerHTML = radiusIconSvg(preset[2]);
         popover.classList.remove('is-open');
         Api.updateElement(entry.data.id, { radius: r }).catch(() => {});
       });
@@ -1455,9 +1525,17 @@
     if (lockBtn) {
       lockBtn.addEventListener('pointerdown', e => e.stopPropagation());
       lockBtn.addEventListener('click', () => {
-        entry.data.locked = true;
-        applyLockedState(entry);
-        Api.updateElement(entry.data.id, { locked: true }).catch(() => {});
+        // Le verrouillage porte toujours sur le groupe entier d'un coup, jamais élément par élément
+        // au sein d'un même groupe — sinon un groupe pourrait finir dans un état incohérent
+        // (certains membres verrouillés, d'autres non).
+        const ids = entry.data.groupId ? groupMembers(entry.data.groupId) : [entry.data.id];
+        ids.forEach((id) => {
+          const en = elements.get(id);
+          if (!en) return;
+          en.data.locked = true;
+          applyLockedState(en);
+          Api.updateElement(id, { locked: true }).catch(() => {});
+        });
         showToolbarFor(entry);
       });
     }
@@ -1490,6 +1568,7 @@
     textEl.addEventListener('input', () => {
       entry.data.text = textEl.value;
       if (entry.data.type === 'text') applyTextAutoSize(entry);
+      if (entry.data.type === 'rectangle') autoGrowRectangleTextarea(entry);
       clearTimeout(textSaveTimer);
       textSaveTimer = setTimeout(() => {
         const patch = { text: textEl.value };
@@ -1563,18 +1642,25 @@
       window.removeEventListener('pointerup', onUp);
       ids.forEach((mid) => {
         const en = elements.get(mid);
-        if (!en) return;
-        en.dragging = false;
-        en.el.classList.remove('is-dragging');
+        if (en) en.el.classList.remove('is-dragging');
       });
       if (moved) {
+        // entry.dragging reste vrai jusqu'à la réponse du PATCH final : sinon un écho "element:dragging"
+        // encore en vol (le dernier envoyé pendant le glisser) peut arriver après coup et écraser la
+        // position définitive par une valeur intermédiaire plus ancienne.
         ids.forEach((mid) => {
           const en = elements.get(mid);
-          if (en) Api.updateElement(mid, { x: en.data.x, y: en.data.y, bringToFront: true }).then(applyRemoteUpdate).catch(() => {});
+          if (!en) return;
+          Api.updateElement(mid, { x: en.data.x, y: en.data.y, bringToFront: true })
+            .then((data) => { en.dragging = false; applyRemoteUpdate(data); })
+            .catch(() => { en.dragging = false; });
         });
-      } else if (!isRealGroup) {
-        clearMultiSelection();
-        selectElement(entry.data.id);
+      } else {
+        ids.forEach((mid) => { const en = elements.get(mid); if (en) en.dragging = false; });
+        if (!isRealGroup) {
+          clearMultiSelection();
+          selectElement(entry.data.id);
+        }
       }
     }
 
@@ -1597,15 +1683,12 @@
       // propagation (cf. wireTextEditing) quand on édite, donc seul un clic sur le bord — hors
       // textarea — arrive jusqu'ici, et il doit pouvoir démarrer un glisser même en édition.
 
+      // Verrouillage toujours appliqué au groupe entier (jamais partiellement, cf. plus haut) : si on
+      // arrive ici, l'élément n'est pas verrouillé, donc aucun de ses coéquipiers de groupe non plus.
       const groupIds = activeGroupIdsFor(entry);
       if (groupIds) {
         e.stopPropagation();
         closeConfirmPopover();
-        if (entry.data.groupId && groupHasLockedMember(entry.data.groupId)) {
-          setMultiSelection(groupIds);
-          showToast("Ce groupe contient des éléments verrouillés : dégroupe-le d'abord si tu veux déplacer celui-ci.");
-          return;
-        }
         setMultiSelection(groupIds);
         startGroupDrag(groupIds, entry, e);
         return;
@@ -1651,12 +1734,17 @@
       const wasMoved = dragState.moved;
       el.releasePointerCapture(dragState.pointerId);
       dragState = null;
-      entry.dragging = false;
       el.classList.remove('is-dragging');
       if (wasMoved) {
-        Api.updateElement(id, { x: entry.data.x, y: entry.data.y, bringToFront: true }).then(applyRemoteUpdate).catch(() => {});
-      } else if (entry.enterEditing) {
-        entry.enterEditing();
+        // Idem : on ne relâche le verrou "dragging" qu'une fois la réponse du PATCH appliquée, pour
+        // qu'un écho "element:dragging" tardif (dernier envoi live avant relâchement) ne vienne pas
+        // écraser la position finale par une valeur intermédiaire plus ancienne.
+        Api.updateElement(id, { x: entry.data.x, y: entry.data.y, bringToFront: true })
+          .then((data) => { entry.dragging = false; applyRemoteUpdate(data); })
+          .catch(() => { entry.dragging = false; });
+      } else {
+        entry.dragging = false;
+        if (entry.enterEditing) entry.enterEditing();
       }
     });
 
@@ -1722,9 +1810,10 @@
       if (!resizeState) return;
       handle.releasePointerCapture(resizeState.pointerId);
       resizeState = null;
-      entry.resizing = false;
       entry.el.classList.remove('is-resizing');
-      Api.updateElement(entry.data.id, { width: entry.data.width, height: entry.data.height, bringToFront: true }).then(applyRemoteUpdate).catch(() => {});
+      Api.updateElement(entry.data.id, { width: entry.data.width, height: entry.data.height, bringToFront: true })
+        .then((data) => { entry.resizing = false; applyRemoteUpdate(data); })
+        .catch(() => { entry.resizing = false; });
     });
   }
 
@@ -1769,9 +1858,10 @@
       if (!state) return;
       handle.releasePointerCapture(state.pointerId);
       state = null;
-      entry.resizing = false;
       entry.el.classList.remove('is-resizing');
-      Api.updateElement(entry.data.id, { width: entry.data.width, rotation: entry.data.rotation, bringToFront: true }).then(applyRemoteUpdate).catch(() => {});
+      Api.updateElement(entry.data.id, { width: entry.data.width, rotation: entry.data.rotation, bringToFront: true })
+        .then((data) => { entry.resizing = false; applyRemoteUpdate(data); })
+        .catch(() => { entry.resizing = false; });
     });
   }
 
