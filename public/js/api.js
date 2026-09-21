@@ -50,13 +50,25 @@ const Api = (() => {
     return next;
   }
 
+  // Même problème que updateElement ci-dessus, mais à l'échelle du lot : si l'utilisateur enchaîne
+  // plusieurs glisser-déposer de groupe rapidement, un déplacement plus ancien peut répondre après
+  // un plus récent et écraser sa position/son z_index (éléments qui "reviennent" tout seuls après
+  // coup, ordre d'empilement qui se remélange). La sélection pouvant changer entre deux glissers, on
+  // chaîne globalement (pas par élément) plutôt que d'essayer de recouper les ensembles concernés.
+  let batchMoveChain = Promise.resolve();
+  function updateElementsBatch(moves, bringToFront = true) {
+    const next = batchMoveChain.catch(() => {}).then(() => request('POST', `${base}/elements/batch-move`, { moves, bringToFront }));
+    batchMoveChain = next;
+    return next;
+  }
+
   return {
     token,
     whiteboardId,
     getWhiteboard: () => request('GET', base),
     createElement: (element) => request('POST', `${base}/elements`, element || {}),
     updateElement,
-    updateElementsBatch: (moves, bringToFront = true) => request('POST', `${base}/elements/batch-move`, { moves, bringToFront }),
+    updateElementsBatch,
     liveElement: (id, patch) => request('POST', `${base}/elements/${id}/live`, patch).catch(() => {}),
     deleteElement: (id) => request('DELETE', `${base}/elements/${id}`),
     sendCursor: (x, y) => request('POST', `${base}/cursor`, { x, y }).catch(() => {}),
