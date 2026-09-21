@@ -841,6 +841,18 @@
     }
   }
 
+  // Cmd/Ctrl-clic sur un élément : l'ajoute à la sélection courante (ou l'en retire s'il y était déjà)
+  // au lieu de la remplacer — pendant qu'une sélection à la souris (marquee) reste une alternative
+  // pour sélectionner un groupe d'un coup.
+  function toggleMultiSelect(id) {
+    const entry = elements.get(id);
+    if (!entry || entry.data.locked) return;
+    const ids = multiSelectedIds.size >= 2 ? new Set(multiSelectedIds) : new Set(selectedElementId ? [selectedElementId] : []);
+    if (ids.has(id)) ids.delete(id); else ids.add(id);
+    if (ids.size === 0) { deselectElement(); clearMultiSelection(); return; }
+    setMultiSelection([...ids]);
+  }
+
   function moveElementTo(entry, x, y) {
     entry.data.x = x;
     entry.data.y = y;
@@ -1788,6 +1800,12 @@
 
     el.addEventListener('pointerdown', (e) => {
       if (e.target.closest('.element-resize-handle') || e.target.closest('.element-line-handle') || e.target.closest('.connector-anchor')) return;
+      if (e.metaKey || e.ctrlKey) {
+        e.stopPropagation();
+        closeConfirmPopover();
+        toggleMultiSelect(id);
+        return;
+      }
       // Verrouillé : juste sélectionner (montre le bouton "appui long pour déverrouiller" dans le
       // toolbar) — le décompte de déverrouillage se déclenche sur ce bouton, pas sur l'élément lui-même.
       if (entry.data.locked) { e.stopPropagation(); selectElement(id); closeConfirmPopover(); return; }
@@ -1981,8 +1999,9 @@
   function wireConnectorSelect(entry) {
     entry.el.addEventListener('pointerdown', (e) => {
       e.stopPropagation();
-      selectElement(entry.data.id);
       closeConfirmPopover();
+      if (e.metaKey || e.ctrlKey) { toggleMultiSelect(entry.data.id); return; }
+      selectElement(entry.data.id);
     });
   }
 
