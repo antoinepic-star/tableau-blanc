@@ -58,7 +58,7 @@ body.board-page { overflow: hidden; height: 100vh; }
 .add-drawer-overlay {
   position: fixed; inset: 0; background: rgba(20,20,30,0.35);
   opacity: 0; pointer-events: none; transition: opacity 0.2s ease;
-  z-index: 90;
+  z-index: 20100;
 }
 .add-drawer-overlay.is-open { opacity: 1; pointer-events: auto; }
 
@@ -67,7 +67,7 @@ body.board-page { overflow: hidden; height: 100vh; }
   background: #fff; box-shadow: -8px 0 28px rgba(20,20,30,.15);
   display: flex; flex-direction: column;
   transition: right 0.25s cubic-bezier(.4,0,.2,1);
-  z-index: 91;
+  z-index: 20101;
 }
 .add-drawer.is-open { right: 0; }
 
@@ -112,7 +112,7 @@ body.board-page { overflow: hidden; height: 100vh; }
 #canvasViewport.is-drop-target { box-shadow: inset 0 0 0 3px var(--purple); }
 
 .drag-ghost {
-  position: fixed; top: 0; left: 0; z-index: 10001; pointer-events: none;
+  position: fixed; top: 0; left: 0; z-index: 20200; pointer-events: none;
   filter: drop-shadow(0 8px 18px rgba(0,0,0,0.3));
   opacity: 0.9;
 }
@@ -125,7 +125,7 @@ body.board-page { overflow: hidden; height: 100vh; }
 }
 
 .element { position: absolute; user-select: none; }
-.element.is-dragging, .element.is-resizing, .element.is-rotating { z-index: 9999 !important; }
+.element.is-dragging, .element.is-resizing, .element.is-rotating, .element.is-cropping { z-index: 9999 !important; }
 
 /* ---- Post-it ---- */
 .element[data-type="note"] {
@@ -164,6 +164,12 @@ body.board-page { overflow: hidden; height: 100vh; }
   display: none;
 }
 .element[data-type="line"].is-selected .element-line-handle { display: block; }
+.line-cap {
+  position: absolute; top: 50%; width: 28px; height: 28px; transform: translate(-50%, -50%);
+  display: flex; align-items: center; justify-content: center; pointer-events: none;
+}
+.line-cap-start { left: 0; }
+.line-cap-end { left: 100%; }
 
 /* ---- Texte ---- */
 .element[data-type="text"] {
@@ -208,39 +214,19 @@ body.board-page { overflow: hidden; height: 100vh; }
 .crop-toolbar-confirm { background: var(--purple); color: #fff; }
 .crop-toolbar-confirm:hover { background: var(--purple-dark); }
 
-/* ---------- Barre d'outils flottante (commune à tous les types) ---------- */
+/* ---------- Barre d'outils flottante (un seul nœud partagé, jamais imbriqué dans un élément —
+   comme ça elle passe toujours au-dessus, quel que soit le z-index de l'élément sélectionné) ---------- */
 
-.element-toolbar {
-  position: absolute; top: -34px; left: 0;
+.element-toolbar-floating {
+  position: fixed; z-index: 20000;
   display: none; align-items: center; gap: 4px;
   background: #fff; border-radius: 8px; padding: 4px;
   box-shadow: 0 4px 14px rgba(20,20,40,0.18);
   white-space: nowrap;
 }
-.element.is-selected .element-toolbar { display: flex; }
-
-.element-swatch {
-  width: 18px; height: 18px; border-radius: 50%; border: 2px solid transparent; cursor: pointer; flex-shrink: 0; padding: 0;
-}
-.element-swatch.is-active { border-color: var(--text); }
+.element-toolbar-floating.is-open { display: flex; }
 
 .element-toolbar-sep { width: 1px; height: 18px; background: var(--border); margin: 0 2px; flex-shrink: 0; }
-
-.element-format-btn {
-  width: 24px; height: 24px; border: none; background: transparent; border-radius: 6px;
-  color: var(--text); cursor: pointer; display: flex; align-items: center; justify-content: center;
-  font-size: 12.5px; font-weight: 700; font-family: Georgia, serif; flex-shrink: 0;
-}
-.element-format-btn:hover { background: #f4f4f6; }
-.element-format-btn.is-active { background: var(--purple); color: #fff; }
-.element-format-btn.is-italic { font-style: italic; }
-.element-format-btn.is-underline { text-decoration: underline; }
-.element-format-btn.is-strike { text-decoration: line-through; }
-
-.element-fontsize-select {
-  border: 1px solid var(--border); border-radius: 6px; font-size: 11.5px; font-family: inherit;
-  color: var(--text); padding: 3px 2px; background: #fff; flex-shrink: 0; width: 50px;
-}
 
 .element-icon-btn {
   width: 22px; height: 22px; border: none; background: transparent; border-radius: 6px;
@@ -250,12 +236,75 @@ body.board-page { overflow: hidden; height: 100vh; }
 .element-icon-btn.element-delete-btn:hover { background: #fbeceb; color: #c8392c; }
 .element-icon-btn.is-active { background: var(--purple); color: #fff; }
 
-.element.is-cropping .element-toolbar { display: none !important; }
+.element-fontsize-select {
+  border: 1px solid var(--border); border-radius: 6px; font-size: 11.5px; font-family: inherit;
+  color: var(--text); padding: 3px 2px; background: #fff; flex-shrink: 0; width: 50px;
+}
+
+/* ---- Boutons "déroulant" partagés par les sélecteurs de couleur / épaisseur / extrémité / style ---- */
+
+.toolbar-dropdown { position: relative; flex-shrink: 0; }
+.toolbar-dropdown-trigger {
+  width: 26px; height: 26px; border: none; background: transparent; border-radius: 6px;
+  cursor: pointer; display: flex; align-items: center; justify-content: center; color: var(--text);
+  font-size: 13px; font-weight: 700; font-family: Georgia, serif;
+}
+.toolbar-dropdown-trigger:hover { background: #f4f4f6; }
+
+.toolbar-popover {
+  position: absolute; top: calc(100% + 8px); left: 0;
+  display: none;
+  background: #fff; border-radius: 10px; padding: 8px;
+  box-shadow: 0 10px 28px rgba(20,20,40,0.2);
+  z-index: 1;
+}
+.toolbar-popover.is-open { display: flex; }
+
+.toolbar-color-popover { display: none; grid-template-columns: repeat(4, 1fr); gap: 6px; width: 128px; }
+.toolbar-color-popover.is-open { display: grid; }
+.toolbar-color-dot {
+  width: 18px; height: 18px; border-radius: 50%; display: block; border: 1.5px solid rgba(0,0,0,0.08);
+}
+.toolbar-color-dot-none { background: repeating-conic-gradient(#ddd 0% 25%, #fff 0% 50%) 0 0/8px 8px; }
+.toolbar-color-swatch {
+  width: 24px; height: 24px; border-radius: 50%; border: 2px solid transparent; cursor: pointer; padding: 0;
+}
+.toolbar-color-swatch.is-active { border-color: var(--text); }
+.toolbar-color-swatch.is-none { background: repeating-conic-gradient(#ddd 0% 25%, #fff 0% 50%) 0 0/8px 8px; }
+
+.toolbar-format-popover.is-open { display: flex; gap: 2px; }
+.element-format-btn {
+  width: 26px; height: 26px; border: none; background: transparent; border-radius: 6px;
+  color: var(--text); cursor: pointer; display: flex; align-items: center; justify-content: center;
+  font-size: 13px; font-weight: 700; font-family: Georgia, serif; flex-shrink: 0;
+}
+.element-format-btn:hover { background: #f4f4f6; }
+.element-format-btn.is-active { background: var(--purple); color: #fff; }
+.element-format-btn.is-italic { font-style: italic; }
+.element-format-btn.is-underline { text-decoration: underline; }
+.element-format-btn.is-strike { text-decoration: line-through; }
+
+.toolbar-thickness-popover.is-open { display: flex; gap: 4px; }
+.toolbar-thickness-option {
+  width: 34px; height: 30px; border: none; background: transparent; border-radius: 6px;
+  cursor: pointer; display: flex; align-items: center; justify-content: center;
+}
+.toolbar-thickness-option:hover { background: #f4f4f6; }
+.toolbar-thickness-option.is-active { background: var(--purple-light, #fbf1dd); }
+.toolbar-thickness-bar, .toolbar-thickness-preview { display: block; width: 18px; border-radius: 2px; background: var(--text); }
+
+.toolbar-cap-popover.is-open { display: flex; gap: 2px; }
+.toolbar-cap-option {
+  width: 34px; height: 28px; border: none; background: transparent; border-radius: 6px;
+  cursor: pointer; display: flex; align-items: center; justify-content: center; color: var(--text);
+}
+.toolbar-cap-option:hover { background: #f4f4f6; }
+.toolbar-cap-option.is-active { background: var(--purple); color: #fff; }
 
 /* ---------- Popin de confirmation de suppression ---------- */
 
 .confirm-popover {
-  position: fixed; z-index: 10000;
+  position: fixed; z-index: 20050;
   background: #fff; border-radius: 10px; padding: 12px 14px;
   box-shadow: 0 12px 32px rgba(20,20,40,0.22);
   font-size: 13px; color: var(--text);

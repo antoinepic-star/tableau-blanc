@@ -120,6 +120,9 @@ async function initDb() {
       strikethrough INTEGER NOT NULL DEFAULT 0,
       image_data TEXT,
       grayscale INTEGER NOT NULL DEFAULT 0,
+      start_cap TEXT NOT NULL DEFAULT 'none',
+      end_cap TEXT NOT NULL DEFAULT 'none',
+      background_color TEXT,
       z_index INTEGER NOT NULL DEFAULT 0,
       created_at INTEGER DEFAULT (unixepoch()),
       updated_at INTEGER DEFAULT (unixepoch()),
@@ -144,6 +147,9 @@ async function initDb() {
     'ALTER TABLE whiteboard_elements ADD COLUMN strikethrough INTEGER NOT NULL DEFAULT 0',
     'ALTER TABLE whiteboard_elements ADD COLUMN image_data TEXT',
     'ALTER TABLE whiteboard_elements ADD COLUMN grayscale INTEGER NOT NULL DEFAULT 0',
+    "ALTER TABLE whiteboard_elements ADD COLUMN start_cap TEXT NOT NULL DEFAULT 'none'",
+    "ALTER TABLE whiteboard_elements ADD COLUMN end_cap TEXT NOT NULL DEFAULT 'none'",
+    'ALTER TABLE whiteboard_elements ADD COLUMN background_color TEXT',
   ]) {
     try { await turso.execute(sql); } catch (_) {}
   }
@@ -523,6 +529,9 @@ function parseElement(row) {
     strikethrough: !!row.strikethrough,
     imageData: row.image_data,
     grayscale: !!row.grayscale,
+    startCap: row.start_cap,
+    endCap: row.end_cap,
+    backgroundColor: row.background_color,
     zIndex: row.z_index,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
@@ -548,20 +557,23 @@ app.post('/api/whiteboards/:whiteboardId/elements', whiteboardAuth, ah(async (re
   const defaults = ELEMENT_DEFAULTS[type];
   const {
     x, y, width, height, rotation, color, text, fontSize, bold, italic, underline, strikethrough, imageData, grayscale,
+    startCap, endCap, backgroundColor,
   } = req.body || {};
   const { max } = await tursoGet('SELECT MAX(z_index) as max FROM whiteboard_elements WHERE whiteboard_id = ?', [req.params.whiteboardId]);
   const zIndex = (max ?? -1) + 1;
   const id = uuidv4();
+  const columns = ['id', 'whiteboard_id', 'type', 'x', 'y', 'width', 'height', 'rotation', 'color', 'text', 'font_size',
+    'bold', 'italic', 'underline', 'strikethrough', 'image_data', 'grayscale', 'start_cap', 'end_cap', 'background_color', 'z_index'];
+  const values = [
+    id, req.params.whiteboardId, type, x ?? 0, y ?? 0,
+    width ?? defaults.width, height ?? defaults.height, rotation ?? 0,
+    color ?? defaults.color ?? '#1c1c28', text || '', fontSize ?? defaults.fontSize ?? null,
+    bold ? 1 : 0, italic ? 1 : 0, underline ? 1 : 0, strikethrough ? 1 : 0, imageData || null, grayscale ? 1 : 0,
+    startCap || 'none', endCap || 'none', backgroundColor || null, zIndex,
+  ];
   await tursoRun(
-    `INSERT INTO whiteboard_elements
-     (id, whiteboard_id, type, x, y, width, height, rotation, color, text, font_size, bold, italic, underline, strikethrough, image_data, grayscale, z_index)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    [
-      id, req.params.whiteboardId, type, x ?? 0, y ?? 0,
-      width ?? defaults.width, height ?? defaults.height, rotation ?? 0,
-      color ?? defaults.color ?? '#1c1c28', text || '', fontSize ?? defaults.fontSize ?? null,
-      bold ? 1 : 0, italic ? 1 : 0, underline ? 1 : 0, strikethrough ? 1 : 0, imageData || null, grayscale ? 1 : 0, zIndex,
-    ]
+    `INSERT INTO whiteboard_elements (${columns.join(', ')}) VALUES (${columns.map(() => '?').join(', ')})`,
+    values
   );
   const row = await tursoGet('SELECT * FROM whiteboard_elements WHERE id = ?', [id]);
   const element = parseElement(row);
@@ -579,7 +591,8 @@ app.patch('/api/whiteboards/:whiteboardId/elements/:id', whiteboardAuth, ah(asyn
   const existing = await tursoGet('SELECT * FROM whiteboard_elements WHERE id = ? AND whiteboard_id = ?', [req.params.id, req.params.whiteboardId]);
   if (!existing) return res.status(404).json({ error: 'Introuvable' });
   const {
-    x, y, width, height, rotation, color, text, fontSize, bold, italic, underline, strikethrough, imageData, grayscale, bringToFront,
+    x, y, width, height, rotation, color, text, fontSize, bold, italic, underline, strikethrough, imageData, grayscale,
+    startCap, endCap, backgroundColor, bringToFront,
   } = req.body || {};
 
   let zIndex = existing.z_index;
@@ -596,19 +609,22 @@ app.patch('/api/whiteboards/:whiteboardId/elements/:id', whiteboardAuth, ah(asyn
     rotation: rotation ?? existing.rotation,
     color: color ?? existing.color,
     text: text ?? existing.text,
-    fontSize: fontSize ?? existing.font_size,
+    font_size: fontSize ?? existing.font_size,
     bold: bold != null ? (bold ? 1 : 0) : existing.bold,
     italic: italic != null ? (italic ? 1 : 0) : existing.italic,
     underline: underline != null ? (underline ? 1 : 0) : existing.underline,
     strikethrough: strikethrough != null ? (strikethrough ? 1 : 0) : existing.strikethrough,
-    imageData: imageData ?? existing.image_data,
+    image_data: imageData ?? existing.image_data,
     grayscale: grayscale != null ? (grayscale ? 1 : 0) : existing.grayscale,
+    start_cap: startCap ?? existing.start_cap,
+    end_cap: endCap ?? existing.end_cap,
+    background_color: backgroundColor !== undefined ? backgroundColor : existing.background_color,
+    z_index: zIndex,
   };
+  const setColumns = Object.keys(next);
   await tursoRun(
-    `UPDATE whiteboard_elements SET x=?, y=?, width=?, height=?, rotation=?, color=?, text=?, font_size=?,
-     bold=?, italic=?, underline=?, strikethrough=?, image_data=?, grayscale=?, z_index=?, updated_at=unixepoch() WHERE id=?`,
-    [next.x, next.y, next.width, next.height, next.rotation, next.color, next.text, next.fontSize,
-     next.bold, next.italic, next.underline, next.strikethrough, next.imageData, next.grayscale, zIndex, req.params.id]
+    `UPDATE whiteboard_elements SET ${setColumns.map(c => `${c}=?`).join(', ')}, updated_at=unixepoch() WHERE id=?`,
+    [...setColumns.map(c => next[c]), req.params.id]
   );
   const row = await tursoGet('SELECT * FROM whiteboard_elements WHERE id = ?', [req.params.id]);
   const element = parseElement(row);

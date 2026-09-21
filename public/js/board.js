@@ -1,6 +1,8 @@
 (() => {
-  const ELEMENT_COLORS = ['#FFF176', '#F8BBD0', '#90CAF9', '#A5D6A7', '#FFCC80', '#CE93D8'];
+  const ELEMENT_COLORS = ['#FFF176', '#FFCC80', '#F8BBD0', '#EF9A9A', '#A5D6A7', '#80CBC4', '#90CAF9', '#CE93D8'];
   const FONT_SIZES = [12, 14, 16, 18, 22, 28, 36, 48];
+  const LINE_THICKNESSES = [2, 4, 6, 10];
+  const CAP_OPTIONS = [['none', 'Aucune'], ['arrow', 'Flèche'], ['dot', 'Point']];
   const MIN_W = 60;
   const MIN_H = 40;
   const MIN_LINE_LENGTH = 30;
@@ -19,6 +21,7 @@
   const addDrawerOverlay = document.getElementById('addDrawerOverlay');
   const addDrawerCloseBtn = document.getElementById('addDrawerCloseBtn');
   const imageFileInput = document.getElementById('imageFileInput');
+  const toolbarEl = document.getElementById('elementToolbar');
 
   const elements = new Map(); // id -> { data, el, textEl? }
   let pan = { x: 0, y: 0 };
@@ -38,6 +41,10 @@
     layerEl.style.transform = `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`;
     zoomPctEl.textContent = `${Math.round(zoom * 100)}%`;
     Realtime.repositionAll();
+    if (selectedElementId) {
+      const entry = elements.get(selectedElementId);
+      if (entry) repositionToolbar(entry);
+    }
   }
 
   function getViewportPoint(e) {
@@ -127,6 +134,7 @@
   // ---------- Drawer "Ajouter un élément" ----------
 
   function openAddDrawer() {
+    deselectElement();
     addDrawer.classList.add('is-open');
     addDrawerOverlay.classList.add('is-open');
   }
@@ -258,12 +266,16 @@
       elements.get(selectedElementId).el.classList.remove('is-selected');
     }
     selectedElementId = null;
+    hideToolbar();
   }
 
   function selectElement(id) {
+    if (selectedElementId === id) return;
     deselectElement();
     selectedElementId = id;
-    elements.get(id).el.classList.add('is-selected');
+    const entry = elements.get(id);
+    entry.el.classList.add('is-selected');
+    showToolbarFor(entry);
   }
 
   document.addEventListener('keydown', (e) => {
@@ -319,31 +331,91 @@
 
   // ---------- Rendu des éléments ----------
 
-  function buildToolbarHtml(data) {
-    const swatches = (data.type === 'note' || data.type === 'line' || data.type === 'text')
-      ? ELEMENT_COLORS.map(c => `<button type="button" class="element-swatch${c === data.color ? ' is-active' : ''}" style="background:${c}" data-color="${c}"></button>`).join('')
-      : '';
-    const textControls = data.type === 'text' ? `
-      <button type="button" class="element-format-btn${data.bold ? ' is-active' : ''}" data-format="bold" title="Gras">B</button>
-      <button type="button" class="element-format-btn is-italic${data.italic ? ' is-active' : ''}" data-format="italic" title="Italique">I</button>
-      <button type="button" class="element-format-btn is-underline${data.underline ? ' is-active' : ''}" data-format="underline" title="Souligné">U</button>
-      <button type="button" class="element-format-btn is-strike${data.strikethrough ? ' is-active' : ''}" data-format="strikethrough" title="Barré">S</button>
-      <select class="element-fontsize-select" data-role="fontsize" title="Taille">
-        ${FONT_SIZES.map(s => `<option value="${s}"${Number(data.fontSize) === s ? ' selected' : ''}>${s}</option>`).join('')}
-      </select>
-    ` : '';
-    const imageControls = data.type === 'image' ? `
-      <button type="button" class="element-icon-btn element-grayscale-btn${data.grayscale ? ' is-active' : ''}" title="Noir et blanc">
-        <svg width="14" height="14" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="2"/><path d="M12 3a9 9 0 0 1 0 18z" fill="currentColor"/></svg>
-      </button>
-      <button type="button" class="element-icon-btn element-crop-btn" title="Rogner">
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 2v14a2 2 0 0 0 2 2h14"/><path d="M18 22V8a2 2 0 0 0-2-2H2"/></svg>
-      </button>
-    ` : '';
-    const prefix = swatches + textControls + imageControls;
-    const sep = prefix ? '<span class="element-toolbar-sep"></span>' : '';
+  function capIconSvg(cap) {
+    if (cap === 'arrow') return `<svg width="20" height="14" viewBox="0 0 20 14"><line x1="1" y1="7" x2="14" y2="7" stroke="currentColor" stroke-width="2"/><polygon points="13,2 19,7 13,12" fill="currentColor"/></svg>`;
+    if (cap === 'dot') return `<svg width="20" height="14" viewBox="0 0 20 14"><line x1="1" y1="7" x2="15" y2="7" stroke="currentColor" stroke-width="2"/><circle cx="17" cy="7" r="3" fill="currentColor"/></svg>`;
+    return `<svg width="20" height="14" viewBox="0 0 20 14"><line x1="1" y1="7" x2="19" y2="7" stroke="currentColor" stroke-width="2"/></svg>`;
+  }
+
+  function colorDropdownHtml(role, currentColor, allowNone, title) {
+    const colors = allowNone ? [null, ...ELEMENT_COLORS] : ELEMENT_COLORS;
     return `
-      ${prefix}${sep}
+      <div class="toolbar-dropdown" data-role="${role}-wrap">
+        <button type="button" class="toolbar-dropdown-trigger" data-role="${role}-trigger" title="${title}">
+          <span class="toolbar-color-dot${currentColor ? '' : ' toolbar-color-dot-none'}" style="${currentColor ? `background:${currentColor}` : ''}"></span>
+        </button>
+        <div class="toolbar-popover toolbar-color-popover" data-role="${role}-popover">
+          ${colors.map(c => `<button type="button" class="toolbar-color-swatch${c ? '' : ' is-none'}${(c || null) === (currentColor || null) ? ' is-active' : ''}" data-color="${c || ''}" style="${c ? `background:${c}` : ''}"></button>`).join('')}
+        </div>
+      </div>
+    `;
+  }
+
+  function formatDropdownHtml(data) {
+    return `
+      <div class="toolbar-dropdown" data-role="format-wrap">
+        <button type="button" class="toolbar-dropdown-trigger" data-role="format-trigger" title="Style de texte">B</button>
+        <div class="toolbar-popover toolbar-format-popover" data-role="format-popover">
+          <button type="button" class="element-format-btn${data.bold ? ' is-active' : ''}" data-format="bold" title="Gras">B</button>
+          <button type="button" class="element-format-btn is-italic${data.italic ? ' is-active' : ''}" data-format="italic" title="Italique">I</button>
+          <button type="button" class="element-format-btn is-underline${data.underline ? ' is-active' : ''}" data-format="underline" title="Souligné">U</button>
+          <button type="button" class="element-format-btn is-strike${data.strikethrough ? ' is-active' : ''}" data-format="strikethrough" title="Barré">S</button>
+        </div>
+      </div>
+    `;
+  }
+
+  function thicknessDropdownHtml(data) {
+    return `
+      <div class="toolbar-dropdown" data-role="thickness-wrap">
+        <button type="button" class="toolbar-dropdown-trigger" data-role="thickness-trigger" title="Épaisseur">
+          <span class="toolbar-thickness-preview" style="height:${clamp(data.height, 2, 12)}px"></span>
+        </button>
+        <div class="toolbar-popover toolbar-thickness-popover" data-role="thickness-popover">
+          ${LINE_THICKNESSES.map(t => `<button type="button" class="toolbar-thickness-option${data.height === t ? ' is-active' : ''}" data-thickness="${t}"><span class="toolbar-thickness-bar" style="height:${t}px"></span></button>`).join('')}
+        </div>
+      </div>
+    `;
+  }
+
+  function capDropdownHtml(role, current, title) {
+    return `
+      <div class="toolbar-dropdown" data-role="${role}-wrap">
+        <button type="button" class="toolbar-dropdown-trigger" data-role="${role}-trigger" title="${title}">${capIconSvg(current)}</button>
+        <div class="toolbar-popover toolbar-cap-popover" data-role="${role}-popover">
+          ${CAP_OPTIONS.map(([v, label]) => `<button type="button" class="toolbar-cap-option${current === v ? ' is-active' : ''}" data-cap="${v}" title="${label}">${capIconSvg(v)}</button>`).join('')}
+        </div>
+      </div>
+    `;
+  }
+
+  function buildToolbarHtml(data) {
+    let controls = '';
+    if (data.type === 'note') {
+      controls = colorDropdownHtml('color', data.color, false, 'Couleur');
+    } else if (data.type === 'line') {
+      controls = colorDropdownHtml('color', data.color, false, 'Couleur')
+        + thicknessDropdownHtml(data)
+        + capDropdownHtml('startCap', data.startCap, 'Extrémité de départ')
+        + capDropdownHtml('endCap', data.endCap, 'Extrémité de fin');
+    } else if (data.type === 'text') {
+      controls = colorDropdownHtml('color', data.color, false, 'Couleur du texte')
+        + colorDropdownHtml('bg', data.backgroundColor, true, 'Couleur de fond')
+        + formatDropdownHtml(data)
+        + `<select class="element-fontsize-select" data-role="fontsize" title="Taille">${FONT_SIZES.map(s => `<option value="${s}"${Number(data.fontSize) === s ? ' selected' : ''}>${s}</option>`).join('')}</select>`;
+    } else if (data.type === 'image') {
+      controls = `
+        <button type="button" class="element-icon-btn element-grayscale-btn${data.grayscale ? ' is-active' : ''}" title="Noir et blanc">
+          <svg width="14" height="14" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="2"/><path d="M12 3a9 9 0 0 1 0 18z" fill="currentColor"/></svg>
+        </button>
+        <button type="button" class="element-icon-btn element-crop-btn" title="Rogner">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 2v14a2 2 0 0 0 2 2h14"/><path d="M18 22V8a2 2 0 0 0-2-2H2"/></svg>
+        </button>
+      `;
+    }
+    const sep = controls ? '<span class="element-toolbar-sep"></span>' : '';
+    return `
+      ${controls}${sep}
       <button type="button" class="element-icon-btn element-duplicate-btn" title="Dupliquer">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15H4a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h10a1 1 0 0 1 1 1v1"/></svg>
       </button>
@@ -351,6 +423,43 @@
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
       </button>
     `;
+  }
+
+  // ---------- Barre d'outils flottante ----------
+
+  function closeAllToolbarPopovers() {
+    toolbarEl.querySelectorAll('.toolbar-popover.is-open').forEach(p => p.classList.remove('is-open'));
+  }
+  document.addEventListener('pointerdown', (e) => {
+    if (!toolbarEl.contains(e.target)) closeAllToolbarPopovers();
+  });
+
+  function repositionToolbar(entry) {
+    if (!toolbarEl.classList.contains('is-open') || selectedElementId !== entry.data.id) return;
+    const rect = entry.el.getBoundingClientRect();
+    const tRect = toolbarEl.getBoundingClientRect();
+    let top = rect.top - tRect.height - 8;
+    if (top < 4) top = Math.min(rect.bottom + 8, window.innerHeight - tRect.height - 4);
+    const left = clamp(rect.left, 4, window.innerWidth - tRect.width - 4);
+    toolbarEl.style.left = `${left}px`;
+    toolbarEl.style.top = `${top}px`;
+  }
+
+  function showToolbarFor(entry) {
+    toolbarEl.innerHTML = buildToolbarHtml(entry.data);
+    toolbarEl.classList.add('is-open');
+    wireToolbarControls(entry);
+    repositionToolbar(entry);
+  }
+
+  function hideToolbar() {
+    toolbarEl.classList.remove('is-open');
+    toolbarEl.innerHTML = '';
+  }
+
+  function refreshToolbarIfSelected(entry) {
+    if (selectedElementId !== entry.data.id || !toolbarEl.classList.contains('is-open')) return;
+    showToolbarFor(entry);
   }
 
   function renderElement(data) {
@@ -369,7 +478,6 @@
     if (data.type === 'note') {
       el.style.background = data.color;
       el.innerHTML = `
-        <div class="element-toolbar">${buildToolbarHtml(data)}</div>
         <textarea class="element-text" placeholder="Écris ici…" maxlength="4000"></textarea>
         <div class="element-resize-handle"></div>
       `;
@@ -379,12 +487,12 @@
       el.style.background = data.color;
       el.style.transform = `rotate(${data.rotation}deg)`;
       el.innerHTML = `
-        <div class="element-toolbar">${buildToolbarHtml(data)}</div>
+        <div class="line-cap line-cap-start"></div>
+        <div class="line-cap line-cap-end"></div>
         <div class="element-line-handle"></div>
       `;
     } else if (data.type === 'text') {
       el.innerHTML = `
-        <div class="element-toolbar">${buildToolbarHtml(data)}</div>
         <textarea class="element-text" placeholder="Texte…" maxlength="4000"></textarea>
         <div class="element-resize-handle"></div>
       `;
@@ -392,7 +500,6 @@
       textEl.value = data.text || '';
     } else if (data.type === 'image') {
       el.innerHTML = `
-        <div class="element-toolbar">${buildToolbarHtml(data)}</div>
         <img class="element-image-img" src="${data.imageData || ''}" draggable="false" alt="">
         <div class="element-resize-handle"></div>
       `;
@@ -402,8 +509,8 @@
     const entry = { data, el, textEl };
     elements.set(data.id, entry);
 
-    if (data.type === 'text') applyTextStyle(entry);
-    if (data.type === 'line') updateLineToolbarCounterRotation(entry);
+    if (data.type === 'text') { applyTextStyle(entry); applyElementBackground(entry); }
+    if (data.type === 'line') applyLineCaps(entry);
     if (data.type === 'image') applyImageFilters(entry);
 
     wireElementInteractions(entry);
@@ -441,10 +548,26 @@
     t.style.color = entry.data.color;
   }
 
-  function updateLineToolbarCounterRotation(entry) {
+  function applyElementBackground(entry) {
+    if (entry.data.type !== 'text') return;
+    entry.el.style.background = entry.data.backgroundColor || 'transparent';
+    entry.el.style.borderRadius = entry.data.backgroundColor ? '4px' : '0';
+  }
+
+  function capContentHtml(cap, color, thickness, pointsOutwardRight) {
+    if (!cap || cap === 'none') return '';
+    const s = clamp(thickness * 2, 8, 20);
+    if (cap === 'dot') return `<div style="width:${s}px;height:${s}px;border-radius:50%;background:${color};"></div>`;
+    const rotate = pointsOutwardRight ? 0 : 180;
+    return `<svg width="${s + 4}" height="${s}" viewBox="0 0 ${s + 4} ${s}" style="transform:rotate(${rotate}deg)"><polygon points="0,0 ${s + 4},${s / 2} 0,${s}" fill="${color}"/></svg>`;
+  }
+
+  function applyLineCaps(entry) {
     if (entry.data.type !== 'line') return;
-    const toolbar = entry.el.querySelector('.element-toolbar');
-    if (toolbar) toolbar.style.transform = `rotate(${-entry.data.rotation}deg)`;
+    const startEl = entry.el.querySelector('.line-cap-start');
+    const endEl = entry.el.querySelector('.line-cap-end');
+    if (startEl) startEl.innerHTML = capContentHtml(entry.data.startCap, entry.data.color, entry.data.height, false);
+    if (endEl) endEl.innerHTML = capContentHtml(entry.data.endCap, entry.data.color, entry.data.height, true);
   }
 
   function applyRemoteUpdate(data) {
@@ -462,28 +585,20 @@
     if (data.type === 'line') {
       entry.el.style.background = data.color;
       entry.el.style.transform = `rotate(${data.rotation}deg)`;
-      updateLineToolbarCounterRotation(entry);
+      applyLineCaps(entry);
     } else if (data.type === 'note') {
       entry.el.style.background = data.color;
       if (document.activeElement !== entry.textEl) entry.textEl.value = data.text || '';
     } else if (data.type === 'text') {
       if (document.activeElement !== entry.textEl) entry.textEl.value = data.text || '';
       applyTextStyle(entry);
+      applyElementBackground(entry);
     } else if (data.type === 'image') {
       entry.el.querySelector('.element-image-img').src = data.imageData || '';
       applyImageFilters(entry);
-      const grayscaleBtn = entry.el.querySelector('.element-grayscale-btn');
-      if (grayscaleBtn) grayscaleBtn.classList.toggle('is-active', !!data.grayscale);
     }
 
-    entry.el.querySelectorAll('.element-swatch').forEach(sw => sw.classList.toggle('is-active', sw.dataset.color === data.color));
-    if (data.type === 'text') {
-      entry.el.querySelectorAll('.element-format-btn[data-format]').forEach(btn => {
-        btn.classList.toggle('is-active', !!data[btn.dataset.format]);
-      });
-      const fs = entry.el.querySelector('[data-role="fontsize"]');
-      if (fs) fs.value = data.fontSize || 18;
-    }
+    refreshToolbarIfSelected(entry);
     return entry;
   }
 
@@ -500,74 +615,161 @@
       type: d.type, x: d.x + 24, y: d.y + 24, width: d.width, height: d.height, rotation: d.rotation,
       color: d.color, text: d.text, fontSize: d.fontSize, bold: d.bold, italic: d.italic,
       underline: d.underline, strikethrough: d.strikethrough, imageData: d.imageData, grayscale: d.grayscale,
+      startCap: d.startCap, endCap: d.endCap, backgroundColor: d.backgroundColor,
     }).catch(err => alert(err.message));
   }
 
-  function wireToolbar(entry) {
-    const { el, data } = entry;
-    const id = data.id;
-    const toolbar = el.querySelector('.element-toolbar');
-    if (!toolbar) return;
+  // Ouvre/ferme le popover d'un contrôle "déroulant" du toolbar (couleur, épaisseur, extrémité,
+  // style de texte) — un seul ouvert à la fois.
+  function wireDropdownToggle(role) {
+    const trigger = toolbarEl.querySelector(`[data-role="${role}-trigger"]`);
+    const popover = toolbarEl.querySelector(`[data-role="${role}-popover"]`);
+    if (!trigger || !popover) return null;
+    trigger.addEventListener('pointerdown', e => e.stopPropagation());
+    trigger.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const isOpen = popover.classList.contains('is-open');
+      closeAllToolbarPopovers();
+      if (!isOpen) popover.classList.add('is-open');
+    });
+    return { trigger, popover };
+  }
 
-    toolbar.querySelectorAll('.element-swatch').forEach((btn) => {
-      btn.addEventListener('pointerdown', e => e.stopPropagation());
-      btn.addEventListener('click', () => {
-        selectElement(id);
-        const color = btn.dataset.color;
-        entry.data.color = color;
-        applyElementColor(entry);
-        toolbar.querySelectorAll('.element-swatch').forEach(sw => sw.classList.toggle('is-active', sw === btn));
-        Api.updateElement(id, { color }).catch(err => alert(err.message));
+  function wireColorDropdown(entry, role, onPick) {
+    const parts = wireDropdownToggle(role);
+    if (!parts) return;
+    const { trigger, popover } = parts;
+    popover.querySelectorAll('.toolbar-color-swatch').forEach((sw) => {
+      sw.addEventListener('pointerdown', e => e.stopPropagation());
+      sw.addEventListener('click', () => {
+        const color = sw.dataset.color || null;
+        onPick(color);
+        popover.querySelectorAll('.toolbar-color-swatch').forEach(s => s.classList.remove('is-active'));
+        sw.classList.add('is-active');
+        const dot = trigger.querySelector('.toolbar-color-dot');
+        dot.style.background = color || '';
+        dot.classList.toggle('toolbar-color-dot-none', !color);
+        popover.classList.remove('is-open');
       });
     });
+  }
 
-    toolbar.querySelectorAll('.element-format-btn[data-format]').forEach((btn) => {
+  function wireFormatDropdown(entry) {
+    const parts = wireDropdownToggle('format');
+    if (!parts) return;
+    parts.popover.querySelectorAll('.element-format-btn[data-format]').forEach((btn) => {
       btn.addEventListener('pointerdown', e => e.stopPropagation());
       btn.addEventListener('click', () => {
-        selectElement(id);
         const key = btn.dataset.format;
         entry.data[key] = !entry.data[key];
         btn.classList.toggle('is-active', entry.data[key]);
         applyTextStyle(entry);
-        Api.updateElement(id, { [key]: entry.data[key] }).catch(() => {});
+        Api.updateElement(entry.data.id, { [key]: entry.data[key] }).catch(() => {});
       });
     });
+  }
 
-    const fontSizeSelect = toolbar.querySelector('[data-role="fontsize"]');
-    if (fontSizeSelect) {
-      fontSizeSelect.addEventListener('pointerdown', e => e.stopPropagation());
-      fontSizeSelect.addEventListener('change', () => {
-        selectElement(id);
-        const size = Number(fontSizeSelect.value);
-        entry.data.fontSize = size;
-        applyTextStyle(entry);
-        Api.updateElement(id, { fontSize: size }).catch(() => {});
+  function wireThicknessDropdown(entry) {
+    const parts = wireDropdownToggle('thickness');
+    if (!parts) return;
+    const { trigger, popover } = parts;
+    popover.querySelectorAll('.toolbar-thickness-option').forEach((opt) => {
+      opt.addEventListener('pointerdown', e => e.stopPropagation());
+      opt.addEventListener('click', () => {
+        const h = Number(opt.dataset.thickness);
+        entry.data.height = h;
+        entry.el.style.height = `${h}px`;
+        applyLineCaps(entry);
+        popover.querySelectorAll('.toolbar-thickness-option').forEach(o => o.classList.remove('is-active'));
+        opt.classList.add('is-active');
+        trigger.querySelector('.toolbar-thickness-preview').style.height = `${h}px`;
+        popover.classList.remove('is-open');
+        Api.updateElement(entry.data.id, { height: h }).catch(() => {});
+        repositionToolbar(entry);
+      });
+    });
+  }
+
+  function wireCapDropdown(entry, role) {
+    const parts = wireDropdownToggle(role);
+    if (!parts) return;
+    const { trigger, popover } = parts;
+    popover.querySelectorAll('.toolbar-cap-option').forEach((opt) => {
+      opt.addEventListener('pointerdown', e => e.stopPropagation());
+      opt.addEventListener('click', () => {
+        const cap = opt.dataset.cap;
+        entry.data[role] = cap;
+        applyLineCaps(entry);
+        popover.querySelectorAll('.toolbar-cap-option').forEach(o => o.classList.remove('is-active'));
+        opt.classList.add('is-active');
+        trigger.innerHTML = capIconSvg(cap);
+        popover.classList.remove('is-open');
+        Api.updateElement(entry.data.id, { [role]: cap }).catch(() => {});
+      });
+    });
+  }
+
+  function wireToolbarControls(entry) {
+    const id = entry.data.id;
+    const type = entry.data.type;
+
+    if (type === 'note' || type === 'line' || type === 'text') {
+      wireColorDropdown(entry, 'color', (color) => {
+        entry.data.color = color;
+        applyElementColor(entry);
+        if (type === 'line') applyLineCaps(entry);
+        Api.updateElement(id, { color }).catch(err => alert(err.message));
       });
     }
 
-    const grayscaleBtn = toolbar.querySelector('.element-grayscale-btn');
-    if (grayscaleBtn) {
-      grayscaleBtn.addEventListener('pointerdown', e => e.stopPropagation());
-      grayscaleBtn.addEventListener('click', () => {
-        selectElement(id);
-        entry.data.grayscale = !entry.data.grayscale;
-        grayscaleBtn.classList.toggle('is-active', entry.data.grayscale);
-        applyImageFilters(entry);
-        Api.updateElement(id, { grayscale: entry.data.grayscale }).catch(() => {});
+    if (type === 'line') {
+      wireThicknessDropdown(entry);
+      wireCapDropdown(entry, 'startCap');
+      wireCapDropdown(entry, 'endCap');
+    }
+
+    if (type === 'text') {
+      wireColorDropdown(entry, 'bg', (color) => {
+        entry.data.backgroundColor = color;
+        applyElementBackground(entry);
+        Api.updateElement(id, { backgroundColor: color }).catch(() => {});
       });
+      wireFormatDropdown(entry);
+      const fontSizeSelect = toolbarEl.querySelector('[data-role="fontsize"]');
+      if (fontSizeSelect) {
+        fontSizeSelect.addEventListener('pointerdown', e => e.stopPropagation());
+        fontSizeSelect.addEventListener('change', () => {
+          const size = Number(fontSizeSelect.value);
+          entry.data.fontSize = size;
+          applyTextStyle(entry);
+          Api.updateElement(id, { fontSize: size }).catch(() => {});
+        });
+      }
     }
 
-    const cropBtn = toolbar.querySelector('.element-crop-btn');
-    if (cropBtn) {
-      cropBtn.addEventListener('pointerdown', e => e.stopPropagation());
-      cropBtn.addEventListener('click', () => { selectElement(id); enterCropMode(entry); });
+    if (type === 'image') {
+      const grayscaleBtn = toolbarEl.querySelector('.element-grayscale-btn');
+      if (grayscaleBtn) {
+        grayscaleBtn.addEventListener('pointerdown', e => e.stopPropagation());
+        grayscaleBtn.addEventListener('click', () => {
+          entry.data.grayscale = !entry.data.grayscale;
+          grayscaleBtn.classList.toggle('is-active', entry.data.grayscale);
+          applyImageFilters(entry);
+          Api.updateElement(id, { grayscale: entry.data.grayscale }).catch(() => {});
+        });
+      }
+      const cropBtn = toolbarEl.querySelector('.element-crop-btn');
+      if (cropBtn) {
+        cropBtn.addEventListener('pointerdown', e => e.stopPropagation());
+        cropBtn.addEventListener('click', () => enterCropMode(entry));
+      }
     }
 
-    const dupBtn = toolbar.querySelector('.element-duplicate-btn');
+    const dupBtn = toolbarEl.querySelector('.element-duplicate-btn');
     dupBtn.addEventListener('pointerdown', e => e.stopPropagation());
-    dupBtn.addEventListener('click', () => { selectElement(id); duplicateElement(entry); });
+    dupBtn.addEventListener('click', () => duplicateElement(entry));
 
-    const delBtn = toolbar.querySelector('.element-delete-btn');
+    const delBtn = toolbarEl.querySelector('.element-delete-btn');
     delBtn.addEventListener('pointerdown', e => e.stopPropagation());
     delBtn.addEventListener('click', () => showDeleteConfirm(entry, delBtn.getBoundingClientRect()));
   }
@@ -611,7 +813,7 @@
     let dragState = null;
 
     el.addEventListener('pointerdown', (e) => {
-      if (e.target.closest('.element-resize-handle') || e.target.closest('.element-line-handle') || e.target.closest('.element-toolbar')) return;
+      if (e.target.closest('.element-resize-handle') || e.target.closest('.element-line-handle')) return;
       if (el.classList.contains('is-editing') || entry.cropping) return;
       e.stopPropagation();
       selectElement(id);
@@ -639,6 +841,7 @@
       entry.data.y = newY;
       el.style.left = `${newX}px`;
       el.style.top = `${newY}px`;
+      repositionToolbar(entry);
       const now = Date.now();
       if (now - (entry._lastLive || 0) > 40) {
         entry._lastLive = now;
@@ -698,6 +901,7 @@
       entry.data.height = newH;
       entry.el.style.width = `${newW}px`;
       entry.el.style.height = `${newH}px`;
+      repositionToolbar(entry);
       const now = Date.now();
       if (now - (entry._lastLive || 0) > 40) {
         entry._lastLive = now;
@@ -743,7 +947,7 @@
       entry.data.rotation = newRotation;
       entry.el.style.width = `${newWidth}px`;
       entry.el.style.transform = `rotate(${newRotation}deg)`;
-      updateLineToolbarCounterRotation(entry);
+      repositionToolbar(entry);
       const now = Date.now();
       if (now - (entry._lastLive || 0) > 40) {
         entry._lastLive = now;
@@ -762,7 +966,6 @@
   }
 
   function wireElementInteractions(entry) {
-    wireToolbar(entry);
     if (entry.data.type === 'note' || entry.data.type === 'text') wireTextEditing(entry);
     wireBodyDrag(entry);
     if (entry.data.type === 'line') wireLineHandle(entry);
@@ -777,6 +980,7 @@
   function enterCropMode(entry) {
     if (entry.data.type !== 'image' || entry.cropping) return;
     closeConfirmPopover();
+    hideToolbar();
     entry.cropping = true;
     entry.el.classList.add('is-cropping');
 
@@ -855,6 +1059,7 @@
     entry.cropping = false;
     entry._cropState = null;
     entry.el.classList.remove('is-cropping');
+    if (selectedElementId === entry.data.id) showToolbarFor(entry);
   }
 
   function confirmCrop(entry) {
@@ -915,8 +1120,8 @@
     if (rotation != null) {
       entry.data.rotation = rotation;
       entry.el.style.transform = `rotate(${rotation}deg)`;
-      updateLineToolbarCounterRotation(entry);
     }
+    if (selectedElementId === id) repositionToolbar(entry);
   });
 
   // ---------- Chargement initial ----------
