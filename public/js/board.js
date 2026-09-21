@@ -19,7 +19,6 @@
   const TEXT_MIN_CONTENT_WIDTH = 30;
   const BOX_TYPES = ['note', 'text', 'image', 'rectangle']; // types "boîte" (points d'ancrage pour les connecteurs)
   const UNLOCK_HOLD_MS = 2000;
-  const REACTION_EMOJIS = ['❤️', '✅', '👍', '🔥', '🚀', '💡', '🤷‍♂️', '❌'];
   const COMMENT_RELATIVE_DAYS = 7; // au-delà, on affiche la date plutôt que "il y a X jours"
 
   const viewportEl = document.getElementById('canvasViewport');
@@ -472,12 +471,16 @@
 
   // ---------- Rendu du toolbar flottant ----------
 
-  function colorDropdownHtml(role, currentColor, allowNone, title) {
+  // dotStyle 'ring' : rond blanc cerclé de la couleur (pour un contour/stroke) plutôt qu'un rond
+  // plein (pour un fond) — sinon les deux se ressemblent trop et on ne sait plus lequel est lequel.
+  function colorDropdownHtml(role, currentColor, allowNone, title, dotStyle = 'fill') {
     const colors = allowNone ? [null, ...ELEMENT_COLORS] : ELEMENT_COLORS;
+    const isRing = dotStyle === 'ring';
+    const dotStyleAttr = isRing ? `border-color:${currentColor || '#ccc'}` : (currentColor ? `background:${currentColor}` : '');
     return `
       <div class="toolbar-dropdown" data-role="${role}-wrap">
         <button type="button" class="toolbar-dropdown-trigger" data-role="${role}-trigger" title="${title}">
-          <span class="toolbar-color-dot${currentColor ? '' : ' toolbar-color-dot-none'}" style="${currentColor ? `background:${currentColor}` : ''}"></span>
+          <span class="toolbar-color-dot${isRing ? ' toolbar-color-dot-ring' : ''}${!isRing && !currentColor ? ' toolbar-color-dot-none' : ''}" style="${dotStyleAttr}"></span>
         </button>
         <div class="toolbar-popover toolbar-color-popover" data-role="${role}-popover">
           ${colors.map(c => `<button type="button" class="toolbar-color-swatch${c ? '' : ' is-none'}${(c || null) === (currentColor || null) ? ' is-active' : ''}" data-color="${c || ''}" style="${c ? `background:${c}` : ''}"></button>`).join('')}
@@ -538,13 +541,18 @@
     return `<svg width="18" height="18" viewBox="0 0 18 18"><rect x="2" y="2" width="14" height="14" rx="${iconRx}" fill="none" stroke="currentColor" stroke-width="2"/></svg>`;
   }
 
+  // Icône fixe (4 coins) pour le déclencheur — un rectangle à coins arrondis ressemblait trop au
+  // rond du contour ; ces coins isolés se lisent sans ambiguïté comme "arrondi des angles".
+  function radiusCornersIconSvg() {
+    return `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M4 9V6a2 2 0 0 1 2-2h3"/><path d="M15 4h3a2 2 0 0 1 2 2v3"/><path d="M20 15v3a2 2 0 0 1-2 2h-3"/><path d="M9 20H6a2 2 0 0 1-2-2v-3"/></svg>`;
+  }
+
   function radiusDropdownHtml(data) {
     const r = data.radius || 0;
-    const current = RADIUS_PRESETS.find(([, val]) => val === r) || RADIUS_PRESETS[0];
     return `
       <div class="toolbar-dropdown" data-role="radius-wrap">
         <button type="button" class="toolbar-dropdown-trigger" data-role="radius-trigger" title="Arrondi des angles">
-          ${radiusIconSvg(current[2])}
+          ${radiusCornersIconSvg()}
         </button>
         <div class="toolbar-popover toolbar-thickness-popover" data-role="radius-popover">
           <div class="toolbar-thickness-row">
@@ -589,13 +597,14 @@
     } else if (data.type === 'rectangle') {
       controls = colorDropdownHtml('color', data.color, false, 'Couleur de fond')
         + strokeWidthDropdownHtml(data)
-        + colorDropdownHtml('stroke', data.strokeColor, false, 'Couleur du contour')
+        + colorDropdownHtml('stroke', data.strokeColor, false, 'Couleur du contour', 'ring')
         + radiusDropdownHtml(data);
     }
     const sep = controls ? '<span class="element-toolbar-sep"></span>' : '';
+    const voted = (data.votes || []).includes(myName);
     return `
       ${controls}${sep}
-      ${reactionDropdownHtml(data)}
+      <button type="button" class="element-icon-btn element-vote-btn${voted ? ' is-active' : ''}" title="${voted ? 'Retirer mon vote' : 'Voter'}">${iconVote()}</button>
       <button type="button" class="element-icon-btn element-comment-btn" title="Commenter">${iconComment()}</button>
       <span class="element-toolbar-sep"></span>
       <button type="button" class="element-icon-btn element-lock-btn" title="Verrouiller">${iconLock()}</button>
@@ -633,23 +642,9 @@
   function iconUngroup() { return '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="2" width="8" height="8" rx="1.5"/><rect x="14" y="14" width="8" height="8" rx="1.5"/><line x1="9.5" y1="9.5" x2="14.5" y2="14.5" stroke-dasharray="2 2"/></svg>'; }
   function iconLock() { return '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>'; }
   function iconComment() { return '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H8l-5 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>'; }
-  function iconReaction() { return '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M8 13.5s1.5 2 4 2 4-2 4-2"/><line x1="9" y1="9.5" x2="9.01" y2="9.5"/><line x1="15" y1="9.5" x2="15.01" y2="9.5"/></svg>'; }
-
-  // Un seul bouton "réagir" avec un popover d'émojis (même schéma que les popovers de couleur) : le
-  // déclencheur affiche l'émoji choisi par CE participant s'il y en a un, sinon une icône neutre.
-  function reactionDropdownHtml(data) {
-    const mine = (data.reactions || []).find(r => r.actorName === myName);
-    return `
-      <div class="toolbar-dropdown" data-role="reaction-wrap">
-        <button type="button" class="toolbar-dropdown-trigger" data-role="reaction-trigger" title="Réagir">
-          ${mine ? `<span class="toolbar-reaction-current">${mine.emoji}</span>` : iconReaction()}
-        </button>
-        <div class="toolbar-popover toolbar-reaction-popover" data-role="reaction-popover">
-          ${REACTION_EMOJIS.map(e => `<button type="button" class="toolbar-reaction-option${mine && mine.emoji === e ? ' is-active' : ''}" data-emoji="${e}">${e}</button>`).join('')}
-        </div>
-      </div>
-    `;
-  }
+  // "Vote" simple (façon +1) : un cercle avec un "+", même style trait que les autres icônes pour
+  // rester cohérent au zoom (contrairement aux glyphes émoji, qui redimensionnent moins proprement).
+  function iconVote() { return '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><line x1="12" y1="8" x2="12" y2="16"/><line x1="8" y1="12" x2="16" y2="12"/></svg>'; }
 
   function groupMembers(groupId) {
     if (!groupId) return [];
@@ -930,26 +925,36 @@
     }
   }
 
-  // Petites pastilles accrochées sous l'élément (réactions groupées par émoji + nombre de
-  // commentaires), toujours visibles — pas seulement à la sélection — pour rester repérables
-  // au premier coup d'œil, comme sur Miro/Figma.
+  function escapeHtml(str) {
+    return String(str).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  }
+
+  // Petites pastilles accrochées sous l'élément (nombre de votes + nombre de commentaires), toujours
+  // visibles — pas seulement à la sélection — pour rester repérables au premier coup d'œil, comme sur
+  // Miro/Figma. Toutes deux en icône SVG (pas d'émoji) pour redimensionner proprement au zoom, comme
+  // le reste de l'UI. La pastille commentaire ouvre le drawer au clic ; celle des votes montre la
+  // liste des votants au survol (title natif).
   function updateElementBadges(entry) {
-    const reactions = entry.data.reactions || [];
+    const votes = entry.data.votes || [];
     const commentCount = entry.data.commentCount || 0;
     let badges = entry.el.querySelector('.element-badges');
-    if (!reactions.length && !commentCount) { if (badges) badges.remove(); return; }
+    if (!votes.length && !commentCount) { if (badges) badges.remove(); return; }
     if (!badges) {
       badges = document.createElement('div');
       badges.className = 'element-badges';
+      badges.addEventListener('pointerdown', e => e.stopPropagation());
+      badges.addEventListener('click', (e) => {
+        if (e.target.closest('[data-badge-action="comment"]')) openCommentDrawer(entry);
+      });
       entry.el.appendChild(badges);
     }
-    const counts = new Map();
-    reactions.forEach((r) => counts.set(r.emoji, (counts.get(r.emoji) || 0) + 1));
-    const chips = [...counts.entries()]
-      .map(([emoji, n]) => `<span class="element-badge-chip">${emoji}${n > 1 ? ` ${n}` : ''}</span>`)
-      .join('');
-    const commentChip = commentCount ? `<span class="element-badge-chip">${iconComment()} ${commentCount}</span>` : '';
-    badges.innerHTML = chips + commentChip;
+    const voteChip = votes.length
+      ? `<span class="element-badge-chip" title="Ont voté : ${escapeHtml(votes.join(', '))}">${iconVote()} ${votes.length}</span>`
+      : '';
+    const commentChip = commentCount
+      ? `<span class="element-badge-chip element-badge-chip-clickable" data-badge-action="comment" title="Voir les commentaires">${iconComment()} ${commentCount}</span>`
+      : '';
+    badges.innerHTML = voteChip + commentChip;
   }
 
   function wireUnlockButton(entry) {
@@ -1171,12 +1176,12 @@
   function applyRemoteUpdate(data) {
     const entry = elements.get(data.id);
     if (!entry) { renderElement(data); return; }
-    // Le PATCH élément (déplacement, couleur, etc.) ne renvoie pas les réactions/commentaires — ce
-    // n'est pas son rôle — donc on les préserve explicitement au lieu de les perdre en écrasant data.
-    const prevReactions = entry.data.reactions;
+    // Le PATCH élément (déplacement, couleur, etc.) ne renvoie pas les votes/commentaires — ce n'est
+    // pas son rôle — donc on les préserve explicitement au lieu de les perdre en écrasant data.
+    const prevVotes = entry.data.votes;
     const prevCommentCount = entry.data.commentCount;
     entry.data = data;
-    if (data.reactions === undefined) entry.data.reactions = prevReactions;
+    if (data.votes === undefined) entry.data.votes = prevVotes;
     if (data.commentCount === undefined) entry.data.commentCount = prevCommentCount;
     applyLockedState(entry);
     updateElementBadges(entry);
@@ -1404,31 +1409,30 @@
         popover.querySelectorAll('.toolbar-color-swatch').forEach(s => s.classList.remove('is-active'));
         sw.classList.add('is-active');
         const dot = trigger.querySelector('.toolbar-color-dot');
-        dot.style.background = color || '';
-        dot.classList.toggle('toolbar-color-dot-none', !color);
+        if (dot.classList.contains('toolbar-color-dot-ring')) {
+          dot.style.borderColor = color || '#ccc';
+        } else {
+          dot.style.background = color || '';
+          dot.classList.toggle('toolbar-color-dot-none', !color);
+        }
         popover.classList.remove('is-open');
       });
     });
   }
 
-  // Un seul émoji par participant : le serveur gère lui-même le "toggle/remplace" et renvoie la
-  // liste à jour, qu'on applique directement (la même mise à jour arrive aussi en écho par SSE,
-  // sans effet puisqu'elle pose la même liste).
-  function wireReactionDropdown(entry) {
-    const parts = wireDropdownToggle('reaction');
-    if (!parts) return;
-    const { popover } = parts;
-    popover.querySelectorAll('.toolbar-reaction-option').forEach((opt) => {
-      opt.addEventListener('pointerdown', e => e.stopPropagation());
-      opt.addEventListener('click', () => {
-        const emoji = opt.dataset.emoji;
-        popover.classList.remove('is-open');
-        Api.toggleReaction(entry.data.id, emoji).then(({ reactions }) => {
-          entry.data.reactions = reactions;
-          updateElementBadges(entry);
-          refreshToolbarIfSelected(entry);
-        }).catch(() => {});
-      });
+  // Simple bascule (pas de popover) : le serveur gère le toggle et renvoie la liste à jour des
+  // votants, qu'on applique directement (le même écho arrive aussi par SSE, sans effet puisqu'il
+  // pose la même liste).
+  function wireVoteButton(entry) {
+    const btn = toolbarEl.querySelector('.element-vote-btn');
+    if (!btn) return;
+    btn.addEventListener('pointerdown', e => e.stopPropagation());
+    btn.addEventListener('click', () => {
+      Api.toggleVote(entry.data.id).then(({ voters }) => {
+        entry.data.votes = voters;
+        updateElementBadges(entry);
+        refreshToolbarIfSelected(entry);
+      }).catch(() => {});
     });
   }
 
@@ -1603,7 +1607,7 @@
       }
     }
 
-    wireReactionDropdown(entry);
+    wireVoteButton(entry);
     const commentBtn = toolbarEl.querySelector('.element-comment-btn');
     if (commentBtn) {
       commentBtn.addEventListener('pointerdown', e => e.stopPropagation());
@@ -2121,9 +2125,10 @@
 
   // Construit le DOM via textContent (jamais innerHTML) pour le nom et le texte : ce sont des
   // champs libres saisis par les participants, à ne jamais interpréter comme du HTML.
-  function renderCommentItem(comment) {
+  function renderCommentItem(comment, elementId) {
     const div = document.createElement('div');
     div.className = 'comment-item';
+    div.dataset.commentId = comment.id;
 
     const header = document.createElement('div');
     header.className = 'comment-item-header';
@@ -2137,7 +2142,17 @@
     const time = document.createElement('span');
     time.className = 'comment-item-time';
     time.textContent = formatRelativeTime(comment.createdAt);
-    header.append(avatar, name, time);
+    const delBtn = document.createElement('button');
+    delBtn.type = 'button';
+    delBtn.className = 'comment-item-delete';
+    delBtn.title = 'Supprimer ce commentaire';
+    delBtn.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><line x1="5" y1="5" x2="19" y2="19"/><line x1="19" y1="5" x2="5" y2="19"/></svg>';
+    delBtn.addEventListener('click', () => {
+      if (!confirm('Supprimer ce commentaire ?')) return;
+      delBtn.disabled = true;
+      Api.deleteComment(elementId, comment.id).catch(err => { alert(err.message); delBtn.disabled = false; });
+    });
+    header.append(avatar, name, time, delBtn);
 
     const text = document.createElement('div');
     text.className = 'comment-item-text';
@@ -2149,13 +2164,22 @@
 
   const renderedCommentIds = new Set();
 
-  function appendCommentToDrawerIfNew(comment) {
+  function appendCommentToDrawerIfNew(comment, elementId) {
     if (renderedCommentIds.has(comment.id)) return;
     renderedCommentIds.add(comment.id);
     const empty = commentDrawerBody.querySelector('.comment-drawer-empty');
     if (empty) empty.remove();
-    commentDrawerBody.appendChild(renderCommentItem(comment));
+    commentDrawerBody.appendChild(renderCommentItem(comment, elementId));
     commentDrawerBody.scrollTop = commentDrawerBody.scrollHeight;
+  }
+
+  function removeCommentFromDrawer(commentId) {
+    renderedCommentIds.delete(commentId);
+    const item = commentDrawerBody.querySelector(`.comment-item[data-comment-id="${commentId}"]`);
+    if (item) item.remove();
+    if (!commentDrawerBody.querySelector('.comment-item')) {
+      commentDrawerBody.innerHTML = '<div class="comment-drawer-empty">Aucun commentaire pour le moment.</div>';
+    }
   }
 
   function openCommentDrawer(entry) {
@@ -2169,7 +2193,7 @@
     Api.getComments(elementId).then((comments) => {
       if (activeCommentElementId !== elementId) return; // le drawer a changé/fermé entre-temps
       commentDrawerBody.innerHTML = comments.length ? '' : '<div class="comment-drawer-empty">Aucun commentaire pour le moment.</div>';
-      comments.forEach(appendCommentToDrawerIfNew);
+      comments.forEach(c => appendCommentToDrawerIfNew(c, elementId));
     }).catch(() => {
       if (activeCommentElementId === elementId) commentDrawerBody.innerHTML = '<div class="comment-drawer-empty">Erreur de chargement.</div>';
     });
@@ -2223,10 +2247,10 @@
     if (selectedElementId === id) repositionToolbar(entry);
   });
 
-  Realtime.on('element:reactions', ({ elementId, reactions }) => {
+  Realtime.on('element:votes', ({ elementId, voters }) => {
     const entry = elements.get(elementId);
     if (!entry) return;
-    entry.data.reactions = reactions;
+    entry.data.votes = voters;
     updateElementBadges(entry);
     refreshToolbarIfSelected(entry);
   });
@@ -2237,7 +2261,16 @@
       entry.data.commentCount = (entry.data.commentCount || 0) + 1;
       updateElementBadges(entry);
     }
-    if (activeCommentElementId === elementId) appendCommentToDrawerIfNew(comment);
+    if (activeCommentElementId === elementId) appendCommentToDrawerIfNew(comment, elementId);
+  });
+
+  Realtime.on('element:comment-deleted', ({ elementId, commentId }) => {
+    const entry = elements.get(elementId);
+    if (entry) {
+      entry.data.commentCount = Math.max(0, (entry.data.commentCount || 0) - 1);
+      updateElementBadges(entry);
+    }
+    if (activeCommentElementId === elementId) removeCommentFromDrawer(commentId);
   });
 
   // ---------- Chargement initial ----------

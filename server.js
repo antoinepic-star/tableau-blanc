@@ -547,8 +547,6 @@ app.post('/api/whiteboards/:whiteboardId/cursor', whiteboardAuth, (req, res) => 
 
 const ELEMENT_LABELS = { note: 'post-it', line: 'trait', text: 'bloc de texte', image: 'image', rectangle: 'rectangle', connector: 'connecteur' };
 
-const REACTION_EMOJIS = ['❤️', '✅', '👍', '🔥', '🚀', '💡', '🤷‍♂️', '❌'];
-
 function parseComment(row) {
   return {
     id: row.id,
@@ -601,14 +599,15 @@ app.get('/api/whiteboards/:whiteboardId', whiteboardAuth, ah(async (req, res) =>
   const whiteboard = await tursoGet('SELECT * FROM whiteboards WHERE id = ?', [req.params.whiteboardId]);
   if (!whiteboard) return res.status(404).json({ error: 'Introuvable' });
   const elementRows = await tursoAll('SELECT * FROM whiteboard_elements WHERE whiteboard_id = ? ORDER BY z_index', [req.params.whiteboardId]);
-  // Réactions et nombre de commentaires chargés en vrac pour tout le tableau (pas un aller-retour
-  // par élément) et rattachés ici, pour que le canvas affiche les badges dès le premier rendu.
-  const reactionRows = await tursoAll('SELECT element_id, emoji, actor_name FROM whiteboard_reactions WHERE whiteboard_id = ?', [req.params.whiteboardId]);
+  // Votes (un simple marqueur de présence par élément/participant, cf. table whiteboard_reactions
+  // héritée de l'ancien système à émojis) et nombre de commentaires, chargés en vrac pour tout le
+  // tableau et rattachés ici, pour que le canvas affiche les badges dès le premier rendu.
+  const voteRows = await tursoAll('SELECT element_id, actor_name FROM whiteboard_reactions WHERE whiteboard_id = ?', [req.params.whiteboardId]);
   const commentCountRows = await tursoAll('SELECT element_id, COUNT(*) as n FROM whiteboard_comments WHERE whiteboard_id = ? GROUP BY element_id', [req.params.whiteboardId]);
-  const reactionsByElement = new Map();
-  for (const r of reactionRows) {
-    if (!reactionsByElement.has(r.element_id)) reactionsByElement.set(r.element_id, []);
-    reactionsByElement.get(r.element_id).push({ emoji: r.emoji, actorName: r.actor_name });
+  const votersByElement = new Map();
+  for (const r of voteRows) {
+    if (!votersByElement.has(r.element_id)) votersByElement.set(r.element_id, []);
+    votersByElement.get(r.element_id).push(r.actor_name);
   }
   const commentCountByElement = new Map(commentCountRows.map(r => [r.element_id, r.n]));
   res.json({
@@ -618,7 +617,7 @@ app.get('/api/whiteboards/:whiteboardId', whiteboardAuth, ah(async (req, res) =>
     workshopName: whiteboard.workshop_name,
     elements: elementRows.map((row) => {
       const el = parseElement(row);
-      el.reactions = reactionsByElement.get(row.id) || [];
+      el.votes = votersByElement.get(row.id) || [];
       el.commentCount = commentCountByElement.get(row.id) || 0;
       return el;
     }),
@@ -756,32 +755,31 @@ app.delete('/api/whiteboards/:whiteboardId/elements/:id', whiteboardAuth, ah(asy
 }));
 
 // =====================
-// RÉACTIONS ET COMMENTAIRES (par élément)
+// VOTES ET COMMENTAIRES (par élément)
 // =====================
 
-// Un seul émoji par participant et par élément : re-cliquer le même le retire, cliquer un autre le
-// remplace. On renvoie/diffuse la liste complète des réactions de l'élément (plus simple qu'un diff,
-// et le volume par élément reste minime).
-app.post('/api/whiteboards/:whiteboardId/elements/:elementId/reactions', whiteboardAuth, ah(async (req, res) => {
-  const { emoji } = req.body || {};
-  if (!REACTION_EMOJIS.includes(emoji)) return res.status(400).json({ error: 'Émoji invalide' });
+// Un simple marqueur de présence par (élément, participant) : re-cliquer retire son vote. On
+// réutilise la table whiteboard_reactions de l'ancien système à émojis (colonne "emoji" ignorée,
+// toujours écrite avec la même valeur), pour ne pas avoir à migrer les votes déjà posés en prod.
+app.post('/api/whiteboards/:whiteboardId/elements/:elementId/vote', whiteboardAuth, ah(async (req, res) => {
   const element = await tursoGet('SELECT id FROM whiteboard_elements WHERE id = ? AND whiteboard_id = ?', [req.params.elementId, req.params.whiteboardId]);
   if (!element) return res.status(404).json({ error: 'Introuvable' });
   const existing = await tursoGet(
-    'SELECT * FROM whiteboard_reactions WHERE element_id = ? AND actor_name = ?',
+    'SELECT id FROM whiteboard_reactions WHERE element_id = ? AND actor_name = ?',
     [req.params.elementId, req.user.name]
   );
-  if (existing) await tursoRun('DELETE FROM whiteboard_reactions WHERE id = ?', [existing.id]);
-  if (!existing || existing.emoji !== emoji) {
+  if (existing) {
+    await tursoRun('DELETE FROM whiteboard_reactions WHERE id = ?', [existing.id]);
+  } else {
     await tursoRun(
       'INSERT INTO whiteboard_reactions (id, whiteboard_id, element_id, actor_name, emoji) VALUES (?, ?, ?, ?, ?)',
-      [uuidv4(), req.params.whiteboardId, req.params.elementId, req.user.name, emoji]
+      [uuidv4(), req.params.whiteboardId, req.params.elementId, req.user.name, '+1']
     );
   }
-  const rows = await tursoAll('SELECT emoji, actor_name FROM whiteboard_reactions WHERE element_id = ?', [req.params.elementId]);
-  const reactions = rows.map(r => ({ emoji: r.emoji, actorName: r.actor_name }));
-  broadcast('element:reactions', { elementId: req.params.elementId, reactions }, req.params.whiteboardId);
-  res.json({ reactions });
+  const rows = await tursoAll('SELECT actor_name FROM whiteboard_reactions WHERE element_id = ?', [req.params.elementId]);
+  const voters = rows.map(r => r.actor_name);
+  broadcast('element:votes', { elementId: req.params.elementId, voters }, req.params.whiteboardId);
+  res.json({ voters });
 }));
 
 app.get('/api/whiteboards/:whiteboardId/elements/:elementId/comments', whiteboardAuth, ah(async (req, res) => {
@@ -806,6 +804,18 @@ app.post('/api/whiteboards/:whiteboardId/elements/:elementId/comments', whiteboa
   const comment = parseComment(row);
   broadcast('element:comment', { elementId: req.params.elementId, comment }, req.params.whiteboardId);
   res.json(comment);
+}));
+
+// v1 : pas de droits, n'importe quel participant peut supprimer n'importe quel commentaire.
+app.delete('/api/whiteboards/:whiteboardId/elements/:elementId/comments/:commentId', whiteboardAuth, ah(async (req, res) => {
+  const existing = await tursoGet(
+    'SELECT id FROM whiteboard_comments WHERE id = ? AND element_id = ? AND whiteboard_id = ?',
+    [req.params.commentId, req.params.elementId, req.params.whiteboardId]
+  );
+  if (!existing) return res.status(404).json({ error: 'Introuvable' });
+  await tursoRun('DELETE FROM whiteboard_comments WHERE id = ?', [req.params.commentId]);
+  broadcast('element:comment-deleted', { elementId: req.params.elementId, commentId: req.params.commentId }, req.params.whiteboardId);
+  res.json({ ok: true });
 }));
 
 // SPA routes

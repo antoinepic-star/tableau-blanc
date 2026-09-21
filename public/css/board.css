@@ -133,6 +133,13 @@ body.board-page { overflow: hidden; height: 100vh; }
 }
 .comment-item-name { font-size: 12.5px; font-weight: 600; color: var(--text); }
 .comment-item-time { font-size: 11.5px; color: var(--text-muted); margin-left: auto; flex-shrink: 0; }
+.comment-item-delete {
+  flex-shrink: 0; width: 18px; height: 18px; border: none; background: none; padding: 0;
+  display: flex; align-items: center; justify-content: center; border-radius: 4px;
+  color: var(--text-muted); cursor: pointer; opacity: 0; transition: opacity .12s, background .12s, color .12s;
+}
+.comment-item:hover .comment-item-delete { opacity: 1; }
+.comment-item-delete:hover { background: #fbe4e4; color: #c0392b; }
 .comment-item-text { font-size: 13.5px; line-height: 1.45; color: var(--text); white-space: pre-wrap; word-break: break-word; padding-left: 30px; }
 
 .comment-drawer-footer {
@@ -199,12 +206,14 @@ body.board-page { overflow: hidden; height: 100vh; }
   display: flex; flex-wrap: wrap; gap: 4px; pointer-events: none; z-index: 5;
 }
 .element-badge-chip {
-  display: inline-flex; align-items: center; gap: 3px;
+  display: inline-flex; align-items: center; gap: 3px; pointer-events: auto;
   background: #fff; border-radius: 999px; padding: 2px 7px;
   font-size: 11px; font-weight: 600; color: var(--text);
   box-shadow: 0 1px 4px rgba(20,20,40,0.18); white-space: nowrap;
 }
 .element-badge-chip svg { width: 11px; height: 11px; flex-shrink: 0; }
+.element-badge-chip-clickable { cursor: pointer; }
+.element-badge-chip-clickable:hover { background: #faf3e2; }
 
 /* ---- Toolbar "verrouillé" : un seul bouton, appui long pour déverrouiller (façon Miro) ---- */
 .unlock-hold-btn {
@@ -402,16 +411,10 @@ body.is-linking .element:not(.is-locked) .connector-anchor { display: block; }
   width: 18px; height: 18px; border-radius: 50%; display: block; border: 1.5px solid rgba(0,0,0,0.08);
 }
 .toolbar-color-dot-none { background: repeating-conic-gradient(#ddd 0% 25%, #fff 0% 50%) 0 0/8px 8px; }
+/* Rond blanc cerclé de couleur — pour un sélecteur de CONTOUR, à ne pas confondre avec un rond
+   plein (fond). */
+.toolbar-color-dot-ring { background: #fff; border-width: 2.5px; }
 
-.toolbar-reaction-current { font-size: 15px; line-height: 1; }
-.toolbar-reaction-popover { display: none; grid-template-columns: repeat(4, 1fr); gap: 2px; width: 136px; }
-.toolbar-reaction-popover.is-open { display: grid; }
-.toolbar-reaction-option {
-  width: 30px; height: 30px; border: none; background: transparent; border-radius: 6px;
-  cursor: pointer; display: flex; align-items: center; justify-content: center; font-size: 16px;
-}
-.toolbar-reaction-option:hover { background: #f4f4f6; }
-.toolbar-reaction-option.is-active { background: var(--purple); }
 .toolbar-color-swatch {
   width: 24px; height: 24px; border-radius: 50%; border: 2px solid rgba(0,0,0,0.1); cursor: pointer; padding: 0;
 }
