@@ -608,6 +608,8 @@
       <button type="button" class="element-icon-btn element-comment-btn" title="Commenter">${iconComment()}</button>
       <span class="element-toolbar-sep"></span>
       <button type="button" class="element-icon-btn element-lock-btn" title="Verrouiller">${iconLock()}</button>
+      <button type="button" class="element-icon-btn element-front-btn" title="Mettre au premier plan">${iconToFront()}</button>
+      <button type="button" class="element-icon-btn element-back-btn" title="Envoyer à l'arrière-plan">${iconToBack()}</button>
       <button type="button" class="element-icon-btn element-duplicate-btn" title="Dupliquer">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15H4a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h10a1 1 0 0 1 1 1v1"/></svg>
       </button>
@@ -642,9 +644,11 @@
   function iconUngroup() { return '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="2" width="8" height="8" rx="1.5"/><rect x="14" y="14" width="8" height="8" rx="1.5"/><line x1="9.5" y1="9.5" x2="14.5" y2="14.5" stroke-dasharray="2 2"/></svg>'; }
   function iconLock() { return '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>'; }
   function iconComment() { return '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H8l-5 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>'; }
-  // "Vote" simple (façon +1) : un cercle avec un "+", même style trait que les autres icônes pour
-  // rester cohérent au zoom (contrairement aux glyphes émoji, qui redimensionnent moins proprement).
-  function iconVote() { return '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><line x1="12" y1="8" x2="12" y2="16"/><line x1="8" y1="12" x2="16" y2="12"/></svg>'; }
+  // "Vote" simple (façon +1) : un simple "+", même style trait que les autres icônes pour rester
+  // cohérent au zoom (contrairement aux glyphes émoji, qui redimensionnent moins proprement).
+  function iconVote() { return '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>'; }
+  function iconToFront() { return '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="12" height="12" rx="1.5"/><rect x="9" y="9" width="12" height="12" rx="1.5" fill="currentColor" stroke="none"/></svg>'; }
+  function iconToBack() { return '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="12" height="12" rx="1.5" fill="currentColor" stroke="none"/><rect x="9" y="9" width="12" height="12" rx="1.5"/></svg>'; }
 
   function groupMembers(groupId) {
     if (!groupId) return [];
@@ -945,11 +949,13 @@
       badges.addEventListener('pointerdown', e => e.stopPropagation());
       badges.addEventListener('click', (e) => {
         if (e.target.closest('[data-badge-action="comment"]')) openCommentDrawer(entry);
+        if (e.target.closest('[data-badge-action="vote"]')) toggleVote(entry);
       });
       entry.el.appendChild(badges);
     }
+    const voted = votes.includes(myName);
     const voteChip = votes.length
-      ? `<span class="element-badge-chip" title="Ont voté : ${escapeHtml(votes.join(', '))}">${iconVote()} ${votes.length}</span>`
+      ? `<span class="element-badge-chip element-badge-chip-clickable" data-badge-action="vote" title="${voted ? 'Retirer mon vote' : 'Voter'} — ont voté : ${escapeHtml(votes.join(', '))}">${iconVote()} ${votes.length}</span>`
       : '';
     const commentChip = commentCount
       ? `<span class="element-badge-chip element-badge-chip-clickable" data-badge-action="comment" title="Voir les commentaires">${iconComment()} ${commentCount}</span>`
@@ -1423,17 +1429,19 @@
   // Simple bascule (pas de popover) : le serveur gère le toggle et renvoie la liste à jour des
   // votants, qu'on applique directement (le même écho arrive aussi par SSE, sans effet puisqu'il
   // pose la même liste).
+  function toggleVote(entry) {
+    Api.toggleVote(entry.data.id).then(({ voters }) => {
+      entry.data.votes = voters;
+      updateElementBadges(entry);
+      refreshToolbarIfSelected(entry);
+    }).catch(() => {});
+  }
+
   function wireVoteButton(entry) {
     const btn = toolbarEl.querySelector('.element-vote-btn');
     if (!btn) return;
     btn.addEventListener('pointerdown', e => e.stopPropagation());
-    btn.addEventListener('click', () => {
-      Api.toggleVote(entry.data.id).then(({ voters }) => {
-        entry.data.votes = voters;
-        updateElementBadges(entry);
-        refreshToolbarIfSelected(entry);
-      }).catch(() => {});
-    });
+    btn.addEventListener('click', () => toggleVote(entry));
   }
 
   function wireFormatDropdown(entry) {
@@ -1632,6 +1640,18 @@
         showToolbarFor(entry);
       });
     }
+
+    const frontBtn = toolbarEl.querySelector('.element-front-btn');
+    frontBtn.addEventListener('pointerdown', e => e.stopPropagation());
+    frontBtn.addEventListener('click', () => {
+      Api.updateElement(id, { bringToFront: true }).then(applyRemoteUpdate).catch(() => {});
+    });
+
+    const backBtn = toolbarEl.querySelector('.element-back-btn');
+    backBtn.addEventListener('pointerdown', e => e.stopPropagation());
+    backBtn.addEventListener('click', () => {
+      Api.updateElement(id, { sendToBack: true }).then(applyRemoteUpdate).catch(() => {});
+    });
 
     const dupBtn = toolbarEl.querySelector('.element-duplicate-btn');
     dupBtn.addEventListener('pointerdown', e => e.stopPropagation());

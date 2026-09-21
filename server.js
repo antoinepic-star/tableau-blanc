@@ -669,7 +669,7 @@ app.patch('/api/whiteboards/:whiteboardId/elements/:id', whiteboardAuth, ah(asyn
   if (!existing) return res.status(404).json({ error: 'Introuvable' });
   const {
     x, y, width, height, rotation, color, text, fontSize, bold, italic, underline, strikethrough, imageData, grayscale,
-    startCap, endCap, lineStyle, backgroundColor, bringToFront,
+    startCap, endCap, lineStyle, backgroundColor, bringToFront, sendToBack,
     strokeWidth, strokeColor, radius, groupId, locked, fromElementId, fromSide, toElementId, toSide,
   } = req.body || {};
 
@@ -677,6 +677,9 @@ app.patch('/api/whiteboards/:whiteboardId/elements/:id', whiteboardAuth, ah(asyn
   if (bringToFront) {
     const { max } = await tursoGet('SELECT MAX(z_index) as max FROM whiteboard_elements WHERE whiteboard_id = ?', [req.params.whiteboardId]);
     zIndex = (max ?? -1) + 1;
+  } else if (sendToBack) {
+    const { min } = await tursoGet('SELECT MIN(z_index) as min FROM whiteboard_elements WHERE whiteboard_id = ?', [req.params.whiteboardId]);
+    zIndex = (min ?? 1) - 1;
   }
 
   const next = {
