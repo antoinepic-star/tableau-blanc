@@ -1794,12 +1794,16 @@
           return en ? { id: mid, x: en.data.x, y: en.data.y } : null;
         }).filter(Boolean);
         Api.updateElementsBatch(moves)
-          .then(({ elements: updated }) => {
+          .then(({ elements: updated, superseded, isLatest }) => {
+            if (superseded) return; // un glisser plus récent du même lot a pris le relais avant l'envoi
             updated.forEach((data) => {
               const en = elements.get(data.id);
               if (en) en.dragging = false;
-              applyRemoteUpdate(data);
             });
+            // Une réponse plus récente arrivera de toute façon : ne pas "rejouer" cette position
+            // intermédiaire à l'écran pendant qu'on l'attend (cf. commentaire dans api.js).
+            if (!isLatest) return;
+            updated.forEach(applyRemoteUpdate);
           })
           .catch(() => { ids.forEach((mid) => { const en = elements.get(mid); if (en) en.dragging = false; }); });
       } else {

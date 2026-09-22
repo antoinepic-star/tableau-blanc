@@ -50,16 +50,50 @@ const Api = (() => {
     return next;
   }
 
-  // Même problème que updateElement ci-dessus, mais à l'échelle du lot : si l'utilisateur enchaîne
-  // plusieurs glisser-déposer de groupe rapidement, un déplacement plus ancien peut répondre après
-  // un plus récent et écraser sa position/son z_index (éléments qui "reviennent" tout seuls après
-  // coup, ordre d'empilement qui se remélange). La sélection pouvant changer entre deux glissers, on
-  // chaîne globalement (pas par élément) plutôt que d'essayer de recouper les ensembles concernés.
-  let batchMoveChain = Promise.resolve();
+  // Même problème que updateElement ci-dessus, mais à l'échelle du lot : sans cette file, un
+  // déplacement plus ancien peut répondre après un plus récent et écraser sa position/son z_index
+  // (éléments qui "reviennent" tout seuls après coup, ordre d'empilement qui se remélange).
+  //
+  // Une simple file FIFO ne suffit pas : si l'utilisateur enchaîne plusieurs glisser-déposer du même
+  // groupe plus vite que l'aller-retour réseau, chaque position intermédiaire finit quand même par
+  // partir et s'appliquer à son tour — visible comme si l'élément "rejouait" tout le trajet après le
+  // relâchement. Tant qu'un envoi pour un lot d'éléments donné n'est pas encore parti, un nouvel
+  // appel pour EXACTEMENT le même lot le remplace au lieu de s'empiler derrière : seule la dernière
+  // position compte, les intermédiaires ne sont jamais transmises. Un envoi déjà en vol ne peut pas
+  // être annulé, mais une fois sa réponse arrivée son résultat est ignoré si un plus récent lui a
+  // depuis succédé (repéré via `isLatest` — cf. board.js) — donc au pire un seul palier intermédiaire
+  // s'affiche, jamais toute la série. Des lots portant sur des éléments différents restent chacun en
+  // FIFO l'un derrière l'autre, sans se remplacer.
+  const batchMoveQueue = [];
+  let batchMoveInFlight = false;
+  let batchMoveVersion = 0;
+
+  function batchMoveKey(moves) {
+    return moves.map(m => m.id).sort().join(',');
+  }
+
+  function pumpBatchMoveQueue() {
+    if (batchMoveInFlight || !batchMoveQueue.length) return;
+    const { moves, bringToFront, resolve, reject } = batchMoveQueue.shift();
+    batchMoveInFlight = true;
+    const version = ++batchMoveVersion;
+    request('POST', `${base}/elements/batch-move`, { moves, bringToFront })
+      .then(result => resolve({ ...result, isLatest: version === batchMoveVersion }), reject)
+      .finally(() => { batchMoveInFlight = false; pumpBatchMoveQueue(); });
+  }
+
   function updateElementsBatch(moves, bringToFront = true) {
-    const next = batchMoveChain.catch(() => {}).then(() => request('POST', `${base}/elements/batch-move`, { moves, bringToFront }));
-    batchMoveChain = next;
-    return next;
+    const key = batchMoveKey(moves);
+    return new Promise((resolve, reject) => {
+      const last = batchMoveQueue[batchMoveQueue.length - 1];
+      if (last && last.key === key) {
+        last.resolve({ elements: [], superseded: true });
+        batchMoveQueue[batchMoveQueue.length - 1] = { key, moves, bringToFront, resolve, reject };
+      } else {
+        batchMoveQueue.push({ key, moves, bringToFront, resolve, reject });
+      }
+      pumpBatchMoveQueue();
+    });
   }
 
   return {
