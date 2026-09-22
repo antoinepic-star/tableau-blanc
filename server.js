@@ -632,12 +632,14 @@ function findContainingFrame(x, y, width, height, frameRows, excludeId) {
   return best ? best.id : null;
 }
 
-// "Ordonner" (auto_arrange) : quand actif sur une frame, ses enfants sont posés en grille (colonnes
-// fixées par la largeur de la frame, autant de lignes que nécessaire), avec un padding égal partout
-// et entre les cases. La taille de case est celle du plus grand enfant (chacun garde SA taille, on ne
-// redimensionne personne), et la frame grandit/rétrécit en hauteur pour accueillir tout le monde sans
-// jamais changer sa largeur. Recalcule tout à chaque appel plutôt que d'ajuster incrémentalement :
-// plus simple, et le nombre d'enfants d'une frame reste toujours modeste.
+// "Ordonner" (auto_arrange) : quand actif sur une frame, ses enfants sont posés en "flux" façon
+// mosaïque — chacun garde SA propre taille (on ne redimensionne personne, contrairement à une grille
+// à cases uniformes), placés les uns à côté des autres tant qu'ils tiennent sur la ligne courante,
+// puis la ligne suivante démarre sous la plus haute image de la ligne précédente. Un élément plus
+// large que la frame reste seul sur sa ligne plutôt que de forcer un débordement infini. La frame
+// grandit/rétrécit en hauteur pour accueillir tout le monde sans jamais changer sa largeur. Recalcule
+// tout à chaque appel plutôt que d'ajuster incrémentalement : plus simple, et le nombre d'enfants
+// d'une frame reste toujours modeste.
 const FRAME_ARRANGE_PADDING = 16;
 const FRAME_TITLE_HEIGHT = 36;
 const FRAME_MIN_HEIGHT = 100;
@@ -660,23 +662,32 @@ async function applyFrameArrangement(whiteboardId, frameId) {
       await tursoRun('UPDATE whiteboard_elements SET height = ?, updated_at = unixepoch() WHERE id = ?', [FRAME_MIN_HEIGHT, frameId]);
     }
   } else {
-    const cellW = clampNum(Math.max(...children.map(c => c.width)), 80, 360);
-    const cellH = clampNum(Math.max(...children.map(c => c.height)), 60, 360);
-    const cols = Math.max(1, Math.floor((frame.width - FRAME_ARRANGE_PADDING) / (cellW + FRAME_ARRANGE_PADDING)));
-    const rows = Math.ceil(children.length / cols);
-    const newHeight = Math.max(FRAME_MIN_HEIGHT, FRAME_TITLE_HEIGHT + FRAME_ARRANGE_PADDING + rows * (cellH + FRAME_ARRANGE_PADDING));
+    const innerWidth = Math.max(frame.width - FRAME_ARRANGE_PADDING, 40);
+    let cursorX = FRAME_ARRANGE_PADDING;
+    let cursorY = FRAME_TITLE_HEIGHT + FRAME_ARRANGE_PADDING;
+    let rowHeight = 0;
+    let placedInRow = 0;
 
     for (let i = 0; i < children.length; i++) {
-      const col = i % cols;
-      const row = Math.floor(i / cols);
-      const x = frame.x + FRAME_ARRANGE_PADDING + col * (cellW + FRAME_ARRANGE_PADDING);
-      const y = frame.y + FRAME_TITLE_HEIGHT + FRAME_ARRANGE_PADDING + row * (cellH + FRAME_ARRANGE_PADDING);
+      const c = children[i];
+      if (placedInRow > 0 && (cursorX - FRAME_ARRANGE_PADDING + c.width) > innerWidth) {
+        cursorY += rowHeight + FRAME_ARRANGE_PADDING;
+        cursorX = FRAME_ARRANGE_PADDING;
+        rowHeight = 0;
+        placedInRow = 0;
+      }
+      const x = frame.x + cursorX;
+      const y = frame.y + cursorY;
       await tursoRun(
         'UPDATE whiteboard_elements SET x = ?, y = ?, frame_order = ?, updated_at = unixepoch() WHERE id = ?',
-        [x, y, i, children[i].id]
+        [x, y, i, c.id]
       );
-      touchedIds.push(children[i].id);
+      touchedIds.push(c.id);
+      cursorX += c.width + FRAME_ARRANGE_PADDING;
+      rowHeight = Math.max(rowHeight, c.height);
+      placedInRow++;
     }
+    const newHeight = Math.max(FRAME_MIN_HEIGHT, cursorY + rowHeight + FRAME_ARRANGE_PADDING);
     await tursoRun('UPDATE whiteboard_elements SET height = ?, updated_at = unixepoch() WHERE id = ?', [newHeight, frameId]);
   }
 
@@ -684,8 +695,6 @@ async function applyFrameArrangement(whiteboardId, frameId) {
   const rows = await tursoAll(`SELECT * FROM whiteboard_elements WHERE id IN (${placeholders})`, touchedIds);
   return rows.map(r => parseElement(r, { withImageData: false }));
 }
-
-function clampNum(n, min, max) { return Math.min(max, Math.max(min, n)); }
 
 app.get('/api/whiteboards/:whiteboardId', whiteboardAuth, ah(async (req, res) => {
   const whiteboard = await tursoGet('SELECT * FROM whiteboards WHERE id = ?', [req.params.whiteboardId]);
