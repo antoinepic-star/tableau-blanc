@@ -1903,23 +1903,31 @@
   // point où il a été lâché : la case dont le CENTRE est la plus proche de ce point désigne la
   // position d'insertion — pas besoin d'aperçu live pendant le geste, seul le résultat au relâchement
   // compte (cf. wireBodyDrag).
-  function computeReorderTarget(frameId, draggedId, dropX, dropY) {
-    const siblings = frameChildren(frameId)
-      .filter(cid => cid !== draggedId)
+  // Échange la place de l'élément glissé avec celle de son voisin le plus proche du point de dépôt —
+  // seuls ces deux-là changent de case, le reste de la mosaïque reste identique. Une insertion avec
+  // décalage (comme une liste triable classique) aurait redistribué tous les éléments suivants d'une
+  // case, ce qui casse une mosaïque d'images qu'on voulait justement garder stable.
+  function computeSwapTarget(frameId, draggedId, dropX, dropY) {
+    const all = frameChildren(frameId)
       .map(cid => elements.get(cid))
       .filter(Boolean)
       .sort((a, b) => (a.data.frameOrder ?? 0) - (b.data.frameOrder ?? 0));
-    if (!siblings.length) return [draggedId];
-    let bestIdx = siblings.length;
+    const order = all.map(en => en.data.id);
+    const draggedIdx = order.indexOf(draggedId);
+    if (draggedIdx === -1) return order;
+
+    let bestIdx = -1;
     let bestDist = Infinity;
-    siblings.forEach((en, idx) => {
+    all.forEach((en, idx) => {
+      if (idx === draggedIdx) return;
       const cx = en.data.x + en.data.width / 2;
       const cy = en.data.y + en.data.height / 2;
       const d = Math.hypot(cx - dropX, cy - dropY);
       if (d < bestDist) { bestDist = d; bestIdx = idx; }
     });
-    const order = siblings.map(en => en.data.id);
-    order.splice(bestIdx, 0, draggedId);
+    if (bestIdx === -1) return order; // seul dans la frame : rien à échanger
+
+    [order[draggedIdx], order[bestIdx]] = [order[bestIdx], order[draggedIdx]];
     return order;
   }
 
@@ -2112,17 +2120,18 @@
       el.classList.remove('is-dragging');
       Api.cancelLiveElement(id);
       if (wasMoved) {
-        // Un enfant lâché dans les limites de la frame "ordonnée" où il était déjà se réordonne
-        // plutôt que de se positionner librement (cf. spec : décocher "ordonner" pour retrouver la
-        // liberté de placement). S'il sort de cette frame (ou n'y était pas), le chemin normal
-        // ci-dessous s'occupe du placement libre et de l'appartenance comme avant.
+        // Un enfant lâché dans les limites de la frame "ordonnée" où il était déjà échange sa place
+        // avec son voisin le plus proche du point de dépôt (cf. computeSwapTarget), plutôt que de se
+        // positionner librement (décocher "ordonner" pour retrouver cette liberté). S'il sort de cette
+        // frame (ou n'y était pas), le chemin normal ci-dessous s'occupe du placement libre et de
+        // l'appartenance comme avant.
         const cx = entry.data.x + entry.data.width / 2;
         const cy = entry.data.y + entry.data.height / 2;
         const frameEntry = entry.data.frameId ? elements.get(entry.data.frameId) : null;
         const reordering = frameEntry?.data.autoArrange && isPointInsideEntry(frameEntry, cx, cy);
 
         if (reordering) {
-          const order = computeReorderTarget(entry.data.frameId, id, cx, cy);
+          const order = computeSwapTarget(entry.data.frameId, id, cx, cy);
           Api.reorderFrame(entry.data.frameId, order)
             .then(({ elements: updated, superseded, isLatest }) => {
               if (superseded) return;
