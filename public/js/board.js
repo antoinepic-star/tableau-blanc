@@ -1781,6 +1781,7 @@
       ids.forEach((mid) => {
         const en = elements.get(mid);
         if (en) en.el.classList.remove('is-dragging');
+        Api.cancelLiveElement(mid);
       });
       if (moved) {
         // entry.dragging reste vrai jusqu'à la réponse : sinon un écho "element:dragging" encore en
@@ -1892,6 +1893,7 @@
       el.releasePointerCapture(dragState.pointerId);
       dragState = null;
       el.classList.remove('is-dragging');
+      Api.cancelLiveElement(id);
       if (wasMoved) {
         // Idem : on ne relâche le verrou "dragging" qu'une fois la réponse du PATCH appliquée, pour
         // qu'un écho "element:dragging" tardif (dernier envoi live avant relâchement) ne vienne pas
@@ -1968,6 +1970,7 @@
       handle.releasePointerCapture(resizeState.pointerId);
       resizeState = null;
       entry.el.classList.remove('is-resizing');
+      Api.cancelLiveElement(entry.data.id);
       Api.updateElement(entry.data.id, { width: entry.data.width, height: entry.data.height, bringToFront: true })
         .then((data) => { entry.resizing = false; applyRemoteUpdate(data); })
         .catch(() => { entry.resizing = false; });
@@ -2016,6 +2019,7 @@
       handle.releasePointerCapture(state.pointerId);
       state = null;
       entry.el.classList.remove('is-resizing');
+      Api.cancelLiveElement(entry.data.id);
       Api.updateElement(entry.data.id, { width: entry.data.width, rotation: entry.data.rotation, bringToFront: true })
         .then((data) => { entry.resizing = false; applyRemoteUpdate(data); })
         .catch(() => { entry.resizing = false; });

@@ -16,7 +16,7 @@ const Api = (() => {
   const token = sessionStorage.getItem(tokenKey);
   if (!token) window.location.href = `/w/${whiteboardId}`;
 
-  async function request(method, url, body) {
+  async function request(method, url, body, signal) {
     const res = await fetch(url, {
       method,
       headers: {
@@ -24,6 +24,7 @@ const Api = (() => {
         Authorization: `Bearer ${token}`,
       },
       body: body !== undefined ? JSON.stringify(body) : undefined,
+      signal,
     });
     if (res.status === 401) {
       sessionStorage.removeItem(tokenKey);
@@ -96,6 +97,28 @@ const Api = (() => {
     });
   }
 
+  // Les positions "live" pendant un glisser/redimensionnement sont juste un aperçu visuel pour les
+  // autres participants, envoyées en rafale (jusqu'à toutes les ~40ms, par élément) et jamais
+  // persistées. Sur un glisser de groupe, ça fait vite beaucoup de requêtes concurrentes pour le même
+  // onglet — au-delà de la limite de connexions simultanées du navigateur par origine, certaines
+  // restent simplement en attente. Si le relâchement arrive avant qu'elles soient toutes parties,
+  // celles encore en attente ne sont annulées par rien : elles finissent par partir 1-2 secondes plus
+  // tard et rediffusent une position déjà périmée, qui s'applique bel et bien puisque le geste local
+  // est terminé (élément qui "rebouge tout seul" juste après le relâchement). On annule donc la
+  // requête "live" précédente pour un élément dès qu'une nouvelle la remplace, et on expose
+  // cancelLiveElement pour couper net celle encore pendante au moment du relâchement.
+  const liveAbortControllers = new Map();
+  function liveElement(id, patch) {
+    liveAbortControllers.get(id)?.abort();
+    const controller = new AbortController();
+    liveAbortControllers.set(id, controller);
+    return request('POST', `${base}/elements/${id}/live`, patch, controller.signal).catch(() => {});
+  }
+  function cancelLiveElement(id) {
+    liveAbortControllers.get(id)?.abort();
+    liveAbortControllers.delete(id);
+  }
+
   return {
     token,
     whiteboardId,
@@ -103,7 +126,8 @@ const Api = (() => {
     createElement: (element) => request('POST', `${base}/elements`, element || {}),
     updateElement,
     updateElementsBatch,
-    liveElement: (id, patch) => request('POST', `${base}/elements/${id}/live`, patch).catch(() => {}),
+    liveElement,
+    cancelLiveElement,
     deleteElement: (id) => request('DELETE', `${base}/elements/${id}`),
     sendCursor: (x, y) => request('POST', `${base}/cursor`, { x, y }).catch(() => {}),
     toggleVote: (elementId) => request('POST', `${base}/elements/${elementId}/vote`),
