@@ -190,11 +190,10 @@ async function initDb() {
     // couleur du titre de la frame elle-même (distincte de "color", son fond).
     'ALTER TABLE whiteboard_elements ADD COLUMN frame_id TEXT',
     'ALTER TABLE whiteboard_elements ADD COLUMN title_color TEXT',
-    // "Ordonner" (phase 2 des frames) : auto_arrange est le bouton de la frame elle-même ;
-    // frame_order est la place d'un enfant dans la séquence quand ce mode est actif (recalculée en
-    // entier par applyFrameArrangement à chaque changement, jamais éditée à la main).
-    'ALTER TABLE whiteboard_elements ADD COLUMN auto_arrange INTEGER NOT NULL DEFAULT 0',
-    'ALTER TABLE whiteboard_elements ADD COLUMN frame_order INTEGER',
+    // Une tentative antérieure d'"ordonner" comme mode persistant utilisait deux colonnes
+    // (auto_arrange, frame_order) — devenu une action ponctuelle (cf. applyFrameArrangement), elles
+    // ne sont plus lues ni écrites. Pas retirées ici (une base déjà migrée les a de toute façon) mais
+    // plus ajoutées pour une base neuve.
   ]) {
     try { await turso.execute(sql); } catch (_) {}
   }
@@ -607,8 +606,6 @@ function parseElement(row, { withImageData = true } = {}) {
     toSide: row.to_side,
     frameId: row.frame_id,
     titleColor: row.title_color,
-    autoArrange: !!row.auto_arrange,
-    frameOrder: row.frame_order,
     zIndex: row.z_index,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
@@ -632,14 +629,15 @@ function findContainingFrame(x, y, width, height, frameRows, excludeId) {
   return best ? best.id : null;
 }
 
-// "Ordonner" (auto_arrange) : quand actif sur une frame, ses enfants sont posés en "flux" façon
-// mosaïque — chacun garde SA propre taille (on ne redimensionne personne, contrairement à une grille
-// à cases uniformes), placés les uns à côté des autres tant qu'ils tiennent sur la ligne courante,
-// puis la ligne suivante démarre sous la plus haute image de la ligne précédente. Un élément plus
-// large que la frame reste seul sur sa ligne plutôt que de forcer un débordement infini. La frame
-// grandit/rétrécit en hauteur pour accueillir tout le monde sans jamais changer sa largeur. Recalcule
-// tout à chaque appel plutôt que d'ajuster incrémentalement : plus simple, et le nombre d'enfants
-// d'une frame reste toujours modeste.
+// "Ordonner" : action ponctuelle (comme dupliquer), pas un mode qui persiste — un clic range une
+// fois le contenu ACTUEL de la frame en "flux" façon mosaïque, d'après la position de lecture du
+// moment (haut en bas, gauche à droite), puis n'a plus aucun effet sur ce qui se passe ensuite :
+// ajouter ou déplacer un élément après coup le laisse simplement là où on l'a posé. Chaque enfant
+// garde SA propre taille (on ne redimensionne personne, contrairement à une grille à cases
+// uniformes) ; ils sont placés les uns à côté des autres tant qu'ils tiennent sur la ligne courante,
+// puis la ligne suivante démarre sous la plus haute image de la ligne précédente (un élément plus
+// large que la frame reste seul sur sa ligne plutôt que de forcer un débordement infini). La frame
+// grandit/rétrécit en hauteur pour accueillir tout le monde sans jamais changer sa largeur.
 const FRAME_ARRANGE_PADDING = 16;
 const FRAME_TITLE_HEIGHT = 36;
 const FRAME_MIN_HEIGHT = 100;
@@ -649,10 +647,10 @@ async function applyFrameArrangement(whiteboardId, frameId) {
     'SELECT * FROM whiteboard_elements WHERE id = ? AND whiteboard_id = ? AND type = ?',
     [frameId, whiteboardId, 'frame']
   );
-  if (!frame || !frame.auto_arrange) return [];
+  if (!frame) return [];
 
   const children = await tursoAll(
-    'SELECT * FROM whiteboard_elements WHERE whiteboard_id = ? AND frame_id = ? ORDER BY (frame_order IS NULL), frame_order, y, x',
+    'SELECT * FROM whiteboard_elements WHERE whiteboard_id = ? AND frame_id = ? ORDER BY y, x',
     [whiteboardId, frameId]
   );
 
@@ -668,8 +666,7 @@ async function applyFrameArrangement(whiteboardId, frameId) {
     let rowHeight = 0;
     let placedInRow = 0;
 
-    for (let i = 0; i < children.length; i++) {
-      const c = children[i];
+    for (const c of children) {
       if (placedInRow > 0 && (cursorX - FRAME_ARRANGE_PADDING + c.width) > innerWidth) {
         cursorY += rowHeight + FRAME_ARRANGE_PADDING;
         cursorX = FRAME_ARRANGE_PADDING;
@@ -678,10 +675,7 @@ async function applyFrameArrangement(whiteboardId, frameId) {
       }
       const x = frame.x + cursorX;
       const y = frame.y + cursorY;
-      await tursoRun(
-        'UPDATE whiteboard_elements SET x = ?, y = ?, frame_order = ?, updated_at = unixepoch() WHERE id = ?',
-        [x, y, i, c.id]
-      );
+      await tursoRun('UPDATE whiteboard_elements SET x = ?, y = ?, updated_at = unixepoch() WHERE id = ?', [x, y, c.id]);
       touchedIds.push(c.id);
       cursorX += c.width + FRAME_ARRANGE_PADDING;
       rowHeight = Math.max(rowHeight, c.height);
@@ -769,19 +763,13 @@ app.post('/api/whiteboards/:whiteboardId/elements', whiteboardAuth, ah(async (re
     `INSERT INTO whiteboard_elements (${columns.join(', ')}) VALUES (${columns.map(() => '?').join(', ')})`,
     values
   );
-  // Rejoindre une frame "ordonnée" place ce nouvel élément à la suite de la séquence plutôt qu'à sa
-  // position brute de dépôt — recalculer TOUTE la grille (ce qui replace aussi ce nouvel élément)
-  // avant de répondre, pour que le premier rendu du client soit déjà à la bonne place.
-  let arranged = [];
-  if (frameId) arranged = await applyFrameArrangement(req.params.whiteboardId, frameId);
   const row = await tursoGet('SELECT * FROM whiteboard_elements WHERE id = ?', [id]);
   const element = parseElement(row);
   const whiteboard = await tursoGet('SELECT client_name, workshop_name FROM whiteboards WHERE id = ?', [req.params.whiteboardId]);
   await logActivity('element_created', req.user.name, whiteboard?.client_name, whiteboard?.workshop_name, `Nouveau ${ELEMENT_LABELS[type]}`);
   await touchWhiteboard(req.params.whiteboardId);
   broadcast('element:created', element, req.params.whiteboardId);
-  if (arranged.length) broadcast('elements:updated', { elements: arranged }, req.params.whiteboardId);
-  res.json(arranged.find(e => e.id === id) || element);
+  res.json(element);
 }));
 
 // Patch partiel : position/taille/rotation (fin de drag/resize/rotation), couleur, texte ou mise en
@@ -794,7 +782,7 @@ app.patch('/api/whiteboards/:whiteboardId/elements/:id', whiteboardAuth, ah(asyn
     x, y, width, height, rotation, color, text, fontSize, bold, italic, underline, strikethrough, imageData, grayscale,
     startCap, endCap, lineStyle, backgroundColor, bringToFront, sendToBack,
     strokeWidth, strokeColor, radius, groupId, locked, fromElementId, fromSide, toElementId, toSide,
-    frameId, titleColor, autoArrange,
+    frameId, titleColor,
   } = req.body || {};
 
   // Une frame reste toujours tout au fond : "premier plan" n'a pas de sens pour elle et est ignoré
@@ -848,7 +836,6 @@ app.patch('/api/whiteboards/:whiteboardId/elements/:id', whiteboardAuth, ah(asyn
     to_side: toSide !== undefined ? toSide : existing.to_side,
     frame_id: nextFrameId,
     title_color: titleColor !== undefined ? titleColor : existing.title_color,
-    auto_arrange: autoArrange != null ? (autoArrange ? 1 : 0) : existing.auto_arrange,
     z_index: zIndex,
   };
   const setColumns = Object.keys(next);
@@ -857,38 +844,10 @@ app.patch('/api/whiteboards/:whiteboardId/elements/:id', whiteboardAuth, ah(asyn
     [...setColumns.map(c => next[c]), req.params.id]
   );
 
-  // Si l'appartenance à une frame change (entrée/sortie) ou si "ordonner" vient d'être activé, les
-  // grilles concernées (l'ancienne comme la nouvelle frame, si elles sont en mode "ordonner") sont
-  // recalculées — applyFrameArrangement ne fait rien si la frame visée n'a pas ce mode actif.
-  const framesToArrange = new Set();
-  if (existing.type === 'frame' && autoArrange) framesToArrange.add(req.params.id);
-  if (nextFrameId !== existing.frame_id) {
-    if (existing.frame_id) framesToArrange.add(existing.frame_id);
-    if (nextFrameId) framesToArrange.add(nextFrameId);
-  }
-  // Un enfant redimensionné dans une frame "ordonnée" peut changer la taille de case de toute la
-  // grille (basée sur le plus grand enfant) : sans ça, la grille resterait calée sur son ancienne
-  // taille jusqu'au prochain événement qui la retouche.
-  if (existing.type !== 'frame' && existing.frame_id && (width !== undefined || height !== undefined)) {
-    framesToArrange.add(existing.frame_id);
-  }
-  const arrangedById = new Map();
-  for (const fid of framesToArrange) {
-    (await applyFrameArrangement(req.params.whiteboardId, fid)).forEach(el => arrangedById.set(el.id, el));
-  }
-
   const row = await tursoGet('SELECT * FROM whiteboard_elements WHERE id = ?', [req.params.id]);
-  // Si imageData vient de changer (rognage), il faut le renvoyer même si cet élément a aussi été
-  // replacé par applyFrameArrangement (qui répond toujours sans, cf. plus haut) — sinon l'image
-  // rognée disparaîtrait du rendu de l'auteur du rognage.
-  const element = imageData !== undefined
-    ? parseElement(row, { withImageData: true })
-    : (arrangedById.get(req.params.id) || parseElement(row, { withImageData: false }));
-  arrangedById.delete(req.params.id);
+  const element = parseElement(row, { withImageData: imageData !== undefined });
   await touchWhiteboard(req.params.whiteboardId);
   broadcast('element:updated', element, req.params.whiteboardId);
-  const rest = [...arrangedById.values()];
-  if (rest.length) broadcast('elements:updated', { elements: rest }, req.params.whiteboardId);
   res.json(element);
 }));
 
@@ -938,7 +897,6 @@ app.post('/api/whiteboards/:whiteboardId/elements/batch-move', whiteboardAuth, a
   });
 
   const updatedById = new Map();
-  const framesToArrange = new Set();
   for (const move of moves) {
     const existing = existingById.get(move.id);
     if (!existing) continue;
@@ -946,10 +904,6 @@ app.post('/api/whiteboards/:whiteboardId/elements/batch-move', whiteboardAuth, a
     const frameId = existing.type === 'frame'
       ? existing.frame_id
       : findContainingFrame(move.x, move.y, existing.width, existing.height, frameRowsForContainment, null);
-    if (frameId !== existing.frame_id) {
-      if (existing.frame_id) framesToArrange.add(existing.frame_id);
-      if (frameId) framesToArrange.add(frameId);
-    }
     await tursoRun(
       'UPDATE whiteboard_elements SET x = ?, y = ?, z_index = ?, frame_id = ?, updated_at = unixepoch() WHERE id = ?',
       [move.x, move.y, zIndex, frameId, move.id]
@@ -958,43 +912,22 @@ app.post('/api/whiteboards/:whiteboardId/elements/batch-move', whiteboardAuth, a
     updatedById.set(move.id, parseElement(row, { withImageData: false }));
   }
 
-  // Une frame que l'un des éléments déplacés vient de rejoindre ou de quitter (et qui a "ordonner"
-  // actif) se réarrange : le nouvel arrivant prend sa place dans la séquence, celle qu'il quitte se
-  // resserre. Ces positions recalculées ÉCRASENT celles du déplacement brut ci-dessus pour les
-  // éléments concernés — c'est voulu, "ordonner" a le dernier mot sur leur position.
-  for (const fid of framesToArrange) {
-    (await applyFrameArrangement(req.params.whiteboardId, fid)).forEach(el => updatedById.set(el.id, el));
-  }
-
   const updated = [...updatedById.values()];
   await touchWhiteboard(req.params.whiteboardId);
   broadcast('elements:updated', { elements: updated }, req.params.whiteboardId);
   res.json({ elements: updated });
 }));
 
-// Réordonner les enfants d'une frame "ordonnée" (glisser un enfant pour qu'il prenne la place d'un
-// autre, cf. board.js) : le client envoie la séquence complète qu'il a déterminée d'après le point de
-// dépôt, le serveur l'applique (frame_order) puis relaisse la grille à applyFrameArrangement pour
-// replacer tout le monde — y compris l'élément glissé, jamais positionné "à la main".
+// "Ordonner" : bouton d'action ponctuelle dans le toolbar de la frame (cf. board.js), pas un mode —
+// un clic range une fois le contenu actuel, d'après sa position de lecture au moment du clic, puis
+// n'a plus d'effet sur ce qui se passe ensuite (ajouter/déplacer un élément après coup le laisse
+// simplement là où on l'a posé).
 app.post('/api/whiteboards/:whiteboardId/elements/:frameId/arrange', whiteboardAuth, ah(async (req, res) => {
   const frame = await tursoGet(
     'SELECT * FROM whiteboard_elements WHERE id = ? AND whiteboard_id = ? AND type = ?',
     [req.params.frameId, req.params.whiteboardId, 'frame']
   );
   if (!frame) return res.status(404).json({ error: 'Introuvable' });
-  const { order } = req.body || {};
-  if (!Array.isArray(order) || !order.length) return res.status(400).json({ error: 'Requête invalide' });
-
-  const placeholders = order.map(() => '?').join(',');
-  const rows = await tursoAll(
-    `SELECT id FROM whiteboard_elements WHERE whiteboard_id = ? AND frame_id = ? AND id IN (${placeholders})`,
-    [req.params.whiteboardId, req.params.frameId, ...order]
-  );
-  const validIds = new Set(rows.map(r => r.id));
-  for (let i = 0; i < order.length; i++) {
-    if (!validIds.has(order[i])) continue;
-    await tursoRun('UPDATE whiteboard_elements SET frame_order = ?, updated_at = unixepoch() WHERE id = ?', [i, order[i]]);
-  }
 
   const arranged = await applyFrameArrangement(req.params.whiteboardId, req.params.frameId);
   await touchWhiteboard(req.params.whiteboardId);
@@ -1051,13 +984,6 @@ app.delete('/api/whiteboards/:whiteboardId/elements/:id', whiteboardAuth, ah(asy
   }
 
   await deleteOne(req.params.id);
-
-  // Supprimer un enfant d'une frame "ordonnée" resserre la séquence des autres (pas de trou dans la
-  // grille) — sans effet si cette frame n'a pas ce mode actif.
-  if (existing.type !== 'frame' && existing.frame_id) {
-    const arranged = await applyFrameArrangement(req.params.whiteboardId, existing.frame_id);
-    if (arranged.length) broadcast('elements:updated', { elements: arranged }, req.params.whiteboardId);
-  }
 
   const whiteboard = await tursoGet('SELECT client_name, workshop_name FROM whiteboards WHERE id = ?', [req.params.whiteboardId]);
   await logActivity('element_deleted', req.user.name, whiteboard?.client_name, whiteboard?.workshop_name, `${ELEMENT_LABELS[existing.type]} supprimé`);

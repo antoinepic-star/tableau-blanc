@@ -635,7 +635,7 @@
         + colorDropdownHtml('stroke', data.strokeColor, false, 'Couleur du contour', 'ring')
         + colorDropdownHtml('title', data.titleColor, false, 'Couleur du titre')
         + `<select class="element-fontsize-select" data-role="title-fontsize" title="Taille du titre">${FONT_SIZES.map(s => `<option value="${s}"${Number(data.fontSize) === s ? ' selected' : ''}>${s}</option>`).join('')}</select>`
-        + `<button type="button" class="element-icon-btn element-arrange-btn${data.autoArrange ? ' is-active' : ''}" title="${data.autoArrange ? 'Désactiver le rangement automatique' : 'Ordonner (ranger en grille)'}">${iconArrange()}</button>`;
+        + `<button type="button" class="element-icon-btn element-arrange-btn" title="Ordonner (ranger le contenu actuel en grille)">${iconArrange()}</button>`;
     }
     const sep = controls ? '<span class="element-toolbar-sep"></span>' : '';
     const voted = (data.votes || []).includes(myName);
@@ -1745,12 +1745,9 @@
       if (arrangeBtn) {
         arrangeBtn.addEventListener('pointerdown', e => e.stopPropagation());
         arrangeBtn.addEventListener('click', () => {
-          const next = !entry.data.autoArrange;
-          entry.data.autoArrange = next;
-          arrangeBtn.classList.toggle('is-active', next);
-          // Les enfants replacés en grille (si activé) arrivent séparément via l'écho "elements:updated"
-          // du serveur (cf. server.js) — seule la frame elle-même est appliquée ici.
-          Api.updateElement(id, { autoArrange: next }).then(applyRemoteUpdate).catch(() => {});
+          // Action ponctuelle (comme dupliquer) : range le contenu actuel une fois, sans laisser de
+          // mode actif — ajouter/déplacer un élément après coup ne redéclenche rien.
+          Api.arrangeFrame(id).then(({ elements: arranged }) => arranged.forEach(applyRemoteUpdate)).catch(() => {});
         });
       }
     }
@@ -1894,42 +1891,6 @@
     return ids;
   }
 
-  function isPointInsideEntry(entry, px, py) {
-    return px >= entry.data.x && px <= entry.data.x + entry.data.width
-      && py >= entry.data.y && py <= entry.data.y + entry.data.height;
-  }
-
-  // Détermine la séquence complète (avec l'élément glissé inséré à sa nouvelle place) d'après le
-  // point où il a été lâché : la case dont le CENTRE est la plus proche de ce point désigne la
-  // position d'insertion — pas besoin d'aperçu live pendant le geste, seul le résultat au relâchement
-  // compte (cf. wireBodyDrag).
-  // Échange la place de l'élément glissé avec celle de son voisin le plus proche du point de dépôt —
-  // seuls ces deux-là changent de case, le reste de la mosaïque reste identique. Une insertion avec
-  // décalage (comme une liste triable classique) aurait redistribué tous les éléments suivants d'une
-  // case, ce qui casse une mosaïque d'images qu'on voulait justement garder stable.
-  function computeSwapTarget(frameId, draggedId, dropX, dropY) {
-    const all = frameChildren(frameId)
-      .map(cid => elements.get(cid))
-      .filter(Boolean)
-      .sort((a, b) => (a.data.frameOrder ?? 0) - (b.data.frameOrder ?? 0));
-    const order = all.map(en => en.data.id);
-    const draggedIdx = order.indexOf(draggedId);
-    if (draggedIdx === -1) return order;
-
-    let bestIdx = -1;
-    let bestDist = Infinity;
-    all.forEach((en, idx) => {
-      if (idx === draggedIdx) return;
-      const cx = en.data.x + en.data.width / 2;
-      const cy = en.data.y + en.data.height / 2;
-      const d = Math.hypot(cx - dropX, cy - dropY);
-      if (d < bestDist) { bestDist = d; bestIdx = idx; }
-    });
-    if (bestIdx === -1) return order; // seul dans la frame : rien à échanger
-
-    [order[draggedIdx], order[bestIdx]] = [order[bestIdx], order[draggedIdx]];
-    return order;
-  }
 
   // Déplacement groupé : utilisé à la fois pour un déplacement multi-sélection (rectangle de
   // sélection) et pour un groupe permanent (grouper) — un geste sur un seul membre déplace tout le
@@ -2120,29 +2081,6 @@
       el.classList.remove('is-dragging');
       Api.cancelLiveElement(id);
       if (wasMoved) {
-        // Un enfant lâché dans les limites de la frame "ordonnée" où il était déjà échange sa place
-        // avec son voisin le plus proche du point de dépôt (cf. computeSwapTarget), plutôt que de se
-        // positionner librement (décocher "ordonner" pour retrouver cette liberté). S'il sort de cette
-        // frame (ou n'y était pas), le chemin normal ci-dessous s'occupe du placement libre et de
-        // l'appartenance comme avant.
-        const cx = entry.data.x + entry.data.width / 2;
-        const cy = entry.data.y + entry.data.height / 2;
-        const frameEntry = entry.data.frameId ? elements.get(entry.data.frameId) : null;
-        const reordering = frameEntry?.data.autoArrange && isPointInsideEntry(frameEntry, cx, cy);
-
-        if (reordering) {
-          const order = computeSwapTarget(entry.data.frameId, id, cx, cy);
-          Api.reorderFrame(entry.data.frameId, order)
-            .then(({ elements: updated, superseded, isLatest }) => {
-              if (superseded) return;
-              entry.dragging = false;
-              if (!isLatest) return;
-              updated.forEach(applyRemoteUpdate);
-            })
-            .catch(() => { entry.dragging = false; });
-          return;
-        }
-
         // Un élément seul passe aussi par le déplacement en lot (ici réduit à un seul id) plutôt que
         // par un PATCH direct : ça lui donne la même protection contre les glissers rapprochés qu'un
         // groupe (positions intermédiaires jamais envoyées, réponse ignorée si dépassée avant même de
