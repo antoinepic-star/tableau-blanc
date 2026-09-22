@@ -126,6 +126,31 @@ const Api = (() => {
     liveAbortControllers.delete(id);
   }
 
+  // Réordonner une frame "ordonnée" (glisser un enfant à une nouvelle place) — même principe de file
+  // qui remplace plutôt qu'empile que updateElementsBatch : un réordonnancement plus récent pour la
+  // même frame annule celui encore en attente, pour éviter le même genre de "rejeu" si on glisse
+  // plusieurs enfants coup sur coup.
+  const arrangeQueues = new Map();
+  function pumpArrangeQueue(frameId) {
+    const q = arrangeQueues.get(frameId);
+    if (!q || q.inFlight || !q.pending) return;
+    const { order, resolve, reject } = q.pending;
+    q.pending = null;
+    q.inFlight = true;
+    request('POST', `${base}/elements/${frameId}/arrange`, { order })
+      .then(result => resolve({ ...result, isLatest: !q.pending }), reject)
+      .finally(() => { q.inFlight = false; pumpArrangeQueue(frameId); });
+  }
+  function reorderFrame(frameId, order) {
+    return new Promise((resolve, reject) => {
+      let q = arrangeQueues.get(frameId);
+      if (!q) { q = { pending: null, inFlight: false }; arrangeQueues.set(frameId, q); }
+      if (q.pending) q.pending.resolve({ elements: [], superseded: true });
+      q.pending = { order, resolve, reject };
+      pumpArrangeQueue(frameId);
+    });
+  }
+
   return {
     token,
     whiteboardId,
@@ -133,6 +158,7 @@ const Api = (() => {
     createElement: (element) => request('POST', `${base}/elements`, element || {}),
     updateElement,
     updateElementsBatch,
+    reorderFrame,
     liveElement,
     cancelLiveElement,
     deleteElement: (id, { deleteContents } = {}) => request('DELETE', `${base}/elements/${id}`, deleteContents ? { deleteContents: true } : undefined),

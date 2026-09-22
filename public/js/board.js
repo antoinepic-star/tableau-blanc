@@ -634,7 +634,8 @@
         + strokeWidthDropdownHtml(data)
         + colorDropdownHtml('stroke', data.strokeColor, false, 'Couleur du contour', 'ring')
         + colorDropdownHtml('title', data.titleColor, false, 'Couleur du titre')
-        + `<select class="element-fontsize-select" data-role="title-fontsize" title="Taille du titre">${FONT_SIZES.map(s => `<option value="${s}"${Number(data.fontSize) === s ? ' selected' : ''}>${s}</option>`).join('')}</select>`;
+        + `<select class="element-fontsize-select" data-role="title-fontsize" title="Taille du titre">${FONT_SIZES.map(s => `<option value="${s}"${Number(data.fontSize) === s ? ' selected' : ''}>${s}</option>`).join('')}</select>`
+        + `<button type="button" class="element-icon-btn element-arrange-btn${data.autoArrange ? ' is-active' : ''}" title="${data.autoArrange ? 'Désactiver le rangement automatique' : 'Ordonner (ranger en grille)'}">${iconArrange()}</button>`;
     }
     const sep = controls ? '<span class="element-toolbar-sep"></span>' : '';
     const voted = (data.votes || []).includes(myName);
@@ -693,6 +694,7 @@
   function iconVote() { return '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>'; }
   function iconToFront() { return '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="12" height="12" rx="1.5"/><rect x="9" y="9" width="12" height="12" rx="1.5" fill="currentColor" stroke="none"/></svg>'; }
   function iconToBack() { return '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="12" height="12" rx="1.5" fill="currentColor" stroke="none"/><rect x="9" y="9" width="12" height="12" rx="1.5"/></svg>'; }
+  function iconArrange() { return '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>'; }
 
   function groupMembers(groupId) {
     if (!groupId) return [];
@@ -1739,6 +1741,18 @@
           Api.updateElement(id, { fontSize: size }).catch(() => {});
         });
       }
+      const arrangeBtn = toolbarEl.querySelector('.element-arrange-btn');
+      if (arrangeBtn) {
+        arrangeBtn.addEventListener('pointerdown', e => e.stopPropagation());
+        arrangeBtn.addEventListener('click', () => {
+          const next = !entry.data.autoArrange;
+          entry.data.autoArrange = next;
+          arrangeBtn.classList.toggle('is-active', next);
+          // Les enfants replacés en grille (si activé) arrivent séparément via l'écho "elements:updated"
+          // du serveur (cf. server.js) — seule la frame elle-même est appliquée ici.
+          Api.updateElement(id, { autoArrange: next }).then(applyRemoteUpdate).catch(() => {});
+        });
+      }
     }
 
     if (type === 'text') {
@@ -1878,6 +1892,35 @@
     const ids = [];
     elements.forEach((entry) => { if (entry.data.frameId === frameId) ids.push(entry.data.id); });
     return ids;
+  }
+
+  function isPointInsideEntry(entry, px, py) {
+    return px >= entry.data.x && px <= entry.data.x + entry.data.width
+      && py >= entry.data.y && py <= entry.data.y + entry.data.height;
+  }
+
+  // Détermine la séquence complète (avec l'élément glissé inséré à sa nouvelle place) d'après le
+  // point où il a été lâché : la case dont le CENTRE est la plus proche de ce point désigne la
+  // position d'insertion — pas besoin d'aperçu live pendant le geste, seul le résultat au relâchement
+  // compte (cf. wireBodyDrag).
+  function computeReorderTarget(frameId, draggedId, dropX, dropY) {
+    const siblings = frameChildren(frameId)
+      .filter(cid => cid !== draggedId)
+      .map(cid => elements.get(cid))
+      .filter(Boolean)
+      .sort((a, b) => (a.data.frameOrder ?? 0) - (b.data.frameOrder ?? 0));
+    if (!siblings.length) return [draggedId];
+    let bestIdx = siblings.length;
+    let bestDist = Infinity;
+    siblings.forEach((en, idx) => {
+      const cx = en.data.x + en.data.width / 2;
+      const cy = en.data.y + en.data.height / 2;
+      const d = Math.hypot(cx - dropX, cy - dropY);
+      if (d < bestDist) { bestDist = d; bestIdx = idx; }
+    });
+    const order = siblings.map(en => en.data.id);
+    order.splice(bestIdx, 0, draggedId);
+    return order;
   }
 
   // Déplacement groupé : utilisé à la fois pour un déplacement multi-sélection (rectangle de
@@ -2069,6 +2112,28 @@
       el.classList.remove('is-dragging');
       Api.cancelLiveElement(id);
       if (wasMoved) {
+        // Un enfant lâché dans les limites de la frame "ordonnée" où il était déjà se réordonne
+        // plutôt que de se positionner librement (cf. spec : décocher "ordonner" pour retrouver la
+        // liberté de placement). S'il sort de cette frame (ou n'y était pas), le chemin normal
+        // ci-dessous s'occupe du placement libre et de l'appartenance comme avant.
+        const cx = entry.data.x + entry.data.width / 2;
+        const cy = entry.data.y + entry.data.height / 2;
+        const frameEntry = entry.data.frameId ? elements.get(entry.data.frameId) : null;
+        const reordering = frameEntry?.data.autoArrange && isPointInsideEntry(frameEntry, cx, cy);
+
+        if (reordering) {
+          const order = computeReorderTarget(entry.data.frameId, id, cx, cy);
+          Api.reorderFrame(entry.data.frameId, order)
+            .then(({ elements: updated, superseded, isLatest }) => {
+              if (superseded) return;
+              entry.dragging = false;
+              if (!isLatest) return;
+              updated.forEach(applyRemoteUpdate);
+            })
+            .catch(() => { entry.dragging = false; });
+          return;
+        }
+
         // Un élément seul passe aussi par le déplacement en lot (ici réduit à un seul id) plutôt que
         // par un PATCH direct : ça lui donne la même protection contre les glissers rapprochés qu'un
         // groupe (positions intermédiaires jamais envoyées, réponse ignorée si dépassée avant même de
