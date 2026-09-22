@@ -333,6 +333,18 @@ body.is-linking .element:not(.is-locked) .connector-anchor { display: block; }
   text-align: center; color: rgba(0,0,0,0.82); padding: 2px 6px;
 }
 
+/* ---- Frame (conteneur toujours en arrière-plan, cf. server.js) : fond + contour appliqués via
+   applyRectangleStyle comme un rectangle, seul le titre épinglé en haut à gauche est spécifique. ---- */
+.element[data-type="frame"] { cursor: grab; }
+.element[data-type="frame"].is-dragging { cursor: grabbing; transition: none; }
+.frame-title {
+  position: absolute; top: 8px; left: 12px; right: 40px; height: 24px;
+  padding: 0; border: none; background: transparent; resize: none; outline: none;
+  font-family: inherit; font-weight: 600; line-height: 24px;
+  white-space: pre; overflow: hidden; cursor: text;
+}
+.element[data-type="frame"]:not(.is-editing) .frame-title { cursor: grab; pointer-events: none; }
+
 /* ---- Rognage d'image ---- */
 .crop-overlay { position: absolute; inset: 0; cursor: default; }
 .crop-mask { position: absolute; background: rgba(20,20,30,0.55); pointer-events: none; }
@@ -465,6 +477,13 @@ body.is-linking .element:not(.is-locked) .connector-anchor { display: block; }
 .confirm-popover-cancel:hover { background: #e8e8ec; }
 .confirm-popover-confirm { background: #c8392c; color: #fff; }
 .confirm-popover-confirm:hover { background: #a92e23; }
+
+/* Suppression d'une frame non vide : deux choix de suppression au lieu d'un simple oui/non, empilés
+   plutôt que côte à côte pour laisser la place à des libellés plus longs. */
+.confirm-popover-actions-stack { flex-direction: column; align-items: stretch; }
+.confirm-popover-actions-stack button { width: 100%; text-align: center; }
+.confirm-popover-actions-stack .confirm-popover-confirm:not(.confirm-popover-danger) { background: #f4f4f6; color: var(--text); }
+.confirm-popover-actions-stack .confirm-popover-confirm:not(.confirm-popover-danger):hover { background: #e8e8ec; }
 
 /* ---------- Présence / curseurs distants ---------- */
 

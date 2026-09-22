@@ -308,6 +308,12 @@
       pendingImagePlacement = { wx, wy, offset };
       imageFileInput.value = '';
       imageFileInput.click();
+    } else if (type === 'frame') {
+      // Couleur/contour/titre laissés aux valeurs par défaut du serveur (cf. ELEMENT_DEFAULTS.frame) :
+      // contrairement au post-it/rectangle, on n'a pas besoin d'une couleur qui tourne à chaque
+      // création, une frame est un conteneur neutre.
+      Api.createElement({ type: 'frame', x: wx - 240 + offset, y: wy - 180 + offset, width: 480, height: 360 })
+        .catch(err => alert(err.message));
     }
   }
 
@@ -389,13 +395,25 @@
     closeConfirmPopover();
     const pop = document.createElement('div');
     pop.className = 'confirm-popover';
-    pop.innerHTML = `
-      <p>Supprimer cet élément ?</p>
-      <div class="confirm-popover-actions">
-        <button type="button" class="confirm-popover-cancel">Annuler</button>
-        <button type="button" class="confirm-popover-confirm">Supprimer</button>
-      </div>
-    `;
+    const childIds = entry.data.type === 'frame' ? frameChildren(entry.data.id) : [];
+    if (childIds.length) {
+      pop.innerHTML = `
+        <p>Cette frame contient ${childIds.length} élément${childIds.length > 1 ? 's' : ''}.</p>
+        <div class="confirm-popover-actions confirm-popover-actions-stack">
+          <button type="button" class="confirm-popover-confirm confirm-popover-danger" data-mode="all">Supprimer la frame et son contenu</button>
+          <button type="button" class="confirm-popover-confirm" data-mode="frame-only">Supprimer la frame seule</button>
+          <button type="button" class="confirm-popover-cancel">Annuler</button>
+        </div>
+      `;
+    } else {
+      pop.innerHTML = `
+        <p>Supprimer cet élément ?</p>
+        <div class="confirm-popover-actions">
+          <button type="button" class="confirm-popover-cancel">Annuler</button>
+          <button type="button" class="confirm-popover-confirm">Supprimer</button>
+        </div>
+      `;
+    }
     pop.addEventListener('pointerdown', e => e.stopPropagation());
     document.body.appendChild(pop);
     const popRect = pop.getBoundingClientRect();
@@ -407,10 +425,22 @@
     activeConfirmPopover = pop;
 
     pop.querySelector('.confirm-popover-cancel').addEventListener('click', closeConfirmPopover);
-    pop.querySelector('.confirm-popover-confirm').addEventListener('click', () => {
-      closeConfirmPopover();
-      removeElementLocal(entry.data.id);
-      Api.deleteElement(entry.data.id).catch(err => alert(err.message));
+    pop.querySelectorAll('.confirm-popover-confirm').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        closeConfirmPopover();
+        const mode = btn.dataset.mode;
+        if (mode === 'all') {
+          childIds.forEach(removeElementLocal);
+          removeElementLocal(entry.data.id);
+          Api.deleteElement(entry.data.id, { deleteContents: true }).catch(err => alert(err.message));
+        } else {
+          // "frame seule" (ou suppression normale d'un élément qui n'est pas une frame) : le contenu
+          // reste sur le tableau, juste détaché (comme un dégroupement).
+          childIds.forEach((cid) => { const en = elements.get(cid); if (en) en.data.frameId = null; });
+          removeElementLocal(entry.data.id);
+          Api.deleteElement(entry.data.id).catch(err => alert(err.message));
+        }
+      });
     });
     outsideClickHandler = (e) => { if (!pop.contains(e.target)) closeConfirmPopover(); };
     setTimeout(() => document.addEventListener('pointerdown', outsideClickHandler), 0);
@@ -599,17 +629,28 @@
         + strokeWidthDropdownHtml(data)
         + colorDropdownHtml('stroke', data.strokeColor, false, 'Couleur du contour', 'ring')
         + radiusDropdownHtml(data);
+    } else if (data.type === 'frame') {
+      controls = colorDropdownHtml('color', data.color, false, 'Couleur de fond')
+        + strokeWidthDropdownHtml(data)
+        + colorDropdownHtml('stroke', data.strokeColor, false, 'Couleur du contour', 'ring')
+        + colorDropdownHtml('title', data.titleColor, false, 'Couleur du titre')
+        + `<select class="element-fontsize-select" data-role="title-fontsize" title="Taille du titre">${FONT_SIZES.map(s => `<option value="${s}"${Number(data.fontSize) === s ? ' selected' : ''}>${s}</option>`).join('')}</select>`;
     }
     const sep = controls ? '<span class="element-toolbar-sep"></span>' : '';
     const voted = (data.votes || []).includes(myName);
+    // Une frame reste toujours tout au fond (cf. server.js) : pas de "premier plan"/"arrière-plan"
+    // dans son toolbar, ce serait sans effet.
+    const frontBackButtons = data.type === 'frame' ? '' : `
+      <button type="button" class="element-icon-btn element-front-btn" title="Mettre au premier plan">${iconToFront()}</button>
+      <button type="button" class="element-icon-btn element-back-btn" title="Envoyer à l'arrière-plan">${iconToBack()}</button>
+    `;
     return `
       ${controls}${sep}
       <button type="button" class="element-icon-btn element-vote-btn${voted ? ' is-active' : ''}" title="${voted ? 'Retirer mon vote' : 'Voter'}">${iconVote()}</button>
       <button type="button" class="element-icon-btn element-comment-btn" title="Commenter">${iconComment()}</button>
       <span class="element-toolbar-sep"></span>
       <button type="button" class="element-icon-btn element-lock-btn" title="Verrouiller">${iconLock()}</button>
-      <button type="button" class="element-icon-btn element-front-btn" title="Mettre au premier plan">${iconToFront()}</button>
-      <button type="button" class="element-icon-btn element-back-btn" title="Envoyer à l'arrière-plan">${iconToBack()}</button>
+      ${frontBackButtons}
       <button type="button" class="element-icon-btn element-duplicate-btn" title="Dupliquer">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15H4a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h10a1 1 0 0 1 1 1v1"/></svg>
       </button>
@@ -624,10 +665,13 @@
   // Le verrouillage étant toujours appliqué à un groupe entier d'un coup (jamais élément par élément
   // au sein d'un groupe), le libellé précise le nombre d'éléments quand il s'agit d'un groupe.
   function buildLockedToolbarHtml(entry) {
-    const members = entry.data.groupId ? groupMembers(entry.data.groupId) : [];
+    const members = entry.data.type === 'frame' ? frameChildren(entry.data.id)
+      : entry.data.groupId ? groupMembers(entry.data.groupId) : [];
     const label = members.length > 1
       ? `Appui long pour déverrouiller le groupe (${members.length} éléments)`
-      : 'Appui long pour déverrouiller';
+      : entry.data.type === 'frame' && members.length === 1
+        ? 'Appui long pour déverrouiller la frame (1 élément)'
+        : 'Appui long pour déverrouiller';
     return `
       <button type="button" class="unlock-hold-btn">
         <span class="unlock-hold-fill"></span>
@@ -1025,7 +1069,8 @@
       if (elapsed >= UNLOCK_HOLD_MS) {
         cleanup();
         // Déverrouille tout le groupe d'un coup (symétrique du verrouillage) — jamais un seul membre.
-        const ids = entry.data.groupId ? groupMembers(entry.data.groupId) : [entry.data.id];
+        const ids = entry.data.type === 'frame' ? [entry.data.id, ...frameChildren(entry.data.id)]
+          : entry.data.groupId ? groupMembers(entry.data.groupId) : [entry.data.id];
         ids.forEach((id) => {
           const en = elements.get(id);
           if (!en) return;
@@ -1099,6 +1144,15 @@
       `;
       textEl = el.querySelector('.element-text');
       textEl.value = data.text || '';
+    } else if (data.type === 'frame') {
+      // Pas d'ancres de connecteur pour une frame (hors scope) ; le titre est un simple champ mono-
+      // ligne épinglé en haut à gauche, pas une zone de texte qui remplit toute la boîte.
+      el.innerHTML = `
+        <textarea class="frame-title" placeholder="Titre…" maxlength="200" rows="1"></textarea>
+        <div class="element-resize-handle"></div>
+      `;
+      textEl = el.querySelector('.frame-title');
+      textEl.value = data.text || '';
     }
 
     layerEl.appendChild(el);
@@ -1110,6 +1164,7 @@
     if (data.type === 'connector') applyConnectorCaps(entry);
     if (data.type === 'image') applyImageFilters(entry);
     if (data.type === 'rectangle') { applyRectangleStyle(entry); autoGrowRectangleTextarea(entry); }
+    if (data.type === 'frame') { applyRectangleStyle(entry); applyFrameTitleStyle(entry); }
     applyLockedState(entry);
     updateElementBadges(entry);
 
@@ -1129,7 +1184,9 @@
     unregisterConnector(entry);
     entry.el.remove();
     elements.delete(id);
-    if (selectedElementId === id) selectedElementId = null;
+    // Sans ça, supprimer l'élément actuellement sélectionné laissait son toolbar affiché, flottant
+    // au-dessus du vide, jusqu'à la prochaine sélection.
+    if (selectedElementId === id) { selectedElementId = null; hideToolbar(); }
     if (editingElementId === id) editingElementId = null;
     multiSelectedIds.delete(id);
   }
@@ -1137,7 +1194,7 @@
   function applyElementColor(entry) {
     if (entry.data.type === 'text') { if (entry.textEl) entry.textEl.style.color = entry.data.color; }
     else if (entry.data.type === 'line' || entry.data.type === 'connector') applyLineStyle(entry);
-    else if (entry.data.type === 'rectangle') applyRectangleStyle(entry);
+    else if (entry.data.type === 'rectangle' || entry.data.type === 'frame') applyRectangleStyle(entry);
     else entry.el.style.background = entry.data.color;
   }
 
@@ -1160,12 +1217,20 @@
     entry.el.style.borderRadius = entry.data.backgroundColor ? '4px' : '0';
   }
 
+  // Aussi utilisée par les frames (même fond + contour qu'un rectangle) — une frame n'expose juste
+  // pas de contrôle d'arrondi dans son toolbar, donc son radius reste à 0 (angles droits).
   function applyRectangleStyle(entry) {
-    if (entry.data.type !== 'rectangle') return;
+    if (entry.data.type !== 'rectangle' && entry.data.type !== 'frame') return;
     entry.el.style.background = entry.data.color;
     entry.el.style.border = entry.data.strokeWidth ? `${entry.data.strokeWidth}px solid ${entry.data.strokeColor || '#1c1c28'}` : 'none';
     const r = entry.data.radius || 0;
     entry.el.style.borderRadius = r >= 999 ? '999px' : `${r}px`;
+  }
+
+  function applyFrameTitleStyle(entry) {
+    if (entry.data.type !== 'frame' || !entry.textEl) return;
+    entry.textEl.style.color = entry.data.titleColor || '#4a463c';
+    entry.textEl.style.fontSize = `${entry.data.fontSize || 14}px`;
   }
 
   // Un textarea ne peut pas centrer verticalement son propre contenu : on le laisse plutôt grandir à
@@ -1275,6 +1340,10 @@
       if (document.activeElement !== entry.textEl) entry.textEl.value = data.text || '';
       applyRectangleStyle(entry);
       autoGrowRectangleTextarea(entry);
+    } else if (data.type === 'frame') {
+      if (document.activeElement !== entry.textEl) entry.textEl.value = data.text || '';
+      applyRectangleStyle(entry);
+      applyFrameTitleStyle(entry);
     }
 
     updateConnectorsFor(data.id);
@@ -1427,14 +1496,35 @@
 
   function duplicateElement(entry) {
     const d = entry.data;
-    Api.createElement({
+    const payload = {
       type: d.type, x: d.x + 24, y: d.y + 24, width: d.width, height: d.height, rotation: d.rotation,
       color: d.color, text: d.text, fontSize: d.fontSize, bold: d.bold, italic: d.italic,
       underline: d.underline, strikethrough: d.strikethrough, imageData: d.imageData, grayscale: d.grayscale,
       lineStyle: d.lineStyle, backgroundColor: d.backgroundColor, strokeWidth: d.strokeWidth, strokeColor: d.strokeColor,
       radius: d.radius, startCap: d.startCap, endCap: d.endCap,
       fromElementId: d.fromElementId, fromSide: d.fromSide, toElementId: d.toElementId, toSide: d.toSide,
-    }).catch(err => alert(err.message));
+      titleColor: d.titleColor,
+      // frameId explicite (plutôt que de laisser le serveur redéduire l'appartenance de la copie) :
+      // avec le décalage de +24px, une copie posée tout au bord de la frame pourrait sinon se
+      // retrouver considérée hors de ses limites.
+      frameId: d.type === 'frame' ? undefined : (d.frameId || null),
+    };
+    if (d.type !== 'frame') { Api.createElement(payload).catch(err => alert(err.message)); return; }
+    // Dupliquer une frame duplique aussi son contenu, avec le même décalage, en le rattachant à la
+    // copie plutôt qu'à la frame d'origine.
+    const children = frameChildren(d.id).map(cid => elements.get(cid)).filter(Boolean);
+    Api.createElement(payload)
+      .then((newFrame) => Promise.all(children.map((child) => {
+        const cd = child.data;
+        return Api.createElement({
+          type: cd.type, x: cd.x + 24, y: cd.y + 24, width: cd.width, height: cd.height, rotation: cd.rotation,
+          color: cd.color, text: cd.text, fontSize: cd.fontSize, bold: cd.bold, italic: cd.italic,
+          underline: cd.underline, strikethrough: cd.strikethrough, imageData: cd.imageData, grayscale: cd.grayscale,
+          lineStyle: cd.lineStyle, backgroundColor: cd.backgroundColor, strokeWidth: cd.strokeWidth, strokeColor: cd.strokeColor,
+          radius: cd.radius, startCap: cd.startCap, endCap: cd.endCap, frameId: newFrame.id,
+        });
+      })))
+      .catch(err => alert(err.message));
   }
 
   // Ouvre/ferme le popover d'un contrôle "déroulant" du toolbar (couleur, épaisseur, extrémité,
@@ -1581,7 +1671,7 @@
     const id = entry.data.id;
     const type = entry.data.type;
 
-    if (type === 'note' || type === 'line' || type === 'text' || type === 'rectangle' || type === 'connector') {
+    if (type === 'note' || type === 'line' || type === 'text' || type === 'rectangle' || type === 'connector' || type === 'frame') {
       wireColorDropdown(entry, 'color', (color) => {
         entry.data.color = color;
         applyElementColor(entry);
@@ -1625,6 +1715,30 @@
       });
       wireStrokeWidthDropdown(entry);
       wireRadiusDropdown(entry);
+    }
+
+    if (type === 'frame') {
+      wireColorDropdown(entry, 'stroke', (color) => {
+        entry.data.strokeColor = color;
+        applyRectangleStyle(entry);
+        Api.updateElement(id, { strokeColor: color }).catch(() => {});
+      });
+      wireStrokeWidthDropdown(entry);
+      wireColorDropdown(entry, 'title', (color) => {
+        entry.data.titleColor = color;
+        applyFrameTitleStyle(entry);
+        Api.updateElement(id, { titleColor: color }).catch(() => {});
+      });
+      const titleFontSizeSelect = toolbarEl.querySelector('[data-role="title-fontsize"]');
+      if (titleFontSizeSelect) {
+        titleFontSizeSelect.addEventListener('pointerdown', e => e.stopPropagation());
+        titleFontSizeSelect.addEventListener('change', () => {
+          const size = Number(titleFontSizeSelect.value);
+          entry.data.fontSize = size;
+          applyFrameTitleStyle(entry);
+          Api.updateElement(id, { fontSize: size }).catch(() => {});
+        });
+      }
     }
 
     if (type === 'text') {
@@ -1678,8 +1792,9 @@
       lockBtn.addEventListener('click', () => {
         // Le verrouillage porte toujours sur le groupe entier d'un coup, jamais élément par élément
         // au sein d'un même groupe — sinon un groupe pourrait finir dans un état incohérent
-        // (certains membres verrouillés, d'autres non).
-        const ids = entry.data.groupId ? groupMembers(entry.data.groupId) : [entry.data.id];
+        // (certains membres verrouillés, d'autres non). Une frame verrouille aussi son contenu.
+        const ids = entry.data.type === 'frame' ? [entry.data.id, ...frameChildren(entry.data.id)]
+          : entry.data.groupId ? groupMembers(entry.data.groupId) : [entry.data.id];
         ids.forEach((id) => {
           const en = elements.get(id);
           if (!en) return;
@@ -1692,16 +1807,20 @@
     }
 
     const frontBtn = toolbarEl.querySelector('.element-front-btn');
-    frontBtn.addEventListener('pointerdown', e => e.stopPropagation());
-    frontBtn.addEventListener('click', () => {
-      Api.updateElement(id, { bringToFront: true }).then(applyRemoteUpdate).catch(() => {});
-    });
+    if (frontBtn) {
+      frontBtn.addEventListener('pointerdown', e => e.stopPropagation());
+      frontBtn.addEventListener('click', () => {
+        Api.updateElement(id, { bringToFront: true }).then(applyRemoteUpdate).catch(() => {});
+      });
+    }
 
     const backBtn = toolbarEl.querySelector('.element-back-btn');
-    backBtn.addEventListener('pointerdown', e => e.stopPropagation());
-    backBtn.addEventListener('click', () => {
-      Api.updateElement(id, { sendToBack: true }).then(applyRemoteUpdate).catch(() => {});
-    });
+    if (backBtn) {
+      backBtn.addEventListener('pointerdown', e => e.stopPropagation());
+      backBtn.addEventListener('click', () => {
+        Api.updateElement(id, { sendToBack: true }).then(applyRemoteUpdate).catch(() => {});
+      });
+    }
 
     const dupBtn = toolbarEl.querySelector('.element-duplicate-btn');
     dupBtn.addEventListener('pointerdown', e => e.stopPropagation());
@@ -1747,9 +1866,18 @@
       selectElement(id);
       editingElementId = id;
       el.classList.add('is-editing');
-      Api.updateElement(id, { bringToFront: true }).then(applyRemoteUpdate).catch(() => {});
+      // Une frame reste toujours tout au fond (cf. server.js) : pas la peine de lui demander un
+      // passage au premier plan qui n'aurait de toute façon aucun effet.
+      if (entry.data.type !== 'frame') Api.updateElement(id, { bringToFront: true }).then(applyRemoteUpdate).catch(() => {});
       requestAnimationFrame(() => textEl.focus());
     };
+  }
+
+  // Les éléments actuellement rattachés à une frame (déposés dedans, cf. containment côté serveur).
+  function frameChildren(frameId) {
+    const ids = [];
+    elements.forEach((entry) => { if (entry.data.frameId === frameId) ids.push(entry.data.id); });
+    return ids;
   }
 
   // Déplacement groupé : utilisé à la fois pour un déplacement multi-sélection (rectangle de
@@ -1793,6 +1921,9 @@
         updateConnectorsFor(mid);
       });
       repositionMultiToolbar();
+      // Le toolbar mono-sélection reste affiché (au lieu du toolbar multi) quand on glisse une frame
+      // avec son contenu (cf. wireBodyDrag) : il faut donc aussi le suivre pendant le geste.
+      if (selectedElementId === entry.data.id) repositionToolbar(entry);
       const now = Date.now();
       if (now - lastLive > 40) {
         lastLive = now;
@@ -1834,7 +1965,12 @@
           .catch(() => { ids.forEach((mid) => { const en = elements.get(mid); if (en) en.dragging = false; }); });
       } else {
         ids.forEach((mid) => { const en = elements.get(mid); if (en) en.dragging = false; });
-        if (!isRealGroup) {
+        // Cas spécifique à une frame (cf. wireBodyDrag) : un simple clic (sans glisser) doit pouvoir
+        // éditer son titre, comme pour un post-it/rectangle — sinon plus aucun moyen d'entrer en
+        // édition puisque son glisser passe par ce chemin "groupe" plutôt que le glisser simple.
+        if (entry.data.type === 'frame' && entry.enterEditing) {
+          entry.enterEditing();
+        } else if (!isRealGroup) {
           clearMultiSelection();
           selectElement(entry.data.id);
         }
@@ -1865,6 +2001,19 @@
       // Pas de garde sur is-editing ici : un clic sur le textarea lui-même stoppe déjà la
       // propagation (cf. wireTextEditing) quand on édite, donc seul un clic sur le bord — hors
       // textarea — arrive jusqu'ici, et il doit pouvoir démarrer un glisser même en édition.
+
+      // Glisser une frame déplace son contenu avec elle — mais contrairement à un groupe permanent ou
+      // une sélection multiple, ça reste une sélection SIMPLE de la frame (son propre toolbar reste
+      // affiché, pas le toolbar multi) : on réutilise juste la mécanique de glisser groupé pour le
+      // mouvement, sans passer par setMultiSelection.
+      if (entry.data.type === 'frame') {
+        e.stopPropagation();
+        selectElement(id);
+        closeConfirmPopover();
+        const children = frameChildren(id);
+        startGroupDrag(children.length ? [id, ...children] : [id], entry, e);
+        return;
+      }
 
       // Verrouillage toujours appliqué au groupe entier (jamais partiellement, cf. plus haut) : si on
       // arrive ici, l'élément n'est pas verrouillé, donc aucun de ses coéquipiers de groupe non plus.
@@ -2071,7 +2220,7 @@
 
   function wireElementInteractions(entry) {
     if (entry.data.type === 'connector') { wireConnectorSelect(entry); return; }
-    if (entry.data.type === 'note' || entry.data.type === 'text' || entry.data.type === 'rectangle') wireTextEditing(entry);
+    if (entry.data.type === 'note' || entry.data.type === 'text' || entry.data.type === 'rectangle' || entry.data.type === 'frame') wireTextEditing(entry);
     wireConnectorAnchors(entry);
     wireBodyDrag(entry);
     if (entry.data.type === 'line') wireLineHandle(entry);

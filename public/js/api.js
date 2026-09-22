@@ -135,7 +135,7 @@ const Api = (() => {
     updateElementsBatch,
     liveElement,
     cancelLiveElement,
-    deleteElement: (id) => request('DELETE', `${base}/elements/${id}`),
+    deleteElement: (id, { deleteContents } = {}) => request('DELETE', `${base}/elements/${id}`, deleteContents ? { deleteContents: true } : undefined),
     sendCursor: (x, y) => request('POST', `${base}/cursor`, { x, y }).catch(() => {}),
     toggleVote: (elementId) => request('POST', `${base}/elements/${elementId}/vote`),
     getComments: (elementId) => request('GET', `${base}/elements/${elementId}/comments`),

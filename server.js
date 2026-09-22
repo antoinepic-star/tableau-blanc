@@ -83,6 +83,7 @@ const ELEMENT_DEFAULTS = {
   image: { width: 240, height: 240, color: null },
   rectangle: { width: 220, height: 140, color: ELEMENT_COLORS[0] },
   connector: { width: 0, height: 0, color: '#1c1c28' },
+  frame: { width: 480, height: 360, color: '#EDEAE3', strokeWidth: 1, strokeColor: '#c9c4b8', fontSize: 14, titleColor: '#4a463c' },
 };
 const ELEMENT_TYPES = Object.keys(ELEMENT_DEFAULTS);
 
@@ -184,6 +185,11 @@ async function initDb() {
     'ALTER TABLE whiteboard_elements ADD COLUMN from_side TEXT',
     'ALTER TABLE whiteboard_elements ADD COLUMN to_element_id TEXT',
     'ALTER TABLE whiteboard_elements ADD COLUMN to_side TEXT',
+    // Frame (conteneur toujours en arrière-plan) : frame_id rattache un élément à la frame sous
+    // laquelle il a été déposé (cf. containment dans batch-move/PATCH/création) ; title_color est la
+    // couleur du titre de la frame elle-même (distincte de "color", son fond).
+    'ALTER TABLE whiteboard_elements ADD COLUMN frame_id TEXT',
+    'ALTER TABLE whiteboard_elements ADD COLUMN title_color TEXT',
   ]) {
     try { await turso.execute(sql); } catch (_) {}
   }
@@ -545,7 +551,7 @@ app.post('/api/whiteboards/:whiteboardId/cursor', whiteboardAuth, (req, res) => 
 // TABLEAU : ÉLÉMENTS (post-it, trait, texte, image)
 // =====================
 
-const ELEMENT_LABELS = { note: 'post-it', line: 'trait', text: 'bloc de texte', image: 'image', rectangle: 'rectangle', connector: 'connecteur' };
+const ELEMENT_LABELS = { note: 'post-it', line: 'trait', text: 'bloc de texte', image: 'image', rectangle: 'rectangle', connector: 'connecteur', frame: 'frame' };
 
 function parseComment(row) {
   return {
@@ -594,10 +600,29 @@ function parseElement(row, { withImageData = true } = {}) {
     fromSide: row.from_side,
     toElementId: row.to_element_id,
     toSide: row.to_side,
+    frameId: row.frame_id,
+    titleColor: row.title_color,
     zIndex: row.z_index,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
+}
+
+// Une frame "contient" un élément si le CENTRE de celui-ci tombe dans ses limites — pas un simple
+// chevauchement, sinon un élément à cheval sur le bord se retrouverait rattaché de façon peu
+// intuitive. S'il chevauche plusieurs frames, celle avec le plus grand z_index (la plus "au-dessus"
+// parmi les frames) gagne. Ne fait aucune requête : `frameRows` doit déjà avoir été chargé.
+function findContainingFrame(x, y, width, height, frameRows, excludeId) {
+  const cx = x + width / 2;
+  const cy = y + height / 2;
+  let best = null;
+  for (const f of frameRows) {
+    if (f.id === excludeId) continue;
+    if (cx >= f.x && cx <= f.x + f.width && cy >= f.y && cy <= f.y + f.height) {
+      if (!best || f.z_index > best.z_index) best = f;
+    }
+  }
+  return best ? best.id : null;
 }
 
 app.get('/api/whiteboards/:whiteboardId', whiteboardAuth, ah(async (req, res) => {
@@ -636,22 +661,38 @@ app.post('/api/whiteboards/:whiteboardId/elements', whiteboardAuth, ah(async (re
   const {
     x, y, width, height, rotation, color, text, fontSize, bold, italic, underline, strikethrough, imageData, grayscale,
     startCap, endCap, lineStyle, backgroundColor, strokeWidth, strokeColor, radius, groupId, locked,
-    fromElementId, fromSide, toElementId, toSide,
+    fromElementId, fromSide, toElementId, toSide, titleColor,
   } = req.body || {};
-  const { max } = await tursoGet('SELECT MAX(z_index) as max FROM whiteboard_elements WHERE whiteboard_id = ?', [req.params.whiteboardId]);
-  const zIndex = (max ?? -1) + 1;
+  let { frameId } = req.body || {};
+  // Une frame va toujours tout au fond (jamais au premier plan, cf. PATCH/batch-move) ; les autres
+  // types rejoignent la frame sous laquelle ils atterrissent, sauf si l'appelant a déjà précisé
+  // frameId explicitement (ex. duplication d'un élément déjà dans une frame).
+  let zIndex;
+  if (type === 'frame') {
+    const { min } = await tursoGet('SELECT MIN(z_index) as min FROM whiteboard_elements WHERE whiteboard_id = ?', [req.params.whiteboardId]);
+    zIndex = (min ?? 1) - 1;
+  } else {
+    const { max } = await tursoGet('SELECT MAX(z_index) as max FROM whiteboard_elements WHERE whiteboard_id = ?', [req.params.whiteboardId]);
+    zIndex = (max ?? -1) + 1;
+    if (frameId === undefined) {
+      const frameRows = await tursoAll('SELECT id, x, y, width, height, z_index FROM whiteboard_elements WHERE whiteboard_id = ? AND type = ?', [req.params.whiteboardId, 'frame']);
+      frameId = findContainingFrame(x ?? 0, y ?? 0, width ?? defaults.width, height ?? defaults.height, frameRows, null);
+    }
+  }
   const id = uuidv4();
   const columns = ['id', 'whiteboard_id', 'type', 'x', 'y', 'width', 'height', 'rotation', 'color', 'text', 'font_size',
     'bold', 'italic', 'underline', 'strikethrough', 'image_data', 'grayscale', 'start_cap', 'end_cap', 'line_style', 'background_color',
-    'stroke_width', 'stroke_color', 'radius', 'group_id', 'locked', 'from_element_id', 'from_side', 'to_element_id', 'to_side', 'z_index'];
+    'stroke_width', 'stroke_color', 'radius', 'group_id', 'locked', 'from_element_id', 'from_side', 'to_element_id', 'to_side',
+    'frame_id', 'title_color', 'z_index'];
   const values = [
     id, req.params.whiteboardId, type, x ?? 0, y ?? 0,
     width ?? defaults.width, height ?? defaults.height, rotation ?? 0,
     color ?? defaults.color ?? '#1c1c28', text || '', fontSize ?? defaults.fontSize ?? null,
     bold ? 1 : 0, italic ? 1 : 0, underline ? 1 : 0, strikethrough ? 1 : 0, imageData || null, grayscale ? 1 : 0,
     startCap || 'none', endCap || 'none', lineStyle || 'solid', backgroundColor || null,
-    strokeWidth ?? 0, strokeColor || null, radius ?? 0, groupId || null, locked ? 1 : 0,
-    fromElementId || null, fromSide || null, toElementId || null, toSide || null, zIndex,
+    strokeWidth ?? defaults.strokeWidth ?? 0, strokeColor || defaults.strokeColor || null, radius ?? 0, groupId || null, locked ? 1 : 0,
+    fromElementId || null, fromSide || null, toElementId || null, toSide || null,
+    frameId || null, titleColor || defaults.titleColor || null, zIndex,
   ];
   await tursoRun(
     `INSERT INTO whiteboard_elements (${columns.join(', ')}) VALUES (${columns.map(() => '?').join(', ')})`,
@@ -676,15 +717,28 @@ app.patch('/api/whiteboards/:whiteboardId/elements/:id', whiteboardAuth, ah(asyn
     x, y, width, height, rotation, color, text, fontSize, bold, italic, underline, strikethrough, imageData, grayscale,
     startCap, endCap, lineStyle, backgroundColor, bringToFront, sendToBack,
     strokeWidth, strokeColor, radius, groupId, locked, fromElementId, fromSide, toElementId, toSide,
+    frameId, titleColor,
   } = req.body || {};
 
+  // Une frame reste toujours tout au fond : "premier plan" n'a pas de sens pour elle et est ignoré
+  // silencieusement (cf. aussi le toolbar côté client, qui ne propose pas ces actions sur une frame).
   let zIndex = existing.z_index;
-  if (bringToFront) {
+  if (bringToFront && existing.type !== 'frame') {
     const { max } = await tursoGet('SELECT MAX(z_index) as max FROM whiteboard_elements WHERE whiteboard_id = ?', [req.params.whiteboardId]);
     zIndex = (max ?? -1) + 1;
   } else if (sendToBack) {
     const { min } = await tursoGet('SELECT MIN(z_index) as min FROM whiteboard_elements WHERE whiteboard_id = ?', [req.params.whiteboardId]);
     zIndex = (min ?? 1) - 1;
+  }
+
+  // Si la position ou la taille change pour un élément qui n'est pas lui-même une frame, on
+  // recalcule son appartenance (entre/sort d'une frame) d'après sa position D'ARRIVÉE plutôt que de
+  // faire confiance à ce qu'envoie le client — sauf si frameId est fourni explicitement (ex.
+  // dissociation manuelle), auquel cas on respecte ce choix.
+  let nextFrameId = frameId !== undefined ? frameId : existing.frame_id;
+  if (frameId === undefined && existing.type !== 'frame' && (x !== undefined || y !== undefined || width !== undefined || height !== undefined)) {
+    const frameRows = await tursoAll('SELECT id, x, y, width, height, z_index FROM whiteboard_elements WHERE whiteboard_id = ? AND type = ?', [req.params.whiteboardId, 'frame']);
+    nextFrameId = findContainingFrame(x ?? existing.x, y ?? existing.y, width ?? existing.width, height ?? existing.height, frameRows, req.params.id);
   }
 
   const next = {
@@ -715,6 +769,8 @@ app.patch('/api/whiteboards/:whiteboardId/elements/:id', whiteboardAuth, ah(asyn
     from_side: fromSide !== undefined ? fromSide : existing.from_side,
     to_element_id: toElementId !== undefined ? toElementId : existing.to_element_id,
     to_side: toSide !== undefined ? toSide : existing.to_side,
+    frame_id: nextFrameId,
+    title_color: titleColor !== undefined ? titleColor : existing.title_color,
     z_index: zIndex,
   };
   const setColumns = Object.keys(next);
@@ -751,20 +807,40 @@ app.post('/api/whiteboards/:whiteboardId/elements/batch-move', whiteboardAuth, a
   if (bringToFront) {
     // Garde l'ordre relatif que le lot avait déjà (son propre empilement interne) plutôt que l'ordre
     // d'arrivée dans la requête, pour ne pas mélanger la pile en la faisant passer au premier plan.
-    const ordered = [...existingRows].sort((a, b) => a.z_index - b.z_index);
-    const { max } = await tursoGet('SELECT MAX(z_index) as max FROM whiteboard_elements WHERE whiteboard_id = ?', [req.params.whiteboardId]);
-    let next = (max ?? -1) + 1;
-    ordered.forEach((row) => { zIndexById.set(row.id, next); next += 1; });
+    // Une frame reste toujours tout au fond : jamais incluse dans ce recalcul, même glissée avec son
+    // contenu.
+    const ordered = existingRows.filter(r => r.type !== 'frame').sort((a, b) => a.z_index - b.z_index);
+    if (ordered.length) {
+      const { max } = await tursoGet('SELECT MAX(z_index) as max FROM whiteboard_elements WHERE whiteboard_id = ?', [req.params.whiteboardId]);
+      let next = (max ?? -1) + 1;
+      ordered.forEach((row) => { zIndexById.set(row.id, next); next += 1; });
+    }
   }
+
+  // Appartenance aux frames recalculée d'après la position D'ARRIVÉE de chaque élément déplacé —
+  // y compris quand la frame elle-même fait partie du lot (glissée avec son contenu), auquel cas on
+  // utilise sa position d'arrivée à elle plutôt que son ancienne position.
+  const moveById = new Map(moves.map(m => [m.id, m]));
+  const allFrameRows = await tursoAll(
+    'SELECT id, x, y, width, height, z_index FROM whiteboard_elements WHERE whiteboard_id = ? AND type = ?',
+    [req.params.whiteboardId, 'frame']
+  );
+  const frameRowsForContainment = allFrameRows.map((f) => {
+    const m = moveById.get(f.id);
+    return m ? { ...f, x: m.x, y: m.y } : f;
+  });
 
   const updated = [];
   for (const move of moves) {
     const existing = existingById.get(move.id);
     if (!existing) continue;
     const zIndex = zIndexById.has(move.id) ? zIndexById.get(move.id) : existing.z_index;
+    const frameId = existing.type === 'frame'
+      ? existing.frame_id
+      : findContainingFrame(move.x, move.y, existing.width, existing.height, frameRowsForContainment, null);
     await tursoRun(
-      'UPDATE whiteboard_elements SET x = ?, y = ?, z_index = ?, updated_at = unixepoch() WHERE id = ?',
-      [move.x, move.y, zIndex, move.id]
+      'UPDATE whiteboard_elements SET x = ?, y = ?, z_index = ?, frame_id = ?, updated_at = unixepoch() WHERE id = ?',
+      [move.x, move.y, zIndex, frameId, move.id]
     );
     const row = await tursoGet('SELECT * FROM whiteboard_elements WHERE id = ?', [move.id]);
     updated.push(parseElement(row, { withImageData: false }));
@@ -786,21 +862,44 @@ app.post('/api/whiteboards/:whiteboardId/elements/:id/live', whiteboardAuth, (re
 app.delete('/api/whiteboards/:whiteboardId/elements/:id', whiteboardAuth, ah(async (req, res) => {
   const existing = await tursoGet('SELECT * FROM whiteboard_elements WHERE id = ? AND whiteboard_id = ?', [req.params.id, req.params.whiteboardId]);
   if (!existing) return res.status(404).json({ error: 'Introuvable' });
+
   // Un connecteur ancré à cet élément n'a plus de sens une fois l'élément supprimé — on le supprime
   // en cascade et on informe les autres clients pour qu'ils retirent le trait de leur canvas.
-  const orphanConnectors = await tursoAll(
-    'SELECT id FROM whiteboard_elements WHERE whiteboard_id = ? AND type = ? AND (from_element_id = ? OR to_element_id = ?)',
-    [req.params.whiteboardId, 'connector', req.params.id, req.params.id]
-  );
-  await tursoRun('DELETE FROM whiteboard_elements WHERE id = ?', [req.params.id]);
-  await tursoRun('DELETE FROM whiteboard_reactions WHERE element_id = ?', [req.params.id]);
-  await tursoRun('DELETE FROM whiteboard_comments WHERE element_id = ?', [req.params.id]);
-  for (const c of orphanConnectors) {
-    await tursoRun('DELETE FROM whiteboard_elements WHERE id = ?', [c.id]);
-    await tursoRun('DELETE FROM whiteboard_reactions WHERE element_id = ?', [c.id]);
-    await tursoRun('DELETE FROM whiteboard_comments WHERE element_id = ?', [c.id]);
-    broadcast('element:deleted', { id: c.id }, req.params.whiteboardId);
+  async function deleteOne(elId) {
+    const orphanConnectors = await tursoAll(
+      'SELECT id FROM whiteboard_elements WHERE whiteboard_id = ? AND type = ? AND (from_element_id = ? OR to_element_id = ?)',
+      [req.params.whiteboardId, 'connector', elId, elId]
+    );
+    await tursoRun('DELETE FROM whiteboard_elements WHERE id = ?', [elId]);
+    await tursoRun('DELETE FROM whiteboard_reactions WHERE element_id = ?', [elId]);
+    await tursoRun('DELETE FROM whiteboard_comments WHERE element_id = ?', [elId]);
+    for (const c of orphanConnectors) {
+      await tursoRun('DELETE FROM whiteboard_elements WHERE id = ?', [c.id]);
+      await tursoRun('DELETE FROM whiteboard_reactions WHERE element_id = ?', [c.id]);
+      await tursoRun('DELETE FROM whiteboard_comments WHERE element_id = ?', [c.id]);
+      broadcast('element:deleted', { id: c.id }, req.params.whiteboardId);
+    }
   }
+
+  // Supprimer une frame : soit tout son contenu part avec elle (choix demandé côté client), soit son
+  // contenu reste sur le tableau, simplement détaché (comme un dégroupement).
+  if (existing.type === 'frame') {
+    const children = await tursoAll('SELECT id FROM whiteboard_elements WHERE whiteboard_id = ? AND frame_id = ?', [req.params.whiteboardId, existing.id]);
+    if (req.body?.deleteContents) {
+      for (const c of children) {
+        await deleteOne(c.id);
+        broadcast('element:deleted', { id: c.id }, req.params.whiteboardId);
+      }
+    } else if (children.length) {
+      await tursoRun('UPDATE whiteboard_elements SET frame_id = NULL WHERE whiteboard_id = ? AND frame_id = ?', [req.params.whiteboardId, existing.id]);
+      for (const c of children) {
+        const row = await tursoGet('SELECT * FROM whiteboard_elements WHERE id = ?', [c.id]);
+        broadcast('element:updated', parseElement(row, { withImageData: false }), req.params.whiteboardId);
+      }
+    }
+  }
+
+  await deleteOne(req.params.id);
   const whiteboard = await tursoGet('SELECT client_name, workshop_name FROM whiteboards WHERE id = ?', [req.params.whiteboardId]);
   await logActivity('element_deleted', req.user.name, whiteboard?.client_name, whiteboard?.workshop_name, `${ELEMENT_LABELS[existing.type]} supprimé`);
   await touchWhiteboard(req.params.whiteboardId);
