@@ -859,7 +859,21 @@
     entry.el.style.left = `${x}px`;
     entry.el.style.top = `${y}px`;
     updateConnectorsFor(entry.data.id);
-    Api.updateElement(entry.data.id, { x, y }).then(applyRemoteUpdate).catch(() => {});
+  }
+
+  // Une seule requête groupée pour tout le lot aligné, comme pour un glisser de groupe : cliquer
+  // plusieurs fois de suite sur "aligner à gauche/droite" (ou un aller-retour entre les deux) envoyait
+  // avant ça un PATCH par élément et par clic, chacun s'appliquant à son tour dès sa réponse reçue —
+  // visible comme si les éléments "rejouaient" chaque alignement intermédiaire après coup.
+  function moveElementsBatch(entries) {
+    if (!entries.length) return;
+    const moves = entries.map(en => ({ id: en.data.id, x: en.data.x, y: en.data.y }));
+    Api.updateElementsBatch(moves, false)
+      .then(({ elements: updated, superseded, isLatest }) => {
+        if (superseded || !isLatest) return;
+        updated.forEach(applyRemoteUpdate);
+      })
+      .catch(() => {});
   }
 
   function wireMultiToolbarControls() {
@@ -882,14 +896,17 @@
     if (action === 'align-left') {
       const minX = Math.min(...movable.map(en => en.data.x));
       movable.forEach(en => moveElementTo(en, minX, en.data.y));
+      moveElementsBatch(movable);
     } else if (action === 'align-right') {
       const maxRight = Math.max(...movable.map(en => en.data.x + en.data.width));
       movable.forEach(en => moveElementTo(en, maxRight - en.data.width, en.data.y));
+      moveElementsBatch(movable);
     } else if (action === 'align-center') {
       const minX = Math.min(...movable.map(en => en.data.x));
       const maxRight = Math.max(...movable.map(en => en.data.x + en.data.width));
       const centerX = (minX + maxRight) / 2;
       movable.forEach(en => moveElementTo(en, centerX - en.data.width / 2, en.data.y));
+      moveElementsBatch(movable);
     } else if (action === 'group') {
       const gid = randomId();
       entries.forEach((en) => {
