@@ -67,7 +67,6 @@ const Api = (() => {
   // FIFO l'un derrière l'autre, sans se remplacer.
   const batchMoveQueue = [];
   let batchMoveInFlight = false;
-  let batchMoveVersion = 0;
 
   function batchMoveKey(moves) {
     return moves.map(m => m.id).sort().join(',');
@@ -75,11 +74,19 @@ const Api = (() => {
 
   function pumpBatchMoveQueue() {
     if (batchMoveInFlight || !batchMoveQueue.length) return;
-    const { moves, bringToFront, resolve, reject } = batchMoveQueue.shift();
+    const { key, moves, bringToFront, resolve, reject } = batchMoveQueue.shift();
     batchMoveInFlight = true;
-    const version = ++batchMoveVersion;
     request('POST', `${base}/elements/batch-move`, { moves, bringToFront })
-      .then(result => resolve({ ...result, isLatest: version === batchMoveVersion }), reject)
+      .then(result => {
+        // Un lot pour ce même ensemble d'éléments attend-il déjà de partir ? Si oui, cette réponse
+        // correspond à une position qu'on sait déjà dépassée (une image peut mettre plusieurs
+        // secondes à faire l'aller-retour) : on ne l'applique pas, celle du dessus arrivera de toute
+        // façon sous peu. Un simple compteur de version ne suffit pas ici : tant que ce lot suivant
+        // n'est pas réellement PARTI (juste posé en file derrière celui-ci), il n'aurait pas encore
+        // incrémenté ce compteur au moment où cette réponse arrive.
+        const isLatest = !batchMoveQueue.some(entry => entry.key === key);
+        resolve({ ...result, isLatest });
+      }, reject)
       .finally(() => { batchMoveInFlight = false; pumpBatchMoveQueue(); });
   }
 

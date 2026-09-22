@@ -558,7 +558,12 @@ function parseComment(row) {
   };
 }
 
-function parseElement(row) {
+// withImageData: false omet le champ (plutôt que de l'envoyer vide/null) pour les mises à jour qui
+// ne touchent jamais l'image (déplacement en lot, PATCH sans imageData dans le corps) — une image
+// tient souvent plusieurs Mo en base64, et la renvoyer en entier sur un simple déplacement rendait
+// l'aller-retour largement assez lent pour que les positions arrivent après coup, hors de tout ordre
+// perceptible. Le client garde sa propre copie déjà affichée quand le champ est absent (cf. board.js).
+function parseElement(row, { withImageData = true } = {}) {
   return {
     id: row.id,
     type: row.type,
@@ -574,7 +579,7 @@ function parseElement(row) {
     italic: !!row.italic,
     underline: !!row.underline,
     strikethrough: !!row.strikethrough,
-    imageData: row.image_data,
+    ...(withImageData ? { imageData: row.image_data } : {}),
     grayscale: !!row.grayscale,
     startCap: row.start_cap,
     endCap: row.end_cap,
@@ -718,7 +723,7 @@ app.patch('/api/whiteboards/:whiteboardId/elements/:id', whiteboardAuth, ah(asyn
     [...setColumns.map(c => next[c]), req.params.id]
   );
   const row = await tursoGet('SELECT * FROM whiteboard_elements WHERE id = ?', [req.params.id]);
-  const element = parseElement(row);
+  const element = parseElement(row, { withImageData: imageData !== undefined });
   await touchWhiteboard(req.params.whiteboardId);
   broadcast('element:updated', element, req.params.whiteboardId);
   res.json(element);
@@ -762,7 +767,7 @@ app.post('/api/whiteboards/:whiteboardId/elements/batch-move', whiteboardAuth, a
       [move.x, move.y, zIndex, move.id]
     );
     const row = await tursoGet('SELECT * FROM whiteboard_elements WHERE id = ?', [move.id]);
-    updated.push(parseElement(row));
+    updated.push(parseElement(row, { withImageData: false }));
   }
 
   await touchWhiteboard(req.params.whiteboardId);

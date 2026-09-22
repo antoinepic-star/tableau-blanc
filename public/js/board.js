@@ -1211,6 +1211,11 @@
     entry.data = data;
     if (data.votes === undefined) entry.data.votes = prevVotes;
     if (data.commentCount === undefined) entry.data.commentCount = prevCommentCount;
+    // La plupart des mises à jour (déplacement en lot, PATCH sans changement d'image) omettent
+    // volontairement imageData pour rester légères — une image tient souvent plusieurs Mo en base64,
+    // ce serait sinon renvoyé en entier à chaque simple déplacement. On garde alors la copie déjà
+    // affichée plutôt que de la perdre.
+    if (data.imageData === undefined) entry.data.imageData = prevImageData;
     if (prevTransform) Object.assign(entry.data, prevTransform);
     applyLockedState(entry);
     updateElementBadges(entry);
@@ -1244,7 +1249,10 @@
     } else if (data.type === 'image') {
       // Réassigner le src (même identique) force le navigateur à redécoder l'image, souvent plusieurs
       // Mo en base64 — visible comme un flash "disparaît puis réapparaît" sur un simple déplacement.
-      if (data.imageData !== prevImageData) entry.el.querySelector('.element-image-img').src = data.imageData || '';
+      // Comparer entry.data.imageData (déjà restauré ci-dessus si absent de "data") et non data.imageData
+      // directement : sinon une mise à jour qui l'omet volontairement (cf. plus haut) serait lue comme
+      // "image effacée" et viderait le src pour de vrai.
+      if (entry.data.imageData !== prevImageData) entry.el.querySelector('.element-image-img').src = entry.data.imageData || '';
       applyImageFilters(entry);
     } else if (data.type === 'rectangle') {
       if (document.activeElement !== entry.textEl) entry.textEl.value = data.text || '';
@@ -1895,11 +1903,20 @@
       el.classList.remove('is-dragging');
       Api.cancelLiveElement(id);
       if (wasMoved) {
-        // Idem : on ne relâche le verrou "dragging" qu'une fois la réponse du PATCH appliquée, pour
-        // qu'un écho "element:dragging" tardif (dernier envoi live avant relâchement) ne vienne pas
-        // écraser la position finale par une valeur intermédiaire plus ancienne.
-        Api.updateElement(id, { x: entry.data.x, y: entry.data.y, bringToFront: true })
-          .then((data) => { entry.dragging = false; applyRemoteUpdate(data); })
+        // Un élément seul passe aussi par le déplacement en lot (ici réduit à un seul id) plutôt que
+        // par un PATCH direct : ça lui donne la même protection contre les glissers rapprochés qu'un
+        // groupe (positions intermédiaires jamais envoyées, réponse ignorée si dépassée avant même de
+        // partir) — utile aussi pour un seul élément dès que sa réponse est lourde (une image renvoyait
+        // avant ça plusieurs Mo à chaque déplacement, cf. server.js, rendant l'aller-retour assez lent
+        // pour que l'ordre d'arrivée cesse d'être fiable).
+        Api.updateElementsBatch([{ id, x: entry.data.x, y: entry.data.y }])
+          .then(({ elements: updated, superseded, isLatest }) => {
+            if (superseded) return;
+            entry.dragging = false;
+            if (!isLatest) return;
+            const data = updated[0];
+            if (data) applyRemoteUpdate(data);
+          })
           .catch(() => { entry.dragging = false; });
       } else {
         entry.dragging = false;
