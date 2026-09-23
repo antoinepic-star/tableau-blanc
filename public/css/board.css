@@ -254,6 +254,10 @@ body.board-page { overflow: hidden; height: 100vh; }
   resize: none; outline: none; cursor: text; overflow-wrap: break-word; overflow-y: auto;
 }
 .element[data-type="note"]:not(.is-editing) .element-text { cursor: grab; pointer-events: none; }
+/* Un post-it grandit avec son texte plutôt que de le faire défiler dans une hauteur fixe : sa marge
+   basse n'est donc plus contrainte par "inset" ci-dessus, sa hauteur explicite est posée en JS
+   (cf. syncNoteTextareaHeight/autoGrowNoteOnInput dans board.js). */
+.element[data-type="note"] .element-text { bottom: auto; height: auto; }
 
 .element-resize-handle {
   position: absolute; right: 2px; bottom: 2px; width: 16px; height: 16px;
@@ -338,9 +342,12 @@ body.is-linking .element:not(.is-locked) .connector-anchor { display: block; }
 .element[data-type="frame"] { cursor: grab; }
 .element[data-type="frame"].is-dragging { cursor: grabbing; transition: none; }
 .frame-title {
-  position: absolute; top: 8px; left: 12px; right: 40px; height: 24px;
+  /* height/line-height posés en JS, proportionnels à la taille de police choisie
+     (cf. applyFrameTitleStyle dans board.js) — une valeur fixe ici tronquait le bas du texte dès
+     qu'on dépassait la taille par défaut. */
+  position: absolute; top: 8px; left: 12px; right: 40px;
   padding: 0; border: none; background: transparent; resize: none; outline: none;
-  font-family: inherit; font-weight: 600; line-height: 24px;
+  font-family: inherit; font-weight: 600;
   white-space: pre; overflow: hidden; cursor: text;
 }
 .element[data-type="frame"]:not(.is-editing) .frame-title { cursor: grab; pointer-events: none; }

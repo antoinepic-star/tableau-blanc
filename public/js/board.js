@@ -17,7 +17,8 @@
   const TEXT_PAD_Y_RATIO = 0.35;
   const TEXT_LINE_HEIGHT_RATIO = 1.35;
   const TEXT_MIN_CONTENT_WIDTH = 30;
-  const BOX_TYPES = ['note', 'text', 'image', 'rectangle']; // types "boîte" (points d'ancrage pour les connecteurs)
+  const BOX_TYPES = ['note', 'text', 'image', 'rectangle', 'frame']; // types "boîte" (points d'ancrage pour les connecteurs)
+  const NOTE_DEFAULT_SIZE = 130; // post-it par défaut : carré, plus petit qu'avant (grandit ensuite avec le texte)
   const UNLOCK_HOLD_MS = 2000;
   const COMMENT_RELATIVE_DAYS = 7; // au-delà, on affiche la date plutôt que "il y a X jours"
 
@@ -285,7 +286,8 @@
 
     if (type === 'note') {
       const color = ELEMENT_COLORS[creationCount % ELEMENT_COLORS.length];
-      Api.createElement({ type: 'note', x: wx - 100 + offset, y: wy - 90 + offset, width: 200, height: 180, color })
+      const half = NOTE_DEFAULT_SIZE / 2;
+      Api.createElement({ type: 'note', x: wx - half + offset, y: wy - half + offset, width: NOTE_DEFAULT_SIZE, height: NOTE_DEFAULT_SIZE, color })
         .catch(err => alert(err.message));
     } else if (type === 'line') {
       Api.createElement({ type: 'line', x: wx - 80 + offset, y: wy + offset, width: 160, height: 6, rotation: 0, color: '#1c1c28' })
@@ -628,7 +630,8 @@
       controls = colorDropdownHtml('color', data.color, false, 'Couleur de fond')
         + strokeWidthDropdownHtml(data)
         + colorDropdownHtml('stroke', data.strokeColor, false, 'Couleur du contour', 'ring')
-        + radiusDropdownHtml(data);
+        + radiusDropdownHtml(data)
+        + `<select class="element-fontsize-select" data-role="rect-fontsize" title="Taille du texte">${FONT_SIZES.map(s => `<option value="${s}"${Number(data.fontSize) === s ? ' selected' : ''}>${s}</option>`).join('')}</select>`;
     } else if (data.type === 'frame') {
       controls = colorDropdownHtml('color', data.color, false, 'Couleur de fond')
         + strokeWidthDropdownHtml(data)
@@ -1147,11 +1150,12 @@
       textEl = el.querySelector('.element-text');
       textEl.value = data.text || '';
     } else if (data.type === 'frame') {
-      // Pas d'ancres de connecteur pour une frame (hors scope) ; le titre est un simple champ mono-
-      // ligne épinglé en haut à gauche, pas une zone de texte qui remplit toute la boîte.
+      // Le titre est un simple champ mono-ligne épinglé en haut à gauche, pas une zone de texte qui
+      // remplit toute la boîte.
       el.innerHTML = `
         <textarea class="frame-title" placeholder="Titre…" maxlength="200" rows="1"></textarea>
         <div class="element-resize-handle"></div>
+        ${anchorsHtml}
       `;
       textEl = el.querySelector('.frame-title');
       textEl.value = data.text || '';
@@ -1165,8 +1169,9 @@
     if (data.type === 'line' || data.type === 'connector') applyLineStyle(entry);
     if (data.type === 'connector') applyConnectorCaps(entry);
     if (data.type === 'image') applyImageFilters(entry);
-    if (data.type === 'rectangle') { applyRectangleStyle(entry); autoGrowRectangleTextarea(entry); }
+    if (data.type === 'rectangle') { applyRectangleStyle(entry); applyRectangleTextStyle(entry); autoGrowRectangleTextarea(entry); }
     if (data.type === 'frame') { applyRectangleStyle(entry); applyFrameTitleStyle(entry); }
+    if (data.type === 'note') syncNoteTextareaHeight(entry);
     applyLockedState(entry);
     updateElementBadges(entry);
 
@@ -1231,8 +1236,15 @@
 
   function applyFrameTitleStyle(entry) {
     if (entry.data.type !== 'frame' || !entry.textEl) return;
+    const size = entry.data.fontSize || 14;
     entry.textEl.style.color = entry.data.titleColor || '#4a463c';
-    entry.textEl.style.fontSize = `${entry.data.fontSize || 14}px`;
+    entry.textEl.style.fontSize = `${size}px`;
+    // La hauteur/interligne du titre était fixée (24px) dans board.css, calée sur la taille de police
+    // par défaut : au-delà, le bas du texte se retrouvait tronqué par cette hauteur trop courte.
+    // On les calcule plutôt ici, proportionnels à la taille choisie.
+    const lineHeight = Math.round(size * 1.3);
+    entry.textEl.style.lineHeight = `${lineHeight}px`;
+    entry.textEl.style.height = `${lineHeight}px`;
   }
 
   // Un textarea ne peut pas centrer verticalement son propre contenu : on le laisse plutôt grandir à
@@ -1243,6 +1255,34 @@
     const t = entry.textEl;
     t.style.height = '0px';
     t.style.height = `${t.scrollHeight}px`;
+  }
+
+  function applyRectangleTextStyle(entry) {
+    if (entry.data.type !== 'rectangle' || !entry.textEl) return;
+    entry.textEl.style.fontSize = `${entry.data.fontSize || 16}px`;
+  }
+
+  // Un post-it grandit avec son texte : la zone de texte (position absolue, sans hauteur fixe côté
+  // CSS pour ce type — cf. board.css) est explicitement calée sur la hauteur courante de l'élément
+  // (moins ses marges verticales), pour tout affichage qui ne vient pas d'une frappe locale (rendu
+  // initial, mise à jour distante, redimensionnement manuel via la poignée).
+  function syncNoteTextareaHeight(entry) {
+    if (entry.data.type !== 'note' || !entry.textEl) return;
+    entry.textEl.style.height = `${Math.max(0, entry.data.height - 20)}px`;
+  }
+
+  // Au clavier : le post-it grandit pour suivre son texte, mais ne rétrécit jamais tout seul (un
+  // redimensionnement manuel plus petit reste possible tant que le texte y tient, cf. wireCornerResize).
+  function autoGrowNoteOnInput(entry) {
+    if (entry.data.type !== 'note' || !entry.textEl) return;
+    const t = entry.textEl;
+    t.style.height = '0px';
+    const needed = t.scrollHeight + 20;
+    if (needed > entry.data.height) {
+      entry.data.height = needed;
+      entry.el.style.height = `${needed}px`;
+    }
+    syncNoteTextareaHeight(entry);
   }
 
   // Trait/connecteur continu = simple aplat de couleur ; pointillés = dégradé répété le long de la
@@ -1325,6 +1365,7 @@
     } else if (data.type === 'note') {
       entry.el.style.background = data.color;
       if (document.activeElement !== entry.textEl) entry.textEl.value = data.text || '';
+      syncNoteTextareaHeight(entry);
     } else if (data.type === 'text') {
       if (document.activeElement !== entry.textEl) entry.textEl.value = data.text || '';
       applyTextStyle(entry);
@@ -1341,6 +1382,7 @@
     } else if (data.type === 'rectangle') {
       if (document.activeElement !== entry.textEl) entry.textEl.value = data.text || '';
       applyRectangleStyle(entry);
+      applyRectangleTextStyle(entry);
       autoGrowRectangleTextarea(entry);
     } else if (data.type === 'frame') {
       if (document.activeElement !== entry.textEl) entry.textEl.value = data.text || '';
@@ -1717,6 +1759,17 @@
       });
       wireStrokeWidthDropdown(entry);
       wireRadiusDropdown(entry);
+      const rectFontSizeSelect = toolbarEl.querySelector('[data-role="rect-fontsize"]');
+      if (rectFontSizeSelect) {
+        rectFontSizeSelect.addEventListener('pointerdown', e => e.stopPropagation());
+        rectFontSizeSelect.addEventListener('change', () => {
+          const size = Number(rectFontSizeSelect.value);
+          entry.data.fontSize = size;
+          applyRectangleTextStyle(entry);
+          autoGrowRectangleTextarea(entry);
+          Api.updateElement(id, { fontSize: size }).catch(() => {});
+        });
+      }
     }
 
     if (type === 'frame') {
@@ -1852,7 +1905,9 @@
       if (save) {
         entry.data.text = textEl.value;
         const patch = { text: textEl.value };
-        if (entry.data.type === 'text') { patch.width = entry.data.width; patch.height = entry.data.height; }
+        // Le post-it grandit avec son texte (cf. autoGrowNoteOnInput) : sa hauteur doit être persistée
+        // comme pour le texte libre, contrairement au rectangle dont seule la zone de texte interne grandit.
+        if (entry.data.type === 'text' || entry.data.type === 'note') { patch.width = entry.data.width; patch.height = entry.data.height; }
         Api.updateElement(id, patch).catch(() => {});
       }
     }
@@ -1862,10 +1917,11 @@
       entry.data.text = textEl.value;
       if (entry.data.type === 'text') applyTextAutoSize(entry);
       if (entry.data.type === 'rectangle') autoGrowRectangleTextarea(entry);
+      if (entry.data.type === 'note') autoGrowNoteOnInput(entry);
       clearTimeout(textSaveTimer);
       textSaveTimer = setTimeout(() => {
         const patch = { text: textEl.value };
-        if (entry.data.type === 'text') { patch.width = entry.data.width; patch.height = entry.data.height; }
+        if (entry.data.type === 'text' || entry.data.type === 'note') { patch.width = entry.data.width; patch.height = entry.data.height; }
         Api.updateElement(id, patch).catch(() => {});
       }, 600);
     });
@@ -2151,6 +2207,7 @@
       entry.data.height = newH;
       entry.el.style.width = `${newW}px`;
       entry.el.style.height = `${newH}px`;
+      syncNoteTextareaHeight(entry);
       repositionToolbar(entry);
       updateConnectorsFor(entry.data.id);
       const now = Date.now();
