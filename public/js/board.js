@@ -451,6 +451,11 @@
     placeNewElement(type, wx, wy, { cascade: true });
   }
 
+  // Un élément posé (toolbar, image) doit atterrir sur la grille comme un élément glissé — jamais
+  // "entre deux cases". Contrairement au glisser (qui accroche aussi sur les autres éléments proches,
+  // cf. computeSnappedPosition), une pose ponctuelle se contente de la grille elle-même.
+  function snapPoint(x, y) { return { x: snapToGrid(x), y: snapToGrid(y) }; }
+
   function placeNewElement(type, wx, wy, { cascade = false } = {}) {
     hideHint();
     const offset = cascade ? (creationCount % 6) * 18 : 0;
@@ -459,23 +464,27 @@
     if (type === 'note') {
       const color = ELEMENT_COLORS[creationCount % ELEMENT_COLORS.length];
       const half = NOTE_DEFAULT_SIZE / 2;
-      createElementTracked({ type: 'note', x: wx - half + offset, y: wy - half + offset, width: NOTE_DEFAULT_SIZE, height: NOTE_DEFAULT_SIZE, color })
+      const { x, y } = snapPoint(wx - half + offset, wy - half + offset);
+      createElementTracked({ type: 'note', x, y, width: NOTE_DEFAULT_SIZE, height: NOTE_DEFAULT_SIZE, color })
         .catch(err => alert(err.message));
     } else if (type === 'line') {
-      createElementTracked({ type: 'line', x: wx - 80 + offset, y: wy + offset, width: 160, height: 6, rotation: 0, color: '#1c1c28' })
+      const { x, y } = snapPoint(wx - 80 + offset, wy + offset);
+      createElementTracked({ type: 'line', x, y, width: 160, height: 6, rotation: 0, color: '#1c1c28' })
         .catch(err => alert(err.message));
     } else if (type === 'text') {
       const initial = computeTextBoxSize({ text: '', fontSize: 18, bold: false, italic: false });
+      const { x, y } = snapPoint(wx - initial.width / 2 + offset, wy - initial.height / 2 + offset);
       createElementTracked({
-        type: 'text', x: wx - initial.width / 2 + offset, y: wy - initial.height / 2 + offset,
+        type: 'text', x, y,
         width: initial.width, height: initial.height, color: '#1c1c28', fontSize: 18,
       })
         .then(data => { const entry = ensureRendered(data); entry.enterEditing?.(); })
         .catch(err => alert(err.message));
     } else if (type === 'rectangle') {
       const color = ELEMENT_COLORS[creationCount % ELEMENT_COLORS.length];
+      const { x, y } = snapPoint(wx - 110 + offset, wy - 70 + offset);
       createElementTracked({
-        type: 'rectangle', x: wx - 110 + offset, y: wy - 70 + offset, width: 220, height: 140,
+        type: 'rectangle', x, y, width: 220, height: 140,
         color, strokeWidth: 0, strokeColor: '#1c1c28', radius: 8,
       }).catch(err => alert(err.message));
     } else if (type === 'image') {
@@ -486,7 +495,8 @@
       // Couleur/contour/titre laissés aux valeurs par défaut du serveur (cf. ELEMENT_DEFAULTS.frame) :
       // contrairement au post-it/rectangle, on n'a pas besoin d'une couleur qui tourne à chaque
       // création, une frame est un conteneur neutre.
-      createElementTracked({ type: 'frame', x: wx - 240 + offset, y: wy - 180 + offset, width: 480, height: 360 })
+      const { x, y } = snapPoint(wx - 240 + offset, wy - 180 + offset);
+      createElementTracked({ type: 'frame', x, y, width: 480, height: 360 })
         .catch(err => alert(err.message));
     }
   }
@@ -503,7 +513,8 @@
         if (w >= h && w > MAX_IMAGE_DIM) { h = h * (MAX_IMAGE_DIM / w); w = MAX_IMAGE_DIM; }
         else if (h > MAX_IMAGE_DIM) { w = w * (MAX_IMAGE_DIM / h); h = MAX_IMAGE_DIM; }
         const { wx, wy, offset } = pendingImagePlacement || { wx: 0, wy: 0, offset: 0 };
-        createElementTracked({ type: 'image', x: wx - w / 2 + offset, y: wy - h / 2 + offset, width: w, height: h, imageData: reader.result })
+        const { x, y } = snapPoint(wx - w / 2 + offset, wy - h / 2 + offset);
+        createElementTracked({ type: 'image', x, y, width: w, height: h, imageData: reader.result })
           .catch(err => alert(err.message));
       };
       img.src = reader.result;
@@ -631,7 +642,10 @@
   function pasteClipboard() {
     if (!clipboard.length) return;
     pasteCount++;
-    const delta = 24 * pasteCount;
+    // Un même décalage (multiple de la grille) appliqué à TOUT le lot, plutôt qu'un accrochage
+    // individuel par élément : ça garde leurs positions relatives exactement intactes (important pour
+    // une frame collée avec son contenu) tout en restant sur la grille si l'original y était déjà.
+    const delta = GRID_SIZE * 2 * pasteCount;
     const offset = clipboard.map(s => ({ ...s, x: s.x + delta, y: s.y + delta }));
     withBusy(recreateElements(offset)).then((created) => {
       clearMultiSelection();
@@ -1928,8 +1942,11 @@
 
   function duplicateElement(entry) {
     const d = entry.data;
+    // Décalage multiple de la grille (pas +24px) : une copie doit rester sur la grille si l'original y
+    // était déjà, comme n'importe quelle autre pose.
+    const DUP_OFFSET = GRID_SIZE * 2;
     const payload = {
-      type: d.type, x: d.x + 24, y: d.y + 24, width: d.width, height: d.height, rotation: d.rotation,
+      type: d.type, x: d.x + DUP_OFFSET, y: d.y + DUP_OFFSET, width: d.width, height: d.height, rotation: d.rotation,
       color: d.color, text: d.text, fontSize: d.fontSize, bold: d.bold, italic: d.italic,
       underline: d.underline, strikethrough: d.strikethrough, imageData: d.imageData, grayscale: d.grayscale,
       lineStyle: d.lineStyle, backgroundColor: d.backgroundColor, strokeWidth: d.strokeWidth, strokeColor: d.strokeColor,
@@ -1937,15 +1954,15 @@
       fromElementId: d.fromElementId, fromSide: d.fromSide, toElementId: d.toElementId, toSide: d.toSide,
       titleColor: d.titleColor,
       // frameId explicite (plutôt que de laisser le serveur redéduire l'appartenance de la copie) :
-      // avec le décalage de +24px, une copie posée tout au bord de la frame pourrait sinon se
+      // avec un décalage aussi faible, une copie posée tout au bord de la frame pourrait sinon se
       // retrouver considérée hors de ses limites.
       frameId: d.type === 'frame' ? undefined : (d.frameId || null),
     };
     if (d.type !== 'frame') { createElementTracked(payload).catch(err => alert(err.message)); return; }
     // Dupliquer une frame duplique aussi son contenu, avec le même décalage, en le rattachant
     // EXPLICITEMENT à la copie (clientId 'newFrame') plutôt qu'à la frame d'origine — laisser le
-    // serveur redéduire l'appartenance d'après la position ne suffit pas ici : avec un décalage de
-    // seulement 24px sur une frame bien plus grande, la copie et l'originale se chevauchent presque
+    // serveur redéduire l'appartenance d'après la position ne suffit pas ici : avec un décalage aussi
+    // faible sur une frame bien plus grande, la copie et l'originale se chevauchent presque
     // entièrement, et la détection par position choisirait alors la frame la plus "au-dessus" (z le
     // plus haut) — quasi toujours l'ORIGINALE, une frame allant toujours un peu plus loin en arrière-
     // plan que la précédente à chaque création (cf. recreateElements pour le cas symétrique de
@@ -1957,7 +1974,7 @@
     const childItems = children.map((child) => {
       const cd = child.data;
       return {
-        type: cd.type, x: cd.x + 24, y: cd.y + 24, width: cd.width, height: cd.height, rotation: cd.rotation,
+        type: cd.type, x: cd.x + DUP_OFFSET, y: cd.y + DUP_OFFSET, width: cd.width, height: cd.height, rotation: cd.rotation,
         color: cd.color, text: cd.text, fontSize: cd.fontSize, bold: cd.bold, italic: cd.italic,
         underline: cd.underline, strikethrough: cd.strikethrough, imageData: cd.imageData, grayscale: cd.grayscale,
         lineStyle: cd.lineStyle, backgroundColor: cd.backgroundColor, strokeWidth: cd.strokeWidth, strokeColor: cd.strokeColor,
@@ -2640,8 +2657,15 @@
       } else {
         newH = Math.max(MIN_H, resizeState.startSize.h + dyScreen / zoom);
         // Accroche à la grille aussi en taille (pas seulement en position) — pas pour une image
-        // (ratio verrouillé : arrondir indépendamment largeur/hauteur le déformerait).
-        if (!e.altKey) { newW = Math.max(MIN_W, snapToGrid(newW)); newH = Math.max(MIN_H, snapToGrid(newH)); }
+        // (ratio verrouillé : arrondir indépendamment largeur/hauteur le déformerait). Accroche le
+        // bord DÉPLACÉ (x+largeur/y+hauteur), pas juste la largeur/hauteur elles-mêmes : le coin
+        // haut-gauche ne bouge pas pendant ce geste, donc accrocher la largeur seule ne suffit à
+        // remettre le bord droit sur la grille que si x y était déjà — plutôt que de compter dessus,
+        // on vise directement la position d'arrivée du bord.
+        if (!e.altKey) {
+          newW = Math.max(MIN_W, snapToGrid(entry.data.x + newW) - entry.data.x);
+          newH = Math.max(MIN_H, snapToGrid(entry.data.y + newH) - entry.data.y);
+        }
       }
       entry.data.width = newW;
       entry.data.height = newH;
