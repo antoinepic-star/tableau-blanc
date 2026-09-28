@@ -21,6 +21,7 @@
   const NOTE_DEFAULT_SIZE = 130; // post-it par défaut : carré, plus petit qu'avant (grandit ensuite avec le texte)
   const DRAG_Z_BOOST = 100000; // cf. startGroupDrag : conserve l'ordre relatif du groupe pendant le geste
   const GRID_SIZE = 10; // pas de la grille d'accrochage (glisser + flèches du clavier)
+  const GRID_DOT_SPACING = GRID_SIZE * 5; // espacement (en unités monde) des points du fond — 5 pas de grille, donc 5 appuis de flèche entre deux points
   const ALIGN_SNAP_PX = 6; // seuil (en pixels écran) pour s'aligner sur le bord/centre d'un autre élément
   const UNLOCK_HOLD_MS = 2000;
   const COMMENT_RELATIVE_DAYS = 7; // au-delà, on affiche la date plutôt que "il y a X jours"
@@ -63,6 +64,18 @@
 
   function applyTransform() {
     layerEl.style.transform = `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`;
+    // Le fond à points est un décor CSS sur #canvasViewport (donc hors du calque zoomé/panné) : sans
+    // ça il resterait fixe à l'écran, sans rapport avec les coordonnées monde — un coin d'élément posé
+    // pile sur un point n'aurait alors aucune raison de retomber sur le point suivant après quelques
+    // appuis de flèche. On le recale ici sur la grille d'accrochage : un point tous les
+    // GRID_DOT_SPACING (multiple de GRID_SIZE) en coordonnées monde, positionné/mis à l'échelle comme
+    // le reste du contenu (cf. worldToScreen).
+    const dotSize = GRID_DOT_SPACING * zoom;
+    viewportEl.style.backgroundSize = `${dotSize}px ${dotSize}px`;
+    // Le point est centré dans chaque tuile du dégradé (comportement par défaut d'un radial-gradient
+    // sans position explicite) : décaler d'un demi-pas pour que le point du monde (0,0) tombe pile à
+    // l'écran sur worldToScreen(0,0), pas au coin de sa tuile.
+    viewportEl.style.backgroundPosition = `${pan.x - dotSize / 2}px ${pan.y - dotSize / 2}px`;
     zoomPctEl.textContent = `${Math.round(zoom * 100)}%`;
     Realtime.repositionAll();
     if (selectedElementId) {

@@ -160,7 +160,8 @@ body.board-page { overflow: hidden; height: 100vh; }
   overflow: hidden;
   background-color: #eef0f5;
   background-image: radial-gradient(circle, #d7dae2 1.4px, transparent 1.4px);
-  background-size: 28px 28px;
+  /* background-size/position calés sur la grille monde (cf. applyTransform dans board.js) plutôt que
+     fixés ici : ils doivent suivre le pan/zoom pour rester synchronisés avec l'accrochage. */
   cursor: default;
   touch-action: none;
 }
