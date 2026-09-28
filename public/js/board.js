@@ -30,6 +30,8 @@
   const layerEl = document.getElementById('canvasLayer');
   const zoomPctEl = document.getElementById('zoomPct');
   const hintPill = document.getElementById('hintPill');
+  const busyPill = document.getElementById('busyPill');
+  const gridToggleBtn = document.getElementById('gridToggleBtn');
   const addDrawerBtn = document.getElementById('addDrawerBtn');
   const addDrawer = document.getElementById('addDrawer');
   const addDrawerOverlay = document.getElementById('addDrawerOverlay');
@@ -64,18 +66,18 @@
 
   function applyTransform() {
     layerEl.style.transform = `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`;
-    // Le fond à points est un décor CSS sur #canvasViewport (donc hors du calque zoomé/panné) : sans
+    // Le fond en grille est un décor CSS sur #canvasViewport (donc hors du calque zoomé/panné) : sans
     // ça il resterait fixe à l'écran, sans rapport avec les coordonnées monde — un coin d'élément posé
-    // pile sur un point n'aurait alors aucune raison de retomber sur le point suivant après quelques
-    // appuis de flèche. On le recale ici sur la grille d'accrochage : un point tous les
-    // GRID_DOT_SPACING (multiple de GRID_SIZE) en coordonnées monde, positionné/mis à l'échelle comme
-    // le reste du contenu (cf. worldToScreen).
-    const dotSize = GRID_DOT_SPACING * zoom;
-    viewportEl.style.backgroundSize = `${dotSize}px ${dotSize}px`;
-    // Le point est centré dans chaque tuile du dégradé (comportement par défaut d'un radial-gradient
-    // sans position explicite) : décaler d'un demi-pas pour que le point du monde (0,0) tombe pile à
-    // l'écran sur worldToScreen(0,0), pas au coin de sa tuile.
-    viewportEl.style.backgroundPosition = `${pan.x - dotSize / 2}px ${pan.y - dotSize / 2}px`;
+    // pile sur un trait n'aurait alors aucune raison de retomber sur le suivant après quelques appuis
+    // de flèche. On le recale ici sur la grille d'accrochage, mis à l'échelle/positionné comme le
+    // reste du contenu (cf. worldToScreen) : deux jeux de traits superposés (cf. board.css), un tous
+    // les GRID_DOT_SPACING (majeur) et un tous les GRID_SIZE (mineur), tous deux alignés sur l'origine
+    // monde (contrairement à l'ancien fond à points, un trait n'a pas besoin d'un décalage d'un demi-
+    // pas : il est déjà au bord de sa tuile, pas en son centre).
+    const majorSize = GRID_DOT_SPACING * zoom;
+    const minorSize = GRID_SIZE * zoom;
+    viewportEl.style.backgroundSize = `${majorSize}px ${majorSize}px, ${majorSize}px ${majorSize}px, ${minorSize}px ${minorSize}px, ${minorSize}px ${minorSize}px`;
+    viewportEl.style.backgroundPosition = `${pan.x}px ${pan.y}px, ${pan.x}px ${pan.y}px, ${pan.x}px ${pan.y}px, ${pan.x}px ${pan.y}px`;
     zoomPctEl.textContent = `${Math.round(zoom * 100)}%`;
     Realtime.repositionAll();
     if (selectedElementId) {
@@ -95,6 +97,46 @@
 
   function hideHint() { hintPill.classList.add('is-hidden'); }
 
+  // ---------- Grille (afficher/masquer) ----------
+  // Préférence propre à ce navigateur (pas une donnée du tableau partagée) : chacun choisit s'il
+  // affiche la grille ou pas.
+  const GRID_VISIBLE_KEY = 'tb_grid_visible';
+  let gridVisible = localStorage.getItem(GRID_VISIBLE_KEY) !== '0';
+  function applyGridVisibility() {
+    viewportEl.classList.toggle('grid-hidden', !gridVisible);
+    gridToggleBtn.classList.toggle('is-active', gridVisible);
+  }
+  gridToggleBtn.addEventListener('click', () => {
+    gridVisible = !gridVisible;
+    try { localStorage.setItem(GRID_VISIBLE_KEY, gridVisible ? '1' : '0'); } catch (_) {}
+    applyGridVisibility();
+  });
+  applyGridVisibility();
+
+  // ---------- Indicateur "en cours" ----------
+  // Une action groupée (annuler la suppression de nombreux éléments, coller une grosse sélection)
+  // peut prendre quelques secondes sur une base distante : sans repère, on ne sait pas si le clic a
+  // été pris en compte. N'apparaît qu'après un court délai (les actions rapides, largement
+  // majoritaires, ne doivent pas faire clignoter un loader inutilement).
+  const BUSY_SHOW_DELAY_MS = 400;
+  let busyDepth = 0;
+  let busyShowTimer = null;
+  function beginBusy() {
+    busyDepth++;
+    if (busyDepth === 1) busyShowTimer = setTimeout(() => busyPill.classList.add('is-visible'), BUSY_SHOW_DELAY_MS);
+  }
+  function endBusy() {
+    busyDepth = Math.max(0, busyDepth - 1);
+    if (busyDepth === 0) {
+      clearTimeout(busyShowTimer);
+      busyPill.classList.remove('is-visible');
+    }
+  }
+  function withBusy(promise) {
+    beginBusy();
+    return promise.finally(endBusy);
+  }
+
   // ---------- Annuler (Ctrl/Cmd+Z) ----------
   // Pile de désactions locales à cette session : chaque entrée sait comment annuler LA dernière
   // action (pas un vrai historique partagé/rejouable pour tout le monde). Une action qui touche
@@ -109,7 +151,7 @@
   async function undoLastAction() {
     const fn = undoStack.pop();
     if (!fn) return;
-    try { await fn(); } catch (_) { /* au pire l'annulation échoue silencieusement */ }
+    try { await withBusy(fn()); } catch (_) { /* au pire l'annulation échoue silencieusement */ }
   }
 
   // ---------- Accrochage (grille + alignement sur les autres éléments) ----------
@@ -227,14 +269,30 @@
   document.getElementById('zoomOutBtn').addEventListener('click', () => zoomBy(0.8));
   document.getElementById('zoomResetBtn').addEventListener('click', () => {
     zoom = 1;
-    centerView();
+    centerView(contentBounds());
     applyTransform();
   });
 
-  function centerView() {
+  // Boîte englobante d'une liste d'éléments (coordonnées monde) — pour centrer la vue dessus plutôt
+  // que sur l'origine (0,0), qui n'a souvent aucun rapport avec où se trouve le contenu. `null` pour
+  // une liste vide (repli sur l'origine, cf. centerView).
+  function boundsOfList(list) {
+    if (!list.length) return null;
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    list.forEach((d) => {
+      minX = Math.min(minX, d.x); minY = Math.min(minY, d.y);
+      maxX = Math.max(maxX, d.x + d.width); maxY = Math.max(maxY, d.y + d.height);
+    });
+    return { minX, minY, maxX, maxY };
+  }
+  function contentBounds() { return boundsOfList([...elements.values()].map(e => e.data)); }
+
+  function centerView(bounds) {
     const rect = viewportEl.getBoundingClientRect();
-    pan.x = rect.width / 2;
-    pan.y = rect.height / 2;
+    const cx = bounds ? (bounds.minX + bounds.maxX) / 2 : 0;
+    const cy = bounds ? (bounds.minY + bounds.maxY) / 2 : 0;
+    pan.x = rect.width / 2 - cx * zoom;
+    pan.y = rect.height / 2 - cy * zoom;
   }
 
   // ---------- Sélection rectangle (glisser sur le fond) ----------
@@ -575,7 +633,7 @@
     pasteCount++;
     const delta = 24 * pasteCount;
     const offset = clipboard.map(s => ({ ...s, x: s.x + delta, y: s.y + delta }));
-    recreateElements(offset).then((created) => {
+    withBusy(recreateElements(offset)).then((created) => {
       clearMultiSelection();
       if (created.length > 1) setMultiSelection(created.map(d => d.id));
       else if (created.length === 1) selectElement(created[0].id);
@@ -1906,7 +1964,7 @@
         radius: cd.radius, startCap: cd.startCap, endCap: cd.endCap, frameId: 'newFrame',
       };
     });
-    Api.createElementsBatch([{ ...payload, frameId: undefined, clientId: 'newFrame' }, ...childItems])
+    withBusy(Api.createElementsBatch([{ ...payload, frameId: undefined, clientId: 'newFrame' }, ...childItems]))
       .then(({ elements: created }) => {
         created.forEach(data => ensureRendered(data));
         const [newFrame, ...newChildren] = created;
@@ -2998,7 +3056,7 @@
     document.title = whiteboard.workshopName;
     myName = whiteboard.me?.name || null;
 
-    centerView();
+    centerView(boundsOfList(whiteboard.elements));
     applyTransform();
     whiteboard.elements.forEach(renderElement);
     // Second passage : un connecteur peut avoir été rendu avant ses deux ancres (ordre par z_index),
