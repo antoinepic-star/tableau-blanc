@@ -505,28 +505,38 @@
   // Recrée un ensemble de snapshots (même forme que ci-dessus) : les frames d'abord (pour laisser le
   // serveur redéduire l'appartenance de leur contenu d'après la position, comme à la création
   // normale), puis le reste, puis les connecteurs en reliant leurs extrémités aux NOUVEAUX id via
-  // idMap — utilisé à la fois par "coller" et par l'annulation d'une suppression.
+  // idMap — utilisé à la fois par "coller" et par l'annulation d'une suppression. Seul l'ORDRE entre
+  // ces trois groupes compte (une frame doit exister avant qu'on y rattache son contenu) ; à
+  // l'intérieur d'un même groupe, les créations partent toutes en parallèle plutôt qu'une par une —
+  // sans ça, coller (ou annuler la suppression) de plusieurs éléments les faisait apparaître un par un,
+  // au rythme d'un aller-retour réseau chacun.
+  async function createBatch(snapshots, mapPayload) {
+    const results = await Promise.all(snapshots.map((s) => {
+      const { _sourceId, ...rest } = s;
+      return Api.createElement(mapPayload ? mapPayload(rest) : rest).then(data => ({ _sourceId, data }));
+    }));
+    return results;
+  }
+
   async function recreateElements(snapshots) {
     const idMap = new Map();
     const frames = snapshots.filter(s => s.type === 'frame');
     const plain = snapshots.filter(s => s.type !== 'frame' && s.type !== 'connector');
     const connectors = snapshots.filter(s => s.type === 'connector');
     const created = [];
-    for (const s of [...frames, ...plain]) {
-      const { _sourceId, ...payload } = s;
-      const data = await Api.createElement(payload);
-      if (_sourceId) idMap.set(_sourceId, data.id);
-      created.push(data);
+
+    for (const group of [frames, plain]) {
+      if (!group.length) continue;
+      const results = await createBatch(group);
+      results.forEach(({ _sourceId, data }) => { if (_sourceId) idMap.set(_sourceId, data.id); created.push(data); });
     }
-    for (const s of connectors) {
-      const { _sourceId, fromElementId, toElementId, ...rest } = s;
-      const data = await Api.createElement({
+    if (connectors.length) {
+      const results = await createBatch(connectors, (rest) => ({
         ...rest,
-        fromElementId: idMap.get(fromElementId) || fromElementId,
-        toElementId: idMap.get(toElementId) || toElementId,
-      });
-      if (_sourceId) idMap.set(_sourceId, data.id);
-      created.push(data);
+        fromElementId: idMap.get(rest.fromElementId) || rest.fromElementId,
+        toElementId: idMap.get(rest.toElementId) || rest.toElementId,
+      }));
+      results.forEach(({ _sourceId, data }) => { if (_sourceId) idMap.set(_sourceId, data.id); created.push(data); });
     }
     created.forEach(data => ensureRendered(data));
     return created;
@@ -579,17 +589,25 @@
       const en = elements.get(id);
       en.data.x += dx; en.data.y += dy;
       en.el.style.left = `${en.data.x}px`; en.el.style.top = `${en.data.y}px`;
+      // Comme pendant un glisser : tant que la position n'est pas confirmée par LA DERNIÈRE requête
+      // partie, on ignore tout écho distant pour cet élément (cf. applyRemoteUpdate/isInteracting).
+      // Sans ça, des flèches pressées plus vite que l'aller-retour réseau pouvaient voir un écho
+      // encore en vol pour une position intermédiaire écraser après coup une position plus récente
+      // déjà affichée — visible comme si l'élément s'arrêtait de bouger.
+      en.dragging = true;
       updateConnectorsFor(id);
     });
     if (selectedElementId && movable.includes(selectedElementId)) repositionToolbar(elements.get(selectedElementId));
     if (multiSelectedIds.size >= 2) repositionMultiToolbar();
-    Api.updateElementsBatch(movable.map((id) => { const en = elements.get(id); return { id, x: en.data.x, y: en.data.y }; }))
+    Api.updateElementsBatch(movable.map((id) => { const en = elements.get(id); return { id, x: en.data.x, y: en.data.y }; }), false)
       .then(({ elements: updated, superseded, isLatest }) => {
-        if (superseded || !isLatest) return;
+        if (superseded) return;
+        updated.forEach((data) => { const en = elements.get(data.id); if (en) en.dragging = false; });
+        if (!isLatest) return;
         updated.forEach(applyRemoteUpdate);
         recordUndo(() => restoreMovedPositions(before));
       })
-      .catch(() => {});
+      .catch(() => { movable.forEach((id) => { const en = elements.get(id); if (en) en.dragging = false; }); });
   }
 
   function isTypingInField() {
@@ -732,11 +750,11 @@
           Api.deleteElement(entry.data.id)
             .then(() => recordUndo(async () => {
               const [newFrame] = await recreateElements(frameSnap);
-              for (const cid of survivingChildIds) {
+              await Promise.all(survivingChildIds.map((cid) => {
                 const en = elements.get(cid);
-                if (!en) continue;
-                await Api.updateElement(cid, { frameId: newFrame.id }).then(applyRemoteUpdate).catch(() => {});
-              }
+                if (!en) return null;
+                return Api.updateElement(cid, { frameId: newFrame.id }).then(applyRemoteUpdate).catch(() => {});
+              }));
             }))
             .catch(err => alert(err.message));
         }
