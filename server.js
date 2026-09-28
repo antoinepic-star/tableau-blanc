@@ -71,6 +71,9 @@ async function tursoGet(sql, args = []) {
 async function tursoRun(sql, args = []) {
   return turso.execute({ sql, args });
 }
+async function tursoBatch(stmts, mode) {
+  return turso.batch(stmts, mode);
+}
 
 const ELEMENT_COLORS = ['#FFF176', '#F8BBD0', '#90CAF9', '#A5D6A7', '#FFCC80', '#CE93D8'];
 
@@ -770,6 +773,110 @@ app.post('/api/whiteboards/:whiteboardId/elements', whiteboardAuth, ah(async (re
   await touchWhiteboard(req.params.whiteboardId);
   broadcast('element:created', element, req.params.whiteboardId);
   res.json(element);
+}));
+
+// Création groupée (coller, dupliquer une frame avec son contenu, annuler une suppression) : la
+// création à l'unité ci-dessus fait ~6 aller-retours base de données (z-index, containment, insert,
+// relecture, nom du tableau, activité) — sur une base distante (Turso en prod), lancer même N
+// requêtes en PARALLÈLE depuis le client ne change rien au fait que ces aller-retours restent 6×N ;
+// les créations arrivent alors étalées dans le temps plutôt que groupées (visible comme "les post-it
+// apparaissent un par un" en collant ou en annulant une suppression de plusieurs éléments). Ici, tout
+// le lot passe par une poignée d'aller-retours FIXE, quel que soit N : une lecture du z-index et des
+// frames existantes, un unique batch() (toutes les insertions + l'activité + le "touch" du tableau
+// en une seule transaction/aller-retour), puis une seule relecture groupée.
+app.post('/api/whiteboards/:whiteboardId/elements/batch', whiteboardAuth, ah(async (req, res) => {
+  const items = Array.isArray(req.body?.elements) ? req.body.elements : [];
+  if (!items.length) return res.status(400).json({ error: 'Requête invalide' });
+
+  const { max, min } = await tursoGet(
+    'SELECT MAX(z_index) as max, MIN(z_index) as min FROM whiteboard_elements WHERE whiteboard_id = ?',
+    [req.params.whiteboardId]
+  );
+  let nextZ = (max ?? -1) + 1;
+  let nextFrameZ = (min ?? 1) - 1;
+  const existingFrames = await tursoAll(
+    'SELECT id, x, y, width, height, z_index FROM whiteboard_elements WHERE whiteboard_id = ? AND type = ?',
+    [req.params.whiteboardId, 'frame']
+  );
+  // Frames créées PLUS TÔT dans ce même lot (ex. coller une frame + son contenu d'un coup) : leur
+  // contenu doit pouvoir s'y rattacher sans attendre une relecture en base.
+  const batchFrames = [];
+
+  const columns = ['id', 'whiteboard_id', 'type', 'x', 'y', 'width', 'height', 'rotation', 'color', 'text', 'font_size',
+    'bold', 'italic', 'underline', 'strikethrough', 'image_data', 'grayscale', 'start_cap', 'end_cap', 'line_style', 'background_color',
+    'stroke_width', 'stroke_color', 'radius', 'group_id', 'locked', 'from_element_id', 'from_side', 'to_element_id', 'to_side',
+    'frame_id', 'title_color', 'z_index'];
+  const insertSql = `INSERT INTO whiteboard_elements (${columns.join(', ')}) VALUES (${columns.map(() => '?').join(', ')})`;
+
+  const idByClientId = new Map();
+  const createdIds = [];
+  const stmts = [];
+
+  for (const item of items) {
+    const type = ELEMENT_TYPES.includes(item?.type) ? item.type : 'note';
+    const defaults = ELEMENT_DEFAULTS[type];
+    const {
+      x, y, width, height, rotation, color, text, fontSize, bold, italic, underline, strikethrough, imageData, grayscale,
+      startCap, endCap, lineStyle, backgroundColor, strokeWidth, strokeColor, radius, groupId, locked,
+      fromSide, toSide, titleColor, clientId,
+    } = item || {};
+    // fromElementId/toElementId (connecteur) : peut référencer soit un élément déjà existant, soit le
+    // clientId d'un autre élément du MÊME lot (toujours placé après lui, cf. recreateElements côté
+    // client, qui envoie frames puis reste puis connecteurs) — sinon, on garde la valeur telle quelle.
+    const fromElementId = item?.fromElementId != null ? (idByClientId.get(item.fromElementId) || item.fromElementId) : null;
+    const toElementId = item?.toElementId != null ? (idByClientId.get(item.toElementId) || item.toElementId) : null;
+    // Même remappage pour frameId : le client le fixe explicitement à un clientId quand l'élément
+    // doit rejoindre une frame recréée DANS CE MÊME LOT (ex. dupliquer une frame avec son contenu),
+    // pour ne pas dépendre de la détection par position ci-dessous — ambiguë quand la copie et
+    // l'originale se chevauchent presque entièrement (cf. board.js, duplicateElement/recreateElements).
+    let frameId = item?.frameId != null ? (idByClientId.get(item.frameId) || item.frameId) : item?.frameId;
+
+    const id = uuidv4();
+    if (clientId) idByClientId.set(clientId, id);
+    createdIds.push(id);
+
+    let zIndex;
+    if (type === 'frame') {
+      zIndex = nextFrameZ--;
+    } else {
+      zIndex = nextZ++;
+      if (frameId === undefined) {
+        frameId = findContainingFrame(x ?? 0, y ?? 0, width ?? defaults.width, height ?? defaults.height, [...existingFrames, ...batchFrames], null);
+      }
+    }
+    if (type === 'frame') {
+      batchFrames.push({ id, x: x ?? 0, y: y ?? 0, width: width ?? defaults.width, height: height ?? defaults.height, z_index: zIndex });
+    }
+
+    const values = [
+      id, req.params.whiteboardId, type, x ?? 0, y ?? 0,
+      width ?? defaults.width, height ?? defaults.height, rotation ?? 0,
+      color ?? defaults.color ?? '#1c1c28', text || '', fontSize ?? defaults.fontSize ?? null,
+      bold ? 1 : 0, italic ? 1 : 0, underline ? 1 : 0, strikethrough ? 1 : 0, imageData || null, grayscale ? 1 : 0,
+      startCap || 'none', endCap || 'none', lineStyle || 'solid', backgroundColor || null,
+      strokeWidth ?? defaults.strokeWidth ?? 0, strokeColor || defaults.strokeColor || null, radius ?? 0, groupId || null, locked ? 1 : 0,
+      fromElementId || null, fromSide || null, toElementId || null, toSide || null,
+      frameId || null, titleColor || defaults.titleColor || null, zIndex,
+    ];
+    stmts.push({ sql: insertSql, args: values });
+  }
+
+  const whiteboard = await tursoGet('SELECT client_name, workshop_name FROM whiteboards WHERE id = ?', [req.params.whiteboardId]);
+  stmts.push({
+    sql: 'INSERT INTO activity_events (id, event_type, actor_name, client_name, project_name, detail) VALUES (?, ?, ?, ?, ?, ?)',
+    args: [uuidv4(), 'element_created', req.user.name, whiteboard?.client_name || null, whiteboard?.workshop_name || null, `${items.length} éléments créés`],
+  });
+  stmts.push({ sql: 'UPDATE whiteboards SET updated_at = unixepoch() WHERE id = ?', args: [req.params.whiteboardId] });
+
+  await tursoBatch(stmts, 'write');
+
+  const placeholders = createdIds.map(() => '?').join(',');
+  const rows = await tursoAll(`SELECT * FROM whiteboard_elements WHERE id IN (${placeholders})`, createdIds);
+  const rowById = new Map(rows.map(r => [r.id, r]));
+  const elements = createdIds.map(id => parseElement(rowById.get(id)));
+
+  broadcast('elements:created', { elements }, req.params.whiteboardId);
+  res.json({ elements });
 }));
 
 // Patch partiel : position/taille/rotation (fin de drag/resize/rotation), couleur, texte ou mise en

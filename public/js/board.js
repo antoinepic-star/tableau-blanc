@@ -498,46 +498,54 @@
       lineStyle: d.lineStyle, backgroundColor: d.backgroundColor, strokeWidth: d.strokeWidth, strokeColor: d.strokeColor,
       radius: d.radius, startCap: d.startCap, endCap: d.endCap, titleColor: d.titleColor,
       fromElementId: d.fromElementId, fromSide: d.fromSide, toElementId: d.toElementId, toSide: d.toSide,
-      _sourceId: d.id,
+      frameId: d.frameId, _sourceId: d.id,
     };
   }
 
-  // Recrée un ensemble de snapshots (même forme que ci-dessus) : les frames d'abord (pour laisser le
-  // serveur redéduire l'appartenance de leur contenu d'après la position, comme à la création
-  // normale), puis le reste, puis les connecteurs en reliant leurs extrémités aux NOUVEAUX id via
-  // idMap — utilisé à la fois par "coller" et par l'annulation d'une suppression. Seul l'ORDRE entre
-  // ces trois groupes compte (une frame doit exister avant qu'on y rattache son contenu) ; à
-  // l'intérieur d'un même groupe, les créations partent toutes en parallèle plutôt qu'une par une —
-  // sans ça, coller (ou annuler la suppression) de plusieurs éléments les faisait apparaître un par un,
-  // au rythme d'un aller-retour réseau chacun.
-  async function createBatch(snapshots, mapPayload) {
-    const results = await Promise.all(snapshots.map((s) => {
-      const { _sourceId, ...rest } = s;
-      return Api.createElement(mapPayload ? mapPayload(rest) : rest).then(data => ({ _sourceId, data }));
-    }));
-    return results;
-  }
-
+  // Recrée un ensemble de snapshots (même forme que ci-dessus) — utilisé à la fois par "coller" et par
+  // l'annulation d'une suppression. Un premier essai lançait une requête de création par élément (en
+  // parallèle) : sur une base distante, chaque création fait déjà plusieurs aller-retours base de
+  // données à elle seule, donc même lancées en parallèle depuis le client, N créations restent
+  // limitées par N fois ce coût côté serveur — visible comme des éléments qui "apparaissent un par un"
+  // en collant ou en annulant une suppression de plusieurs éléments. Le tout part maintenant en UNE
+  // seule requête vers /elements/batch (cf. server.js), qui fait ce travail en un nombre d'aller-
+  // retours fixe quel que soit N. Les frames doivent y précéder leur contenu (le serveur en a besoin
+  // pour redéduire l'appartenance d'après la position, comme à la création normale) ; les connecteurs
+  // y viennent en dernier, leurs extrémités indiquées par le clientId (index dans le lot) de
+  // l'élément visé quand celui-ci fait partie du même lot.
   async function recreateElements(snapshots) {
-    const idMap = new Map();
+    if (!snapshots.length) return [];
     const frames = snapshots.filter(s => s.type === 'frame');
     const plain = snapshots.filter(s => s.type !== 'frame' && s.type !== 'connector');
     const connectors = snapshots.filter(s => s.type === 'connector');
-    const created = [];
+    const ordered = [...frames, ...plain, ...connectors];
 
-    for (const group of [frames, plain]) {
-      if (!group.length) continue;
-      const results = await createBatch(group);
-      results.forEach(({ _sourceId, data }) => { if (_sourceId) idMap.set(_sourceId, data.id); created.push(data); });
-    }
-    if (connectors.length) {
-      const results = await createBatch(connectors, (rest) => ({
+    const clientIdBySourceId = new Map();
+    ordered.forEach((s, i) => { if (s._sourceId) clientIdBySourceId.set(s._sourceId, `c${i}`); });
+
+    const items = ordered.map((s, i) => {
+      const { _sourceId, fromElementId, toElementId, frameId, ...rest } = s;
+      const item = {
         ...rest,
-        fromElementId: idMap.get(rest.fromElementId) || rest.fromElementId,
-        toElementId: idMap.get(rest.toElementId) || rest.toElementId,
-      }));
-      results.forEach(({ _sourceId, data }) => { if (_sourceId) idMap.set(_sourceId, data.id); created.push(data); });
-    }
+        clientId: `c${i}`,
+        fromElementId: fromElementId != null && clientIdBySourceId.has(fromElementId) ? clientIdBySourceId.get(fromElementId) : fromElementId,
+        toElementId: toElementId != null && clientIdBySourceId.has(toElementId) ? clientIdBySourceId.get(toElementId) : toElementId,
+      };
+      // Un élément qui n'appartenait à aucune frame doit pouvoir se faire rattacher par la détection
+      // automatique du serveur d'après sa nouvelle position (frameId omis, cf. server.js) — mais un
+      // élément qui appartenait à une frame recréée DANS LE MÊME LOT doit explicitement rejoindre
+      // CETTE COPIE (référencée par son clientId), pas se faire redétecter au hasard : sa frame
+      // d'origine et sa copie ne sont décalées que de quelques px l'une de l'autre (même décalage que
+      // le contenu), donc quasi toujours l'une ET l'autre à la fois — la détection par position
+      // choisirait alors la frame la plus "au-dessus" (z le plus haut), presque toujours l'ORIGINALE
+      // (une frame va toujours un peu plus loin en arrière-plan que la précédente à chaque création).
+      // Un élément qui appartenait à une frame RESTÉE EN PLACE (non recréée ici) garde son frameId
+      // d'origine tel quel, comme pour "dupliquer" un seul élément.
+      if (frameId) item.frameId = clientIdBySourceId.get(frameId) || frameId;
+      return item;
+    });
+
+    const { elements: created } = await Api.createElementsBatch(items);
     created.forEach(data => ensureRendered(data));
     return created;
   }
@@ -1876,27 +1884,38 @@
       frameId: d.type === 'frame' ? undefined : (d.frameId || null),
     };
     if (d.type !== 'frame') { createElementTracked(payload).catch(err => alert(err.message)); return; }
-    // Dupliquer une frame duplique aussi son contenu, avec le même décalage, en le rattachant à la
-    // copie plutôt qu'à la frame d'origine. Une seule entrée d'annulation couvre tout le lot (frame +
-    // enfants) : la retirer les supprime tous ensemble (deleteContents), pas un par un.
+    // Dupliquer une frame duplique aussi son contenu, avec le même décalage, en le rattachant
+    // EXPLICITEMENT à la copie (clientId 'newFrame') plutôt qu'à la frame d'origine — laisser le
+    // serveur redéduire l'appartenance d'après la position ne suffit pas ici : avec un décalage de
+    // seulement 24px sur une frame bien plus grande, la copie et l'originale se chevauchent presque
+    // entièrement, et la détection par position choisirait alors la frame la plus "au-dessus" (z le
+    // plus haut) — quasi toujours l'ORIGINALE, une frame allant toujours un peu plus loin en arrière-
+    // plan que la précédente à chaque création (cf. recreateElements pour le cas symétrique de
+    // "coller"). Toute la frame ET son contenu partent en un seul aller-retour (cf.
+    // Api.createElementsBatch) plutôt qu'une création par élément — sans ça, dupliquer une frame bien
+    // remplie les faisait apparaître un par un. Une seule entrée d'annulation couvre tout le lot : la
+    // retirer les supprime tous ensemble (deleteContents), pas un par un.
     const children = frameChildren(d.id).map(cid => elements.get(cid)).filter(Boolean);
-    Api.createElement(payload)
-      .then((newFrame) => Promise.all(children.map((child) => {
-        const cd = child.data;
-        return Api.createElement({
-          type: cd.type, x: cd.x + 24, y: cd.y + 24, width: cd.width, height: cd.height, rotation: cd.rotation,
-          color: cd.color, text: cd.text, fontSize: cd.fontSize, bold: cd.bold, italic: cd.italic,
-          underline: cd.underline, strikethrough: cd.strikethrough, imageData: cd.imageData, grayscale: cd.grayscale,
-          lineStyle: cd.lineStyle, backgroundColor: cd.backgroundColor, strokeWidth: cd.strokeWidth, strokeColor: cd.strokeColor,
-          radius: cd.radius, startCap: cd.startCap, endCap: cd.endCap, frameId: newFrame.id,
-        });
-      })).then((newChildren) => {
+    const childItems = children.map((child) => {
+      const cd = child.data;
+      return {
+        type: cd.type, x: cd.x + 24, y: cd.y + 24, width: cd.width, height: cd.height, rotation: cd.rotation,
+        color: cd.color, text: cd.text, fontSize: cd.fontSize, bold: cd.bold, italic: cd.italic,
+        underline: cd.underline, strikethrough: cd.strikethrough, imageData: cd.imageData, grayscale: cd.grayscale,
+        lineStyle: cd.lineStyle, backgroundColor: cd.backgroundColor, strokeWidth: cd.strokeWidth, strokeColor: cd.strokeColor,
+        radius: cd.radius, startCap: cd.startCap, endCap: cd.endCap, frameId: 'newFrame',
+      };
+    });
+    Api.createElementsBatch([{ ...payload, frameId: undefined, clientId: 'newFrame' }, ...childItems])
+      .then(({ elements: created }) => {
+        created.forEach(data => ensureRendered(data));
+        const [newFrame, ...newChildren] = created;
         recordUndo(() => {
           removeElementLocal(newFrame.id);
           newChildren.forEach(c => removeElementLocal(c.id));
           return Api.deleteElement(newFrame.id, { deleteContents: true }).catch(() => {});
         });
-      }))
+      })
       .catch(err => alert(err.message));
   }
 
@@ -2926,6 +2945,7 @@
   // ---------- Temps réel ----------
 
   Realtime.on('element:created', (element) => { if (!elements.has(element.id)) renderElement(element); });
+  Realtime.on('elements:created', ({ elements: createdElements }) => createdElements.forEach((el) => { if (!elements.has(el.id)) renderElement(el); }));
   Realtime.on('element:updated', applyRemoteUpdate);
   Realtime.on('elements:updated', ({ elements: updatedElements }) => updatedElements.forEach(applyRemoteUpdate));
   Realtime.on('element:deleted', ({ id }) => removeElementLocal(id));

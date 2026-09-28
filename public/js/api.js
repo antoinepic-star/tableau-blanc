@@ -185,6 +185,10 @@ const Api = (() => {
     whiteboardId,
     getWhiteboard: () => request('GET', base),
     createElement: (element) => request('POST', `${base}/elements`, element || {}),
+    // Création groupée (coller, dupliquer une frame avec son contenu, annuler une suppression de
+    // plusieurs éléments) : un seul aller-retour pour tout le lot plutôt qu'un par élément — cf. le
+    // commentaire de l'endpoint /elements/batch côté serveur.
+    createElementsBatch: (elements) => request('POST', `${base}/elements/batch`, { elements }),
     updateElement,
     updateElementsBatch,
     isPending,
