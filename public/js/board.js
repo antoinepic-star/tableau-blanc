@@ -589,25 +589,22 @@
       const en = elements.get(id);
       en.data.x += dx; en.data.y += dy;
       en.el.style.left = `${en.data.x}px`; en.el.style.top = `${en.data.y}px`;
-      // Comme pendant un glisser : tant que la position n'est pas confirmée par LA DERNIÈRE requête
-      // partie, on ignore tout écho distant pour cet élément (cf. applyRemoteUpdate/isInteracting).
-      // Sans ça, des flèches pressées plus vite que l'aller-retour réseau pouvaient voir un écho
-      // encore en vol pour une position intermédiaire écraser après coup une position plus récente
-      // déjà affichée — visible comme si l'élément s'arrêtait de bouger.
-      en.dragging = true;
       updateConnectorsFor(id);
     });
     if (selectedElementId && movable.includes(selectedElementId)) repositionToolbar(elements.get(selectedElementId));
     if (multiSelectedIds.size >= 2) repositionMultiToolbar();
+    // Pas besoin ici de protéger la position "à la main" (comme le fait entry.dragging pendant un
+    // glisser à la souris, qui a une phase intermédiaire sans requête en vol) : l'appel ci-dessous
+    // marque l'élément "en attente" (cf. Api.isPending) dès cette ligne, avant que quoi que ce soit
+    // d'autre ne puisse s'exécuter — un écho distant pour une position intermédiaire est donc déjà
+    // ignoré par applyRemoteUpdate le temps que LA DERNIÈRE requête partie se confirme.
     Api.updateElementsBatch(movable.map((id) => { const en = elements.get(id); return { id, x: en.data.x, y: en.data.y }; }), false)
       .then(({ elements: updated, superseded, isLatest }) => {
-        if (superseded) return;
-        updated.forEach((data) => { const en = elements.get(data.id); if (en) en.dragging = false; });
-        if (!isLatest) return;
+        if (superseded || !isLatest) return;
         updated.forEach(applyRemoteUpdate);
         recordUndo(() => restoreMovedPositions(before));
       })
-      .catch(() => { movable.forEach((id) => { const en = elements.get(id); if (en) en.dragging = false; }); });
+      .catch(() => {});
   }
 
   function isTypingInField() {
@@ -1634,6 +1631,15 @@
   function applyRemoteUpdate(data) {
     const entry = elements.get(data.id);
     if (!entry) { renderElement(data); return; }
+    // Une requête DE CE CLIENT est encore en vol pour cet élément (cf. Api.isPending) : cet écho —
+    // sa propre réponse arrivée en retard, ou la diffusion SSE qu'il déclenche (reçue par l'auteur
+    // aussi) — peut porter un état plus vieux qu'un changement déjà affiché localement en attendant sa
+    // propre confirmation (couleur, verrouillage, vote, groupe, position...). Contrairement à
+    // isInteracting ci-dessous (qui ne protège que position/taille/pile pendant un glisser continu),
+    // on ne sait pas ici QUEL champ est en jeu : on ignore donc l'écho en entier plutôt que de risquer
+    // d'en laisser passer un pas protégé — la confirmation de la DERNIÈRE requête en vol pour cet
+    // élément appliquera de toute façon l'état à jour à son tour.
+    if (Api.isPending(data.id)) return;
     // Le PATCH élément (déplacement, couleur, etc.) ne renvoie pas les votes/commentaires — ce n'est
     // pas son rôle — donc on les préserve explicitement au lieu de les perdre en écrasant data.
     const prevVotes = entry.data.votes;

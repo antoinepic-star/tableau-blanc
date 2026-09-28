@@ -39,16 +39,36 @@ const Api = (() => {
 
   const base = `/api/whiteboards/${whiteboardId}`;
 
+  // Nombre de requêtes DE CE CLIENT actuellement en vol pour un élément donné (tous champs confondus :
+  // position, couleur, verrouillage, vote, groupe...), exposé via isPending. board.js s'en sert pour
+  // ignorer complètement un écho serveur (sa propre réponse en retard, ou la diffusion SSE qu'il
+  // déclenche — reçue par l'auteur aussi, cf. broadcast côté serveur) tant qu'un changement plus
+  // récent pour ce MÊME élément est encore en vol : sans ça, une réponse/diffusion arrivée dans le
+  // désordre peut écraser un état plus frais déjà affiché localement (l'élément "revient en arrière"
+  // ou semble se figer après plusieurs actions rapprochées). updateElement/updateElementsBatch
+  // l'incrémentent à l'appel et le décrémentent à leur résolution (succès, échec, ou "superseded").
+  const pendingCounts = new Map();
+  function markPending(id) { pendingCounts.set(id, (pendingCounts.get(id) || 0) + 1); }
+  function unmarkPending(id) {
+    const n = (pendingCounts.get(id) || 1) - 1;
+    if (n <= 0) pendingCounts.delete(id); else pendingCounts.set(id, n);
+  }
+  function isPending(id) { return pendingCounts.has(id); }
+
   // Le PATCH élément fait un lire-modifier-écrire côté serveur : si deux PATCH pour le même
   // élément partent en parallèle (ex. double-clic rapide sur un toggle), ils peuvent être traités
   // dans le désordre et le dernier à se terminer "gagne", même si ce n'est pas le dernier envoyé.
   // On chaîne les PATCH par élément pour garantir que chacun parte une fois le précédent terminé.
   const updateChains = new Map();
   function updateElement(id, patch) {
+    markPending(id);
     const prev = updateChains.get(id) || Promise.resolve();
     const next = prev.catch(() => {}).then(() => request('PATCH', `${base}/elements/${id}`, patch));
     updateChains.set(id, next);
-    return next;
+    return next.then(
+      (result) => { unmarkPending(id); return result; },
+      (err) => { unmarkPending(id); throw err; }
+    );
   }
 
   // Même problème que updateElement ci-dessus, mais à l'échelle du lot : sans cette file, un
@@ -92,6 +112,9 @@ const Api = (() => {
 
   function updateElementsBatch(moves, bringToFront = true) {
     const key = batchMoveKey(moves);
+    const ids = moves.map(m => m.id);
+    ids.forEach(markPending);
+    const unmarkAll = () => ids.forEach(unmarkPending);
     return new Promise((resolve, reject) => {
       const last = batchMoveQueue[batchMoveQueue.length - 1];
       if (last && last.key === key) {
@@ -101,7 +124,10 @@ const Api = (() => {
         batchMoveQueue.push({ key, moves, bringToFront, resolve, reject });
       }
       pumpBatchMoveQueue();
-    });
+    }).then(
+      (result) => { unmarkAll(); return result; },
+      (err) => { unmarkAll(); throw err; }
+    );
   }
 
   // Les positions "live" pendant un glisser/redimensionnement sont juste un aperçu visuel pour les
@@ -137,6 +163,23 @@ const Api = (() => {
     return next;
   }
 
+  // Le vote est un bascule lire-puis-écrire côté serveur (voté ? je retire : j'ajoute) : deux clics
+  // rapprochés partis en parallèle peuvent tous les deux lire "pas encore voté" et tous les deux
+  // ajouter une ligne, ou se marcher dessus dans l'autre sens — même défaut que le PATCH élément
+  // (cf. updateElement plus haut), donc même remède : chaîné sur updateChains (partagé avec les PATCH
+  // de cet élément, un vote et un changement de couleur par ex. n'ont pas plus de raison de se
+  // chevaucher que deux votes).
+  function toggleVote(elementId) {
+    markPending(elementId);
+    const prev = updateChains.get(elementId) || Promise.resolve();
+    const next = prev.catch(() => {}).then(() => request('POST', `${base}/elements/${elementId}/vote`));
+    updateChains.set(elementId, next);
+    return next.then(
+      (result) => { unmarkPending(elementId); return result; },
+      (err) => { unmarkPending(elementId); throw err; }
+    );
+  }
+
   return {
     token,
     whiteboardId,
@@ -144,12 +187,13 @@ const Api = (() => {
     createElement: (element) => request('POST', `${base}/elements`, element || {}),
     updateElement,
     updateElementsBatch,
+    isPending,
     arrangeFrame,
     liveElement,
     cancelLiveElement,
     deleteElement: (id, { deleteContents } = {}) => request('DELETE', `${base}/elements/${id}`, deleteContents ? { deleteContents: true } : undefined),
     sendCursor: (x, y) => request('POST', `${base}/cursor`, { x, y }).catch(() => {}),
-    toggleVote: (elementId) => request('POST', `${base}/elements/${elementId}/vote`),
+    toggleVote,
     getComments: (elementId) => request('GET', `${base}/elements/${elementId}/comments`),
     createComment: (elementId, text) => request('POST', `${base}/elements/${elementId}/comments`, { text }),
     deleteComment: (elementId, commentId) => request('DELETE', `${base}/elements/${elementId}/comments/${commentId}`),
