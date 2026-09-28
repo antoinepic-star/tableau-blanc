@@ -200,9 +200,16 @@ body.board-page { overflow: hidden; height: 100vh; }
   transform-origin: 0 0;
 }
 
-.element { position: absolute; user-select: none; }
+/* border-box (pas le content-box par défaut) : un contour (rectangle/frame, cf. applyRectangleStyle
+   dans board.js) doit rester DANS les x/y/width/height déclarés, sinon le bord droit/bas déborde de
+   la largeur/hauteur logique d'autant que son épaisseur — deux éléments avec des contours différents,
+   alignés par leur x (même donnée), se retrouvent visuellement décalés puisque leurs bords visibles
+   ne débordent pas de la même quantité. Pareil pour l'indicateur de sélection ci-dessous : en dehors
+   de la boîte, aligner "à l'œil" dessus n'aligne pas vraiment les éléments (cf. le contour multi-
+   sélection, ramené à l'intérieur avec un box-shadow plutôt qu'un outline décalé). */
+.element { position: absolute; user-select: none; box-sizing: border-box; }
 .element.is-dragging, .element.is-resizing, .element.is-rotating, .element.is-cropping { z-index: 9999 !important; }
-.element.is-multi-selected { outline: 2px solid var(--purple); outline-offset: 2px; }
+.element.is-multi-selected { box-shadow: inset 0 0 0 2px var(--purple); }
 
 .element.is-locked { cursor: pointer; }
 /* Pastille discrète : juste l'icône, sans fond plein, pour rester visible sans attirer l'œil.
@@ -332,7 +339,7 @@ body.is-linking .element:not(.is-locked) .connector-anchor { display: block; }
 }
 .element[data-type="text"]:not(.is-editing) .element-text { cursor: grab; pointer-events: none; }
 .element[data-type="text"].is-dragging, .element[data-type="text"].is-resizing { cursor: grabbing; }
-.element[data-type="text"].is-selected { outline: 1.5px dashed var(--purple); outline-offset: 4px; }
+.element[data-type="text"].is-selected { outline: 1.5px dashed var(--purple); outline-offset: 0; }
 
 /* ---- Image ---- */
 .element[data-type="image"] { cursor: grab; }
