@@ -19,6 +19,9 @@
   const TEXT_MIN_CONTENT_WIDTH = 30;
   const BOX_TYPES = ['note', 'text', 'image', 'rectangle', 'frame']; // types "boîte" (points d'ancrage pour les connecteurs)
   const NOTE_DEFAULT_SIZE = 130; // post-it par défaut : carré, plus petit qu'avant (grandit ensuite avec le texte)
+  const DRAG_Z_BOOST = 100000; // cf. startGroupDrag : conserve l'ordre relatif du groupe pendant le geste
+  const GRID_SIZE = 10; // pas de la grille d'accrochage (glisser + flèches du clavier)
+  const ALIGN_SNAP_PX = 6; // seuil (en pixels écran) pour s'aligner sur le bord/centre d'un autre élément
   const UNLOCK_HOLD_MS = 2000;
   const COMMENT_RELATIVE_DAYS = 7; // au-delà, on affiche la date plutôt que "il y a X jours"
 
@@ -78,6 +81,104 @@
   }
 
   function hideHint() { hintPill.classList.add('is-hidden'); }
+
+  // ---------- Annuler (Ctrl/Cmd+Z) ----------
+  // Pile de désactions locales à cette session : chaque entrée sait comment annuler LA dernière
+  // action (pas un vrai historique partagé/rejouable pour tout le monde). Une action qui touche
+  // plusieurs éléments d'un coup (dupliquer une frame avec son contenu, supprimer une sélection,
+  // coller) pousse UNE seule entrée qui annule tout le lot ensemble.
+  const undoStack = [];
+  const UNDO_LIMIT = 50;
+  function recordUndo(fn) {
+    undoStack.push(fn);
+    if (undoStack.length > UNDO_LIMIT) undoStack.shift();
+  }
+  async function undoLastAction() {
+    const fn = undoStack.pop();
+    if (!fn) return;
+    try { await fn(); } catch (_) { /* au pire l'annulation échoue silencieusement */ }
+  }
+
+  // ---------- Accrochage (grille + alignement sur les autres éléments) ----------
+
+  function snapToGrid(v) { return Math.round(v / GRID_SIZE) * GRID_SIZE; }
+
+  let guideVEl = null, guideHEl = null;
+  function ensureGuideEls() {
+    if (!guideVEl) { guideVEl = document.createElement('div'); guideVEl.className = 'align-guide align-guide-v'; viewportEl.appendChild(guideVEl); }
+    if (!guideHEl) { guideHEl = document.createElement('div'); guideHEl.className = 'align-guide align-guide-h'; viewportEl.appendChild(guideHEl); }
+  }
+  function showGuideV(worldX) {
+    ensureGuideEls();
+    guideVEl.style.left = `${worldToScreen(worldX, 0).x}px`;
+    guideVEl.style.display = 'block';
+  }
+  function showGuideH(worldY) {
+    ensureGuideEls();
+    guideHEl.style.top = `${worldToScreen(0, worldY).y}px`;
+    guideHEl.style.display = 'block';
+  }
+  function hideGuides() {
+    if (guideVEl) guideVEl.style.display = 'none';
+    if (guideHEl) guideHEl.style.display = 'none';
+  }
+
+  // Calcule la position accrochée d'une boîte (coin haut-gauche visé rawX/rawY, de taille
+  // width/height) : d'abord sur la grille, puis — si assez proche — remplacée par un alignement exact
+  // avec le bord/centre d'un autre élément (comme Figma/Miro), qui l'emporte sur la grille pour l'axe
+  // concerné. `excludeIds` écarte les éléments eux-mêmes en cours de déplacement (et leurs éventuels
+  // enfants de frame) de la comparaison.
+  function computeSnappedPosition(width, height, rawX, rawY, excludeIds) {
+    let x = snapToGrid(rawX);
+    let y = snapToGrid(rawY);
+    const threshold = ALIGN_SNAP_PX / zoom;
+    let bestDx = threshold, bestDy = threshold;
+    let guideVWorldX = null, guideHWorldY = null;
+    const movingX = [rawX, rawX + width / 2, rawX + width];
+    const movingY = [rawY, rawY + height / 2, rawY + height];
+
+    elements.forEach((en) => {
+      if (excludeIds.has(en.data.id) || en.data.type === 'connector') return;
+      const d = en.data;
+      const targetsX = [d.x, d.x + d.width / 2, d.x + d.width];
+      const targetsY = [d.y, d.y + d.height / 2, d.y + d.height];
+      movingX.forEach((moving, i) => {
+        targetsX.forEach((target) => {
+          const dx = Math.abs(moving - target);
+          if (dx < bestDx) { bestDx = dx; x = target - [0, width / 2, width][i]; guideVWorldX = target; }
+        });
+      });
+      movingY.forEach((moving, i) => {
+        targetsY.forEach((target) => {
+          const dy = Math.abs(moving - target);
+          if (dy < bestDy) { bestDy = dy; y = target - [0, height / 2, height][i]; guideHWorldY = target; }
+        });
+      });
+    });
+
+    return { x, y, guideVWorldX, guideHWorldY };
+  }
+
+  // Utilisée par un glisser (simple/groupé) : applique l'accrochage, affiche/masque les repères, et
+  // renvoie le delta monde à appliquer à tout le lot déplacé (le calcul se fait sur l'élément
+  // "meneur" du geste, cf. wireBodyDrag/startGroupDrag).
+  function applyDragSnap(width, height, rawX, rawY, excludeIds, bypass) {
+    if (bypass) { hideGuides(); return { x: rawX, y: rawY }; }
+    const snapped = computeSnappedPosition(width, height, rawX, rawY, excludeIds);
+    if (snapped.guideVWorldX !== null) showGuideV(snapped.guideVWorldX); else if (guideVEl) guideVEl.style.display = 'none';
+    if (snapped.guideHWorldY !== null) showGuideH(snapped.guideHWorldY); else if (guideHEl) guideHEl.style.display = 'none';
+    return snapped;
+  }
+
+  // Restaure un instantané de positions (id/x/y) — utilisé pour annuler un déplacement (glisser,
+  // flèches du clavier). Un simple lot en position seule (comme un glisser), sans repasser au
+  // premier plan : annuler ne doit pas rejouer la bataille de z-index.
+  function restoreMovedPositions(snapshot) {
+    if (!snapshot.length) return Promise.resolve();
+    return Api.updateElementsBatch(snapshot.map(s => ({ id: s.id, x: s.x, y: s.y })), false)
+      .then(({ elements: updated, superseded, isLatest }) => { if (!superseded && isLatest) updated.forEach(applyRemoteUpdate); })
+      .catch(() => {});
+  }
 
   // ---------- Zoom / pan (molette et trackpad uniquement — le glisser du fond sert à la sélection) ----------
 
@@ -287,14 +388,14 @@
     if (type === 'note') {
       const color = ELEMENT_COLORS[creationCount % ELEMENT_COLORS.length];
       const half = NOTE_DEFAULT_SIZE / 2;
-      Api.createElement({ type: 'note', x: wx - half + offset, y: wy - half + offset, width: NOTE_DEFAULT_SIZE, height: NOTE_DEFAULT_SIZE, color })
+      createElementTracked({ type: 'note', x: wx - half + offset, y: wy - half + offset, width: NOTE_DEFAULT_SIZE, height: NOTE_DEFAULT_SIZE, color })
         .catch(err => alert(err.message));
     } else if (type === 'line') {
-      Api.createElement({ type: 'line', x: wx - 80 + offset, y: wy + offset, width: 160, height: 6, rotation: 0, color: '#1c1c28' })
+      createElementTracked({ type: 'line', x: wx - 80 + offset, y: wy + offset, width: 160, height: 6, rotation: 0, color: '#1c1c28' })
         .catch(err => alert(err.message));
     } else if (type === 'text') {
       const initial = computeTextBoxSize({ text: '', fontSize: 18, bold: false, italic: false });
-      Api.createElement({
+      createElementTracked({
         type: 'text', x: wx - initial.width / 2 + offset, y: wy - initial.height / 2 + offset,
         width: initial.width, height: initial.height, color: '#1c1c28', fontSize: 18,
       })
@@ -302,7 +403,7 @@
         .catch(err => alert(err.message));
     } else if (type === 'rectangle') {
       const color = ELEMENT_COLORS[creationCount % ELEMENT_COLORS.length];
-      Api.createElement({
+      createElementTracked({
         type: 'rectangle', x: wx - 110 + offset, y: wy - 70 + offset, width: 220, height: 140,
         color, strokeWidth: 0, strokeColor: '#1c1c28', radius: 8,
       }).catch(err => alert(err.message));
@@ -314,7 +415,7 @@
       // Couleur/contour/titre laissés aux valeurs par défaut du serveur (cf. ELEMENT_DEFAULTS.frame) :
       // contrairement au post-it/rectangle, on n'a pas besoin d'une couleur qui tourne à chaque
       // création, une frame est un conteneur neutre.
-      Api.createElement({ type: 'frame', x: wx - 240 + offset, y: wy - 180 + offset, width: 480, height: 360 })
+      createElementTracked({ type: 'frame', x: wx - 240 + offset, y: wy - 180 + offset, width: 480, height: 360 })
         .catch(err => alert(err.message));
     }
   }
@@ -331,7 +432,7 @@
         if (w >= h && w > MAX_IMAGE_DIM) { h = h * (MAX_IMAGE_DIM / w); w = MAX_IMAGE_DIM; }
         else if (h > MAX_IMAGE_DIM) { w = w * (MAX_IMAGE_DIM / h); h = MAX_IMAGE_DIM; }
         const { wx, wy, offset } = pendingImagePlacement || { wx: 0, wy: 0, offset: 0 };
-        Api.createElement({ type: 'image', x: wx - w / 2 + offset, y: wy - h / 2 + offset, width: w, height: h, imageData: reader.result })
+        createElementTracked({ type: 'image', x: wx - w / 2 + offset, y: wy - h / 2 + offset, width: w, height: h, imageData: reader.result })
           .catch(err => alert(err.message));
       };
       img.src = reader.result;
@@ -359,20 +460,189 @@
     showToolbarFor(entry);
   }
 
+  // Enregistre la création d'un élément dans la pile d'annulation (undo = le supprimer à nouveau) —
+  // pour un simple élément créé isolément (toolbar, image). Une création groupée (dupliquer une
+  // frame avec son contenu, coller) construit sa propre entrée d'annulation couvrant tout le lot.
+  function createElementTracked(payload) {
+    return Api.createElement(payload).then((data) => {
+      recordUndo(() => { removeElementLocal(data.id); return Api.deleteElement(data.id).catch(() => {}); });
+      return data;
+    });
+  }
+
+  // ---------- Copier / coller ----------
+  // Presse-papiers en mémoire (propre à cet onglet, pas le presse-papiers système) : une photo des
+  // éléments sélectionnés au moment du Ctrl/Cmd+C, recréés avec un nouvel id à chaque collage (décalage
+  // cumulatif, comme dupliquer plusieurs fois de suite).
+  let clipboard = [];
+  let pasteCount = 0;
+
+  function snapshotForCreate(d) {
+    return {
+      type: d.type, x: d.x, y: d.y, width: d.width, height: d.height, rotation: d.rotation,
+      color: d.color, text: d.text, fontSize: d.fontSize, bold: d.bold, italic: d.italic,
+      underline: d.underline, strikethrough: d.strikethrough, imageData: d.imageData, grayscale: d.grayscale,
+      lineStyle: d.lineStyle, backgroundColor: d.backgroundColor, strokeWidth: d.strokeWidth, strokeColor: d.strokeColor,
+      radius: d.radius, startCap: d.startCap, endCap: d.endCap, titleColor: d.titleColor,
+      fromElementId: d.fromElementId, fromSide: d.fromSide, toElementId: d.toElementId, toSide: d.toSide,
+      _sourceId: d.id,
+    };
+  }
+
+  // Recrée un ensemble de snapshots (même forme que ci-dessus) : les frames d'abord (pour laisser le
+  // serveur redéduire l'appartenance de leur contenu d'après la position, comme à la création
+  // normale), puis le reste, puis les connecteurs en reliant leurs extrémités aux NOUVEAUX id via
+  // idMap — utilisé à la fois par "coller" et par l'annulation d'une suppression.
+  async function recreateElements(snapshots) {
+    const idMap = new Map();
+    const frames = snapshots.filter(s => s.type === 'frame');
+    const plain = snapshots.filter(s => s.type !== 'frame' && s.type !== 'connector');
+    const connectors = snapshots.filter(s => s.type === 'connector');
+    const created = [];
+    for (const s of [...frames, ...plain]) {
+      const { _sourceId, ...payload } = s;
+      const data = await Api.createElement(payload);
+      if (_sourceId) idMap.set(_sourceId, data.id);
+      created.push(data);
+    }
+    for (const s of connectors) {
+      const { _sourceId, fromElementId, toElementId, ...rest } = s;
+      const data = await Api.createElement({
+        ...rest,
+        fromElementId: idMap.get(fromElementId) || fromElementId,
+        toElementId: idMap.get(toElementId) || toElementId,
+      });
+      if (_sourceId) idMap.set(_sourceId, data.id);
+      created.push(data);
+    }
+    created.forEach(data => ensureRendered(data));
+    return created;
+  }
+
+  function copySelection() {
+    const ids = multiSelectedIds.size ? [...multiSelectedIds] : (selectedElementId ? [selectedElementId] : []);
+    if (!ids.length) return;
+    const idSet = new Set(ids);
+    // Copier une frame copie aussi son contenu avec elle, même non sélectionné explicitement — sinon
+    // coller une frame produit une coquille vide.
+    ids.forEach((id) => {
+      const en = elements.get(id);
+      if (en?.data.type === 'frame') frameChildren(id).forEach(cid => idSet.add(cid));
+    });
+    // Un connecteur n'a de sens que si ses deux extrémités sont copiées avec lui.
+    const items = [...idSet].map(id => elements.get(id)).filter(Boolean).filter((en) => {
+      if (en.data.type !== 'connector') return true;
+      return idSet.has(en.data.fromElementId) && idSet.has(en.data.toElementId);
+    });
+    if (!items.length) return;
+    clipboard = items.map(en => snapshotForCreate(en.data));
+    pasteCount = 0;
+  }
+
+  function pasteClipboard() {
+    if (!clipboard.length) return;
+    pasteCount++;
+    const delta = 24 * pasteCount;
+    const offset = clipboard.map(s => ({ ...s, x: s.x + delta, y: s.y + delta }));
+    recreateElements(offset).then((created) => {
+      clearMultiSelection();
+      if (created.length > 1) setMultiSelection(created.map(d => d.id));
+      else if (created.length === 1) selectElement(created[0].id);
+      recordUndo(() => Promise.all(created.map((data) => {
+        removeElementLocal(data.id);
+        return Api.deleteElement(data.id).catch(() => {});
+      })));
+    }).catch(err => alert(err.message));
+  }
+
+  // ---------- Déplacer la sélection au clavier (flèches) ----------
+
+  function nudgeSelection(dx, dy) {
+    const ids = multiSelectedIds.size ? [...multiSelectedIds] : (selectedElementId ? [selectedElementId] : []);
+    const movable = ids.filter((id) => { const en = elements.get(id); return en && !en.data.locked; });
+    if (!movable.length) return;
+    const before = movable.map((id) => { const en = elements.get(id); return { id, x: en.data.x, y: en.data.y }; });
+    movable.forEach((id) => {
+      const en = elements.get(id);
+      en.data.x += dx; en.data.y += dy;
+      en.el.style.left = `${en.data.x}px`; en.el.style.top = `${en.data.y}px`;
+      updateConnectorsFor(id);
+    });
+    if (selectedElementId && movable.includes(selectedElementId)) repositionToolbar(elements.get(selectedElementId));
+    if (multiSelectedIds.size >= 2) repositionMultiToolbar();
+    Api.updateElementsBatch(movable.map((id) => { const en = elements.get(id); return { id, x: en.data.x, y: en.data.y }; }))
+      .then(({ elements: updated, superseded, isLatest }) => {
+        if (superseded || !isLatest) return;
+        updated.forEach(applyRemoteUpdate);
+        recordUndo(() => restoreMovedPositions(before));
+      })
+      .catch(() => {});
+  }
+
+  function isTypingInField() {
+    const t = document.activeElement;
+    if (!t) return false;
+    return t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable;
+  }
+
   document.addEventListener('keydown', (e) => {
+    const mod = e.metaKey || e.ctrlKey;
+
+    // Échap sort d'un texte en édition SANS désélectionner l'élément — utile en particulier pour
+    // pouvoir enchaîner avec les flèches du clavier juste après un simple clic (qui, sur un post-
+    // it/texte/rectangle/frame, entre directement en édition : cf. wireBodyDrag).
+    if (e.key === 'Escape' && editingElementId) {
+      elements.get(editingElementId)?.textEl?.blur();
+      return;
+    }
+
+    // Annuler : laisser le champ actif gérer son propre undo natif (texte en édition, commentaire…).
+    if (mod && !e.shiftKey && e.key.toLowerCase() === 'z') {
+      if (isTypingInField() || editingElementId) return;
+      e.preventDefault();
+      undoLastAction();
+      return;
+    }
+    if (mod && e.key.toLowerCase() === 'c') {
+      if (isTypingInField() || editingElementId) return;
+      if (!selectedElementId && !multiSelectedIds.size) return;
+      e.preventDefault();
+      copySelection();
+      return;
+    }
+    if (mod && e.key.toLowerCase() === 'v') {
+      if (isTypingInField() || editingElementId) return;
+      if (!clipboard.length) return;
+      e.preventDefault();
+      pasteClipboard();
+      return;
+    }
+    if (e.key.startsWith('Arrow') && !mod) {
+      if (isTypingInField() || editingElementId) return;
+      if (!selectedElementId && !multiSelectedIds.size) return;
+      const step = e.shiftKey ? GRID_SIZE * 5 : GRID_SIZE;
+      const dx = e.key === 'ArrowLeft' ? -step : e.key === 'ArrowRight' ? step : 0;
+      const dy = e.key === 'ArrowUp' ? -step : e.key === 'ArrowDown' ? step : 0;
+      if (!dx && !dy) return;
+      e.preventDefault();
+      nudgeSelection(dx, dy);
+      return;
+    }
+
     if (editingElementId) return;
     if (e.key !== 'Backspace' && e.key !== 'Delete') return;
     if (multiSelectedIds.size >= 2) {
       e.preventDefault();
       const ids = [...multiSelectedIds];
       if (!confirm(`Supprimer ces ${ids.length} éléments ?`)) return;
-      ids.forEach((id) => {
-        const entry = elements.get(id);
-        if (!entry || entry.data.locked) return;
+      const deletable = ids.filter((id) => { const entry = elements.get(id); return entry && !entry.data.locked; });
+      const snaps = deletable.map((id) => snapshotForCreate(elements.get(id).data));
+      deletable.forEach((id) => {
         removeElementLocal(id);
         Api.deleteElement(id).catch(() => {});
       });
       clearMultiSelection();
+      if (snaps.length) recordUndo(() => recreateElements(snaps));
       return;
     }
     if (selectedElementId) {
@@ -432,15 +702,30 @@
         closeConfirmPopover();
         const mode = btn.dataset.mode;
         if (mode === 'all') {
+          const snaps = [entry.data, ...childIds.map(cid => elements.get(cid)?.data).filter(Boolean)].map(snapshotForCreate);
           childIds.forEach(removeElementLocal);
           removeElementLocal(entry.data.id);
-          Api.deleteElement(entry.data.id, { deleteContents: true }).catch(err => alert(err.message));
+          Api.deleteElement(entry.data.id, { deleteContents: true })
+            .then(() => recordUndo(() => recreateElements(snaps)))
+            .catch(err => alert(err.message));
         } else {
           // "frame seule" (ou suppression normale d'un élément qui n'est pas une frame) : le contenu
-          // reste sur le tableau, juste détaché (comme un dégroupement).
+          // reste sur le tableau, juste détaché (comme un dégroupement) — l'annulation recrée la frame
+          // puis rattache les enfants encore présents à cette nouvelle frame.
+          const frameSnap = [snapshotForCreate(entry.data)];
+          const survivingChildIds = [...childIds];
           childIds.forEach((cid) => { const en = elements.get(cid); if (en) en.data.frameId = null; });
           removeElementLocal(entry.data.id);
-          Api.deleteElement(entry.data.id).catch(err => alert(err.message));
+          Api.deleteElement(entry.data.id)
+            .then(() => recordUndo(async () => {
+              const [newFrame] = await recreateElements(frameSnap);
+              for (const cid of survivingChildIds) {
+                const en = elements.get(cid);
+                if (!en) continue;
+                await Api.updateElement(cid, { frameId: newFrame.id }).then(applyRemoteUpdate).catch(() => {});
+              }
+            }))
+            .catch(err => alert(err.message));
         }
       });
     });
@@ -1510,7 +1795,7 @@
       const toEl = dot.closest('.element');
       const toId = toEl.dataset.id;
       const toSide = dot.dataset.side;
-      Api.createElement({
+      createElementTracked({
         type: 'connector', fromElementId: fromEntry.data.id, fromSide, toElementId: toId, toSide,
         color: '#1c1c28', height: 2, lineStyle: 'solid', endCap: 'arrow', startCap: 'none',
       }).catch(err => alert(err.message));
@@ -1553,9 +1838,10 @@
       // retrouver considérée hors de ses limites.
       frameId: d.type === 'frame' ? undefined : (d.frameId || null),
     };
-    if (d.type !== 'frame') { Api.createElement(payload).catch(err => alert(err.message)); return; }
+    if (d.type !== 'frame') { createElementTracked(payload).catch(err => alert(err.message)); return; }
     // Dupliquer une frame duplique aussi son contenu, avec le même décalage, en le rattachant à la
-    // copie plutôt qu'à la frame d'origine.
+    // copie plutôt qu'à la frame d'origine. Une seule entrée d'annulation couvre tout le lot (frame +
+    // enfants) : la retirer les supprime tous ensemble (deleteContents), pas un par un.
     const children = frameChildren(d.id).map(cid => elements.get(cid)).filter(Boolean);
     Api.createElement(payload)
       .then((newFrame) => Promise.all(children.map((child) => {
@@ -1567,7 +1853,13 @@
           lineStyle: cd.lineStyle, backgroundColor: cd.backgroundColor, strokeWidth: cd.strokeWidth, strokeColor: cd.strokeColor,
           radius: cd.radius, startCap: cd.startCap, endCap: cd.endCap, frameId: newFrame.id,
         });
-      })))
+      })).then((newChildren) => {
+        recordUndo(() => {
+          removeElementLocal(newFrame.id);
+          newChildren.forEach(c => removeElementLocal(c.id));
+          return Api.deleteElement(newFrame.id, { deleteContents: true }).catch(() => {});
+        });
+      }))
       .catch(err => alert(err.message));
   }
 
@@ -1976,16 +2268,35 @@
       const dyScreen = ev.clientY - startScreen.y;
       if (!moved && (Math.abs(dxScreen) > 4 || Math.abs(dyScreen) > 4)) moved = true;
       if (!moved) return;
+      // L'accrochage (grille + alignement) se calcule sur l'élément meneur du geste, puis le même
+      // delta est appliqué à tout le lot — ça conserve leurs positions relatives entre eux.
+      const leaderStart = startPositions.get(entry.data.id);
+      let dxWorld = dxScreen / zoom, dyWorld = dyScreen / zoom;
+      if (leaderStart) {
+        const rawX = leaderStart.x + dxWorld, rawY = leaderStart.y + dyWorld;
+        const snapped = applyDragSnap(entry.data.width, entry.data.height, rawX, rawY, new Set(ids), ev.altKey);
+        dxWorld = snapped.x - leaderStart.x;
+        dyWorld = snapped.y - leaderStart.y;
+      }
       ids.forEach((mid) => {
         const en = elements.get(mid);
         const start = startPositions.get(mid);
         if (!en || !start) return;
-        const nx = start.x + dxScreen / zoom;
-        const ny = start.y + dyScreen / zoom;
+        const nx = start.x + dxWorld;
+        const ny = start.y + dyWorld;
         en.data.x = nx; en.data.y = ny;
         en.el.style.left = `${nx}px`; en.el.style.top = `${ny}px`;
         en.dragging = true;
         en.el.classList.add('is-dragging');
+        // ".is-dragging" impose un z-index plat (9999 !important, cf. board.css) : très bien pour un
+        // geste solo, mais à plusieurs éléments simultanés (frame + son contenu, groupe, multi-
+        // sélection) cette même valeur aplatit leur ordre relatif — l'ordre visuel retombe alors sur
+        // l'ordre d'insertion dans le DOM plutôt que sur le z-index réel, et une frame (censée rester
+        // derrière) peut se retrouver au-dessus de son propre contenu pendant le geste (elle disparaît
+        // dessous, puis "réapparaît" une fois le z-index réel restauré au relâchement). On fixe donc
+        // ici un z-index qui conserve l'ordre relatif du groupe (en !important, pour battre cette
+        // règle CSS), tout en le faisant flotter au-dessus de tout le reste.
+        en.el.style.setProperty('z-index', String(DRAG_Z_BOOST + (en.data.zIndex || 0)), 'important');
         updateConnectorsFor(mid);
       });
       repositionMultiToolbar();
@@ -2002,12 +2313,18 @@
     function onUp() {
       window.removeEventListener('pointermove', onMove);
       window.removeEventListener('pointerup', onUp);
+      hideGuides();
       ids.forEach((mid) => {
         const en = elements.get(mid);
-        if (en) en.el.classList.remove('is-dragging');
+        if (en) {
+          en.el.classList.remove('is-dragging');
+          en.el.style.removeProperty('z-index');
+          en.el.style.zIndex = en.data.zIndex;
+        }
         Api.cancelLiveElement(mid);
       });
       if (moved) {
+        const beforeSnapshot = ids.map((mid) => ({ id: mid, ...startPositions.get(mid) })).filter(s => s.x !== undefined);
         // entry.dragging reste vrai jusqu'à la réponse : sinon un écho "element:dragging" encore en
         // vol (le dernier envoyé pendant le glisser) peut arriver après coup et écraser la position
         // définitive par une valeur intermédiaire plus ancienne.
@@ -2029,6 +2346,7 @@
             // intermédiaire à l'écran pendant qu'on l'attend (cf. commentaire dans api.js).
             if (!isLatest) return;
             updated.forEach(applyRemoteUpdate);
+            recordUndo(() => restoreMovedPositions(beforeSnapshot));
           })
           .catch(() => { ids.forEach((mid) => { const en = elements.get(mid); if (en) en.dragging = false; }); });
       } else {
@@ -2114,8 +2432,10 @@
       if (!dragState.moved) return;
       entry.dragging = true;
       el.classList.add('is-dragging');
-      const newX = dragState.startWorld.x + dxScreen / zoom;
-      const newY = dragState.startWorld.y + dyScreen / zoom;
+      const rawX = dragState.startWorld.x + dxScreen / zoom;
+      const rawY = dragState.startWorld.y + dyScreen / zoom;
+      const snapped = applyDragSnap(entry.data.width, entry.data.height, rawX, rawY, new Set([id]), e.altKey);
+      const newX = snapped.x, newY = snapped.y;
       entry.data.x = newX;
       entry.data.y = newY;
       el.style.left = `${newX}px`;
@@ -2133,8 +2453,10 @@
       if (!dragState) return;
       const wasMoved = dragState.moved;
       el.releasePointerCapture(dragState.pointerId);
+      const before = dragState.startWorld;
       dragState = null;
       el.classList.remove('is-dragging');
+      hideGuides();
       Api.cancelLiveElement(id);
       if (wasMoved) {
         // Un élément seul passe aussi par le déplacement en lot (ici réduit à un seul id) plutôt que
@@ -2150,6 +2472,7 @@
             if (!isLatest) return;
             const data = updated[0];
             if (data) applyRemoteUpdate(data);
+            recordUndo(() => restoreMovedPositions([{ id, x: before.x, y: before.y }]));
           })
           .catch(() => { entry.dragging = false; });
       } else {
@@ -2202,6 +2525,9 @@
         if (newH < MIN_H) { newH = MIN_H; newW = newH * ratio; }
       } else {
         newH = Math.max(MIN_H, resizeState.startSize.h + dyScreen / zoom);
+        // Accroche à la grille aussi en taille (pas seulement en position) — pas pour une image
+        // (ratio verrouillé : arrondir indépendamment largeur/hauteur le déformerait).
+        if (!e.altKey) { newW = Math.max(MIN_W, snapToGrid(newW)); newH = Math.max(MIN_H, snapToGrid(newH)); }
       }
       entry.data.width = newW;
       entry.data.height = newH;
@@ -2220,11 +2546,17 @@
     handle.addEventListener('pointerup', () => {
       if (!resizeState) return;
       handle.releasePointerCapture(resizeState.pointerId);
+      const before = resizeState.startSize;
       resizeState = null;
       entry.el.classList.remove('is-resizing');
       Api.cancelLiveElement(entry.data.id);
       Api.updateElement(entry.data.id, { width: entry.data.width, height: entry.data.height, bringToFront: true })
-        .then((data) => { entry.resizing = false; applyRemoteUpdate(data); })
+        .then((data) => {
+          entry.resizing = false;
+          applyRemoteUpdate(data);
+          const id = entry.data.id;
+          recordUndo(() => Api.updateElement(id, { width: before.w, height: before.h }).then(applyRemoteUpdate).catch(() => {}));
+        })
         .catch(() => { entry.resizing = false; });
     });
   }
@@ -2240,7 +2572,7 @@
       if (entry.data.locked) return;
       e.stopPropagation();
       selectElement(entry.data.id);
-      state = { pointerId: e.pointerId };
+      state = { pointerId: e.pointerId, startWidth: entry.data.width, startRotation: entry.data.rotation };
       handle.setPointerCapture(e.pointerId);
     });
 
@@ -2269,11 +2601,17 @@
     handle.addEventListener('pointerup', () => {
       if (!state) return;
       handle.releasePointerCapture(state.pointerId);
+      const before = state;
       state = null;
       entry.el.classList.remove('is-resizing');
       Api.cancelLiveElement(entry.data.id);
       Api.updateElement(entry.data.id, { width: entry.data.width, rotation: entry.data.rotation, bringToFront: true })
-        .then((data) => { entry.resizing = false; applyRemoteUpdate(data); })
+        .then((data) => {
+          entry.resizing = false;
+          applyRemoteUpdate(data);
+          const id = entry.data.id;
+          recordUndo(() => Api.updateElement(id, { width: before.startWidth, rotation: before.startRotation }).then(applyRemoteUpdate).catch(() => {}));
+        })
         .catch(() => { entry.resizing = false; });
     });
   }

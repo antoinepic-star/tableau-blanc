@@ -166,6 +166,12 @@ body.board-page { overflow: hidden; height: 100vh; }
 }
 #canvasViewport.is-drop-target { box-shadow: inset 0 0 0 3px var(--purple); }
 
+/* Repères d'alignement (façon Figma/Miro) affichés pendant un glisser quand un bord/centre
+   s'aligne avec un autre élément — cf. computeSnappedPosition dans board.js. */
+.align-guide { position: absolute; pointer-events: none; z-index: 10000; background: var(--purple); display: none; }
+.align-guide-v { top: 0; bottom: 0; width: 1px; }
+.align-guide-h { left: 0; right: 0; height: 1px; }
+
 .selection-box {
   position: fixed; z-index: 15000; pointer-events: none;
   border: 1.5px solid var(--purple); background: rgba(224,166,43,0.12); border-radius: 2px;
