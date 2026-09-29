@@ -953,10 +953,10 @@
 
   // Alignement du texte : une rangée horizontale, et (withVertical) une seconde rangée verticale, dans
   // UN seul popover — cliquer une option ne le referme pas (comme borderDropdownHtml ci-dessous), pour
-  // pouvoir ajuster les deux sans rouvrir le menu. Partagé par rectangle/post-it (les deux rangées) et
-  // texte libre (rangée horizontale seule : sa boîte épouse toujours exactement son contenu, cf.
-  // applyTextAutoSize, un alignement vertical n'y aurait aucun effet visible).
-  function alignDropdownHtml(data, { withVertical = true } = {}) {
+  // pouvoir ajuster les deux sans rouvrir le menu. Partagé par rectangle et post-it (le texte libre
+  // n'en a pas : sa boîte épouse toujours exactement son contenu, cf. applyTextAutoSize, un alignement
+  // n'y aurait aucun effet visible).
+  function alignDropdownHtml(data) {
     const h = data.textAlign || 'left';
     const v = data.textValign || 'center';
     const hIcon = { left: iconTextAlignLeft, center: iconTextAlignCenter, right: iconTextAlignRight }[h]();
@@ -969,13 +969,11 @@
             <button type="button" class="toolbar-thickness-option${h === 'center' ? ' is-active' : ''}" data-align-h="center" title="Centré">${iconTextAlignCenter()}</button>
             <button type="button" class="toolbar-thickness-option${h === 'right' ? ' is-active' : ''}" data-align-h="right" title="Aligné à droite">${iconTextAlignRight()}</button>
           </div>
-          ${withVertical ? `
-            <div class="toolbar-thickness-row">
-              <button type="button" class="toolbar-thickness-option${v === 'top' ? ' is-active' : ''}" data-align-v="top" title="Aligné en haut">${iconValignTop()}</button>
-              <button type="button" class="toolbar-thickness-option${v === 'center' ? ' is-active' : ''}" data-align-v="center" title="Centré verticalement">${iconValignMiddle()}</button>
-              <button type="button" class="toolbar-thickness-option${v === 'bottom' ? ' is-active' : ''}" data-align-v="bottom" title="Aligné en bas">${iconValignBottom()}</button>
-            </div>
-          ` : ''}
+          <div class="toolbar-thickness-row">
+            <button type="button" class="toolbar-thickness-option${v === 'top' ? ' is-active' : ''}" data-align-v="top" title="Aligné en haut">${iconValignTop()}</button>
+            <button type="button" class="toolbar-thickness-option${v === 'center' ? ' is-active' : ''}" data-align-v="center" title="Centré verticalement">${iconValignMiddle()}</button>
+            <button type="button" class="toolbar-thickness-option${v === 'bottom' ? ' is-active' : ''}" data-align-v="bottom" title="Aligné en bas">${iconValignBottom()}</button>
+          </div>
         </div>
       </div>
     `;
@@ -1103,9 +1101,10 @@
     if (data.type === 'rectangle') return buildRectangleToolbarHtml(data);
     let controls = '';
     if (data.type === 'note') {
-      // Couleur du texte volontairement absente pour le moment : le post-it reste noir fixe.
-      controls = `<select class="element-fontsize-select" data-role="note-fontsize" title="Taille du texte">${FONT_SIZES.map(s => `<option value="${s}"${Number(data.fontSize) === s ? ' selected' : ''}>${s}</option>`).join('')}</select>`
-        + formatDropdownHtml(data)
+      // Couleur du texte volontairement absente pour le moment : le post-it reste noir fixe. Pas de
+      // taille de police non plus : un post-it garde une typo uniforme, plutôt que de risquer des
+      // tailles disparates d'un post-it à l'autre sur le même tableau.
+      controls = formatDropdownHtml(data)
         + alignDropdownHtml(data)
         + `<span class="element-toolbar-sep"></span>`
         + colorDropdownHtml('color', data.color, false, 'Couleur de fond');
@@ -1122,9 +1121,10 @@
         `;
       }
     } else if (data.type === 'text') {
+      // Pas d'alignement ici : sa boîte épouse toujours exactement son contenu (cf.
+      // applyTextAutoSize), ça n'aurait pas d'effet visible.
       controls = `<select class="element-fontsize-select" data-role="fontsize" title="Taille">${FONT_SIZES.map(s => `<option value="${s}"${Number(data.fontSize) === s ? ' selected' : ''}>${s}</option>`).join('')}</select>`
         + formatDropdownHtml(data)
-        + alignDropdownHtml(data, { withVertical: false })
         + colorDropdownHtml('color', data.color, false, 'Couleur du texte')
         + linkDropdownHtml(data)
         + `<span class="element-toolbar-sep"></span>`
@@ -2371,7 +2371,7 @@
 
   // Réutilisée par rectangle/post-it (deux rangées) et texte libre (rangée horizontale seule, cf.
   // alignDropdownHtml) — reste ouvert après un choix, on ajuste souvent plusieurs valeurs à la suite.
-  function wireAlignDropdown(entry, applyStyle, withVertical = true) {
+  function wireAlignDropdown(entry, applyStyle) {
     const id = entry.data.id;
     const alignParts = wireDropdownToggle('align');
     if (!alignParts) return;
@@ -2388,7 +2388,6 @@
         Api.updateElement(id, { textAlign: entry.data.textAlign }).catch(() => {});
       });
     });
-    if (!withVertical) return;
     popover.querySelectorAll('[data-align-v]').forEach((btn) => {
       btn.addEventListener('pointerdown', e => e.stopPropagation());
       btn.addEventListener('click', () => {
@@ -2596,18 +2595,7 @@
 
     if (type === 'note') {
       wireFormatDropdown(entry); // conscient du type post-it (cf. plus haut) : applyNoteTextStyle
-      wireAlignDropdown(entry, applyNoteTextStyle, true);
-      const noteFontSizeSelect = toolbarEl.querySelector('[data-role="note-fontsize"]');
-      if (noteFontSizeSelect) {
-        noteFontSizeSelect.addEventListener('pointerdown', e => e.stopPropagation());
-        noteFontSizeSelect.addEventListener('change', () => {
-          const size = Number(noteFontSizeSelect.value);
-          entry.data.fontSize = size;
-          applyNoteTextStyle(entry);
-          autoGrowNoteOnInput(entry);
-          Api.updateElement(id, { fontSize: size, width: entry.data.width, height: entry.data.height }).catch(() => {});
-        });
-      }
+      wireAlignDropdown(entry, applyNoteTextStyle);
     }
 
     if (type === 'rectangle') {
@@ -2617,7 +2605,7 @@
         Api.updateElement(id, { textColor: color }).catch(() => {});
       });
       wireFormatDropdown(entry); // conscient du type rectangle (cf. plus haut) : applyRectangleTextStyle, pas applyTextStyle
-      wireAlignDropdown(entry, applyRectangleTextStyle, true);
+      wireAlignDropdown(entry, applyRectangleTextStyle);
       wireLinkDropdown(entry, applyRectangleTextStyle);
       wireBorderDropdown(entry, { withRadius: true });
 
@@ -2664,7 +2652,6 @@
 
     if (type === 'text') {
       wireFormatDropdown(entry);
-      wireAlignDropdown(entry, applyTextStyle, false);
       wireLinkDropdown(entry, applyTextStyle);
       wireColorDropdown(entry, 'bg', (color) => {
         entry.data.backgroundColor = color;
@@ -2787,9 +2774,8 @@
       selectElement(id);
       editingElementId = id;
       el.classList.add('is-editing');
-      // Une frame reste toujours tout au fond (cf. server.js) : pas la peine de lui demander un
-      // passage au premier plan qui n'aurait de toute façon aucun effet.
-      if (entry.data.type !== 'frame') Api.updateElement(id, { bringToFront: true }).then(applyRemoteUpdate).catch(() => {});
+      // Éditer un élément ne doit pas changer son état (premier plan, etc.) tout seul — seule une
+      // action explicite (le menu "⋮") le fait, cf. wireMoreMenu.
       requestAnimationFrame(() => textEl.focus());
     };
   }
@@ -2878,7 +2864,8 @@
       editingElementId = id;
       const target = fields.find(f => f.key === key) || fields.find(f => f.key === defaultKey);
       fields.forEach(f => f.el.classList.toggle('is-field-editing', f === target));
-      Api.updateElement(id, { bringToFront: true }).then(applyRemoteUpdate).catch(() => {});
+      // Éditer un champ ne doit pas changer l'état de l'élément (premier plan, etc.) tout seul — seule
+      // une action explicite (le menu "⋮") le fait, cf. wireMoreMenu.
       requestAnimationFrame(() => {
         target.el.focus();
         // Seulement s'il est vide (rien à cliquer dessus, donc rien que le natif puisse positionner) :
