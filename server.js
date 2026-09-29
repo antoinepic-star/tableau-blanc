@@ -87,6 +87,11 @@ const ELEMENT_DEFAULTS = {
   rectangle: { width: 220, height: 140, color: ELEMENT_COLORS[0], fontSize: 16, textAlign: 'left', textValign: 'center' },
   connector: { width: 0, height: 0, color: '#1c1c28' },
   frame: { width: 480, height: 360, color: '#EDEAE3', strokeWidth: 1, strokeColor: '#c9c4b8', fontSize: 14, titleColor: '#4a463c' },
+  // Bloc "consigne" (numéro + titre + description) et bloc "tips" (tag + titre + texte riche) : voir
+  // board.js pour le détail de leurs champs multiples (title/number/tag, en plus de "text" et "color").
+  instruction: { width: 280, height: 170, color: '#FFFFFF', number: '1', title: '' },
+  // Même gris que le fond du tableau (cf. #canvasViewport dans board.css) par défaut.
+  tip: { width: 280, height: 170, color: '#eef0f5', tag: 'Tips', title: '' },
 };
 const ELEMENT_TYPES = Object.keys(ELEMENT_DEFAULTS);
 
@@ -203,6 +208,13 @@ async function initDb() {
     "ALTER TABLE whiteboard_elements ADD COLUMN text_align TEXT NOT NULL DEFAULT 'left'",
     "ALTER TABLE whiteboard_elements ADD COLUMN text_valign TEXT NOT NULL DEFAULT 'center'",
     'ALTER TABLE whiteboard_elements ADD COLUMN link TEXT',
+    // Bloc "consigne"/"tips" (cf. ELEMENT_DEFAULTS.instruction/tip) : title est partagé par les deux ;
+    // number (le chiffre dans le rond) n'est utilisé que par "consigne", tag ("Tips" par défaut) que
+    // par "tips". Leur corps de texte réutilise la colonne "text" générique existante (texte brut pour
+    // "consigne", HTML assaini pour "tips", cf. sanitizeRichText).
+    'ALTER TABLE whiteboard_elements ADD COLUMN title TEXT',
+    'ALTER TABLE whiteboard_elements ADD COLUMN number TEXT',
+    'ALTER TABLE whiteboard_elements ADD COLUMN tag TEXT',
   ]) {
     try { await turso.execute(sql); } catch (_) {}
   }
@@ -564,7 +576,31 @@ app.post('/api/whiteboards/:whiteboardId/cursor', whiteboardAuth, (req, res) => 
 // TABLEAU : ÉLÉMENTS (post-it, trait, texte, image)
 // =====================
 
-const ELEMENT_LABELS = { note: 'post-it', line: 'trait', text: 'bloc de texte', image: 'image', rectangle: 'rectangle', connector: 'connecteur', frame: 'frame' };
+const ELEMENT_LABELS = { note: 'post-it', line: 'trait', text: 'bloc de texte', image: 'image', rectangle: 'rectangle', connector: 'connecteur', frame: 'frame', instruction: 'bloc consigne', tip: 'bloc tips' };
+
+// Le corps du bloc "tips" est un texte riche (HTML) saisi via une mini barre flottante sur sélection
+// (cf. board.js) — contrairement à tous les autres types, dont le "text" brut n'est jamais interprété
+// comme du HTML côté client (affiché via .value, pas .innerHTML). Liste blanche volontairement
+// restrictive (pas d'outil ouvert au public, mais on évite quand même de stocker/diffuser des balises
+// arbitraires) : conserve seulement gras/italique/lien/retour à la ligne, retire tout le reste
+// (attributs compris, sauf href sur <a> s'il pointe vers un schéma http(s) explicite).
+function sanitizeRichText(html) {
+  if (!html) return '';
+  const allowed = new Set(['b', 'strong', 'i', 'em', 'a', 'br']);
+  return html.replace(/<\/?([a-zA-Z0-9]+)([^>]*)>/g, (match, tag, attrs) => {
+    const lower = tag.toLowerCase();
+    if (!allowed.has(lower)) return '';
+    const closing = match.startsWith('</');
+    if (lower === 'br') return closing ? '' : '<br>';
+    if (lower === 'a' && !closing) {
+      const hrefMatch = attrs.match(/href\s*=\s*"([^"]*)"/i) || attrs.match(/href\s*=\s*'([^']*)'/i);
+      const href = hrefMatch ? hrefMatch[1] : '';
+      if (/^https?:\/\//i.test(href)) return `<a href="${href.replace(/"/g, '&quot;')}" target="_blank" rel="noopener">`;
+      return '<a>';
+    }
+    return closing ? `</${lower}>` : `<${lower}>`;
+  });
+}
 
 function parseComment(row) {
   return {
@@ -619,6 +655,9 @@ function parseElement(row, { withImageData = true } = {}) {
     textAlign: row.text_align,
     textValign: row.text_valign,
     link: row.link,
+    title: row.title,
+    number: row.number,
+    tag: row.tag,
     zIndex: row.z_index,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
@@ -740,6 +779,7 @@ app.post('/api/whiteboards/:whiteboardId/elements', whiteboardAuth, ah(async (re
     x, y, width, height, rotation, color, text, fontSize, bold, italic, underline, strikethrough, imageData, grayscale,
     startCap, endCap, lineStyle, backgroundColor, strokeWidth, strokeColor, radius, groupId, locked,
     fromElementId, fromSide, toElementId, toSide, titleColor, textColor, textAlign, textValign, link,
+    title, number, tag,
   } = req.body || {};
   let { frameId } = req.body || {};
   // Une frame va toujours tout au fond (jamais au premier plan, cf. PATCH/batch-move) ; les autres
@@ -761,17 +801,18 @@ app.post('/api/whiteboards/:whiteboardId/elements', whiteboardAuth, ah(async (re
   const columns = ['id', 'whiteboard_id', 'type', 'x', 'y', 'width', 'height', 'rotation', 'color', 'text', 'font_size',
     'bold', 'italic', 'underline', 'strikethrough', 'image_data', 'grayscale', 'start_cap', 'end_cap', 'line_style', 'background_color',
     'stroke_width', 'stroke_color', 'radius', 'group_id', 'locked', 'from_element_id', 'from_side', 'to_element_id', 'to_side',
-    'frame_id', 'title_color', 'text_color', 'text_align', 'text_valign', 'link', 'z_index'];
+    'frame_id', 'title_color', 'text_color', 'text_align', 'text_valign', 'link', 'title', 'number', 'tag', 'z_index'];
   const values = [
     id, req.params.whiteboardId, type, x ?? 0, y ?? 0,
     width ?? defaults.width, height ?? defaults.height, rotation ?? 0,
-    color ?? defaults.color ?? '#1c1c28', text || '', fontSize ?? defaults.fontSize ?? null,
+    color ?? defaults.color ?? '#1c1c28', type === 'tip' ? sanitizeRichText(text) : (text || ''), fontSize ?? defaults.fontSize ?? null,
     bold ? 1 : 0, italic ? 1 : 0, underline ? 1 : 0, strikethrough ? 1 : 0, imageData || null, grayscale ? 1 : 0,
     startCap || 'none', endCap || 'none', lineStyle || 'solid', backgroundColor || null,
     strokeWidth ?? defaults.strokeWidth ?? 0, strokeColor || defaults.strokeColor || null, radius ?? 0, groupId || null, locked ? 1 : 0,
     fromElementId || null, fromSide || null, toElementId || null, toSide || null,
     frameId || null, titleColor || defaults.titleColor || null,
-    textColor || null, textAlign || defaults.textAlign || 'left', textValign || defaults.textValign || 'center', link || null, zIndex,
+    textColor || null, textAlign || defaults.textAlign || 'left', textValign || defaults.textValign || 'center', link || null,
+    title !== undefined ? title : (defaults.title ?? null), number || defaults.number || null, tag || defaults.tag || null, zIndex,
   ];
   await tursoRun(
     `INSERT INTO whiteboard_elements (${columns.join(', ')}) VALUES (${columns.map(() => '?').join(', ')})`,
@@ -816,7 +857,7 @@ app.post('/api/whiteboards/:whiteboardId/elements/batch', whiteboardAuth, ah(asy
   const columns = ['id', 'whiteboard_id', 'type', 'x', 'y', 'width', 'height', 'rotation', 'color', 'text', 'font_size',
     'bold', 'italic', 'underline', 'strikethrough', 'image_data', 'grayscale', 'start_cap', 'end_cap', 'line_style', 'background_color',
     'stroke_width', 'stroke_color', 'radius', 'group_id', 'locked', 'from_element_id', 'from_side', 'to_element_id', 'to_side',
-    'frame_id', 'title_color', 'text_color', 'text_align', 'text_valign', 'link', 'z_index'];
+    'frame_id', 'title_color', 'text_color', 'text_align', 'text_valign', 'link', 'title', 'number', 'tag', 'z_index'];
   const insertSql = `INSERT INTO whiteboard_elements (${columns.join(', ')}) VALUES (${columns.map(() => '?').join(', ')})`;
 
   const idByClientId = new Map();
@@ -829,7 +870,7 @@ app.post('/api/whiteboards/:whiteboardId/elements/batch', whiteboardAuth, ah(asy
     const {
       x, y, width, height, rotation, color, text, fontSize, bold, italic, underline, strikethrough, imageData, grayscale,
       startCap, endCap, lineStyle, backgroundColor, strokeWidth, strokeColor, radius, groupId, locked,
-      fromSide, toSide, titleColor, textColor, textAlign, textValign, link, clientId,
+      fromSide, toSide, titleColor, textColor, textAlign, textValign, link, title, number, tag, clientId,
     } = item || {};
     // fromElementId/toElementId (connecteur) : peut référencer soit un élément déjà existant, soit le
     // clientId d'un autre élément du MÊME lot (toujours placé après lui, cf. recreateElements côté
@@ -862,13 +903,14 @@ app.post('/api/whiteboards/:whiteboardId/elements/batch', whiteboardAuth, ah(asy
     const values = [
       id, req.params.whiteboardId, type, x ?? 0, y ?? 0,
       width ?? defaults.width, height ?? defaults.height, rotation ?? 0,
-      color ?? defaults.color ?? '#1c1c28', text || '', fontSize ?? defaults.fontSize ?? null,
+      color ?? defaults.color ?? '#1c1c28', type === 'tip' ? sanitizeRichText(text) : (text || ''), fontSize ?? defaults.fontSize ?? null,
       bold ? 1 : 0, italic ? 1 : 0, underline ? 1 : 0, strikethrough ? 1 : 0, imageData || null, grayscale ? 1 : 0,
       startCap || 'none', endCap || 'none', lineStyle || 'solid', backgroundColor || null,
       strokeWidth ?? defaults.strokeWidth ?? 0, strokeColor || defaults.strokeColor || null, radius ?? 0, groupId || null, locked ? 1 : 0,
       fromElementId || null, fromSide || null, toElementId || null, toSide || null,
       frameId || null, titleColor || defaults.titleColor || null,
-      textColor || null, textAlign || defaults.textAlign || 'left', textValign || defaults.textValign || 'center', link || null, zIndex,
+      textColor || null, textAlign || defaults.textAlign || 'left', textValign || defaults.textValign || 'center', link || null,
+      title !== undefined ? title : (defaults.title ?? null), number || defaults.number || null, tag || defaults.tag || null, zIndex,
     ];
     stmts.push({ sql: insertSql, args: values });
   }
@@ -901,7 +943,7 @@ app.patch('/api/whiteboards/:whiteboardId/elements/:id', whiteboardAuth, ah(asyn
     x, y, width, height, rotation, color, text, fontSize, bold, italic, underline, strikethrough, imageData, grayscale,
     startCap, endCap, lineStyle, backgroundColor, bringToFront, sendToBack,
     strokeWidth, strokeColor, radius, groupId, locked, fromElementId, fromSide, toElementId, toSide,
-    frameId, titleColor, textColor, textAlign, textValign, link,
+    frameId, titleColor, textColor, textAlign, textValign, link, title, number, tag,
   } = req.body || {};
 
   // Une frame reste toujours tout au fond : "premier plan" n'a pas de sens pour elle et est ignoré
@@ -932,7 +974,7 @@ app.patch('/api/whiteboards/:whiteboardId/elements/:id', whiteboardAuth, ah(asyn
     height: height ?? existing.height,
     rotation: rotation ?? existing.rotation,
     color: color ?? existing.color,
-    text: text ?? existing.text,
+    text: text !== undefined ? (existing.type === 'tip' ? sanitizeRichText(text) : text) : existing.text,
     font_size: fontSize ?? existing.font_size,
     bold: bold != null ? (bold ? 1 : 0) : existing.bold,
     italic: italic != null ? (italic ? 1 : 0) : existing.italic,
@@ -959,6 +1001,9 @@ app.patch('/api/whiteboards/:whiteboardId/elements/:id', whiteboardAuth, ah(asyn
     text_align: textAlign !== undefined ? textAlign : existing.text_align,
     text_valign: textValign !== undefined ? textValign : existing.text_valign,
     link: link !== undefined ? link : existing.link,
+    title: title !== undefined ? title : existing.title,
+    number: number !== undefined ? number : existing.number,
+    tag: tag !== undefined ? tag : existing.tag,
     z_index: zIndex,
   };
   const setColumns = Object.keys(next);

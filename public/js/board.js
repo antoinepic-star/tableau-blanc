@@ -18,7 +18,7 @@
   const TEXT_PAD_Y_RATIO = 0.35;
   const TEXT_LINE_HEIGHT_RATIO = 1.35;
   const TEXT_MIN_CONTENT_WIDTH = 30;
-  const BOX_TYPES = ['note', 'text', 'image', 'rectangle', 'frame']; // types "boîte" (points d'ancrage pour les connecteurs)
+  const BOX_TYPES = ['note', 'text', 'image', 'rectangle', 'frame', 'instruction', 'tip']; // types "boîte" (points d'ancrage pour les connecteurs)
   const NOTE_DEFAULT_SIZE = 130; // post-it par défaut : carré, plus petit qu'avant (grandit ensuite avec le texte)
   const DRAG_Z_BOOST = 100000; // cf. startGroupDrag : conserve l'ordre relatif du groupe pendant le geste
   const GRID_SIZE = 10; // pas de la grille d'accrochage (glisser + flèches du clavier)
@@ -39,6 +39,7 @@
   const addDrawerCloseBtn = document.getElementById('addDrawerCloseBtn');
   const imageFileInput = document.getElementById('imageFileInput');
   const toolbarEl = document.getElementById('elementToolbar');
+  const richTextToolbarEl = document.getElementById('richTextToolbar');
   const commentDrawer = document.getElementById('commentDrawer');
   const commentDrawerOverlay = document.getElementById('commentDrawerOverlay');
   const commentDrawerCloseBtn = document.getElementById('commentDrawerCloseBtn');
@@ -499,6 +500,13 @@
       const { x, y } = snapPoint(wx - 240 + offset, wy - 180 + offset);
       createElementTracked({ type: 'frame', x, y, width: 480, height: 360 })
         .catch(err => alert(err.message));
+    } else if (type === 'instruction' || type === 'tip') {
+      // Couleur laissée à la valeur par défaut du serveur (blanc pour consigne, gris du tableau pour
+      // tips, cf. ELEMENT_DEFAULTS) — prête à taper le titre tout de suite, comme le texte libre.
+      const { x, y } = snapPoint(wx - 140 + offset, wy - 85 + offset);
+      createElementTracked({ type, x, y, width: 280, height: 170 })
+        .then((data) => { const entry = ensureRendered(data); entry.enterField?.('title'); })
+        .catch(err => alert(err.message));
     }
   }
 
@@ -568,6 +576,7 @@
       lineStyle: d.lineStyle, backgroundColor: d.backgroundColor, strokeWidth: d.strokeWidth, strokeColor: d.strokeColor,
       radius: d.radius, startCap: d.startCap, endCap: d.endCap, titleColor: d.titleColor,
       textColor: d.textColor, textAlign: d.textAlign, textValign: d.textValign, link: d.link,
+      title: d.title, number: d.number, tag: d.tag,
       fromElementId: d.fromElementId, fromSide: d.fromSide, toElementId: d.toElementId, toSide: d.toSide,
       frameId: d.frameId, _sourceId: d.id,
     };
@@ -702,7 +711,9 @@
     // pouvoir enchaîner avec les flèches du clavier juste après un simple clic (qui, sur un post-
     // it/texte/rectangle/frame, entre directement en édition : cf. wireBodyDrag).
     if (e.key === 'Escape' && editingElementId) {
-      elements.get(editingElementId)?.textEl?.blur();
+      // document.activeElement plutôt que entry.textEl : un bloc à plusieurs champs (consigne, tips,
+      // cf. wireMultiFieldEditing) n'en a pas UN seul, celui qui a le focus est le seul repère fiable.
+      if (isTypingInField()) document.activeElement.blur();
       return;
     }
 
@@ -1135,6 +1146,11 @@
         + `<span class="element-toolbar-sep"></span>`
         + `<select class="element-fontsize-select" data-role="title-fontsize" title="Taille du titre">${FONT_SIZES.map(s => `<option value="${s}"${Number(data.fontSize) === s ? ' selected' : ''}>${s}</option>`).join('')}</select>`
         + colorDropdownHtml('title', data.titleColor, false, 'Couleur du titre');
+    } else if (data.type === 'instruction' || data.type === 'tip') {
+      // Pas de format/alignement ici : le titre/numéro/tag ont une mise en forme fixe, et le texte
+      // riche du bloc "tips" se met en forme via la mini barre qui apparaît sur sa sélection (cf.
+      // richTextToolbarHtml), pas depuis cette barre d'action principale.
+      controls = colorDropdownHtml('color', data.color, false, 'Couleur de fond');
     }
     const sep = controls ? '<span class="element-toolbar-sep"></span>' : '';
     const voted = (data.votes || []).includes(myName);
@@ -1669,6 +1685,32 @@
       `;
       textEl = el.querySelector('.frame-title');
       textEl.value = data.text || '';
+    } else if (data.type === 'instruction') {
+      // Trois champs indépendants (numéro/titre/description), contrairement à tous les autres types
+      // qui n'en ont qu'un seul (cf. wireMultiFieldEditing, qui généralise wireTextEditing pour ce cas).
+      el.innerHTML = `
+        <div class="instruction-number-wrap"><textarea class="instruction-number block-field" maxlength="4" rows="1"></textarea></div>
+        <textarea class="instruction-title block-field" placeholder="Titre…" maxlength="200"></textarea>
+        <textarea class="instruction-desc block-field" placeholder="Description…" maxlength="4000"></textarea>
+        <div class="element-resize-handle"></div>
+        ${anchorsHtml}
+      `;
+      el.querySelector('.instruction-number').value = data.number || '';
+      el.querySelector('.instruction-title').value = data.title || '';
+      el.querySelector('.instruction-desc').value = data.text || '';
+    } else if (data.type === 'tip') {
+      // Le corps est un texte riche (contenteditable, pas un textarea) : seul champ à supporter du
+      // gras/italique/lien sur une PORTION de texte (cf. le mini-toolbar de sélection plus bas).
+      el.innerHTML = `
+        <textarea class="tip-tag block-field" placeholder="Tips" maxlength="40" rows="1"></textarea>
+        <textarea class="tip-title block-field" placeholder="Titre…" maxlength="200"></textarea>
+        <div class="tip-rich block-field" contenteditable="true" data-placeholder="Texte…"></div>
+        <div class="element-resize-handle"></div>
+        ${anchorsHtml}
+      `;
+      el.querySelector('.tip-tag').value = data.tag || '';
+      el.querySelector('.tip-title').value = data.title || '';
+      el.querySelector('.tip-rich').innerHTML = data.text || '';
     }
 
     layerEl.appendChild(el);
@@ -1682,6 +1724,18 @@
     if (data.type === 'rectangle') { applyRectangleStyle(entry); applyRectangleTextStyle(entry); autoGrowRectangleTextarea(entry); }
     if (data.type === 'frame') { applyRectangleStyle(entry); applyFrameTitleStyle(entry); }
     if (data.type === 'note') { applyNoteTextStyle(entry); syncNoteTextareaHeight(entry); }
+    if (data.type === 'instruction') {
+      entry.numberEl = el.querySelector('.instruction-number');
+      entry.titleEl = el.querySelector('.instruction-title');
+      entry.descEl = el.querySelector('.instruction-desc');
+      autoGrowInstructionBlock(entry);
+    }
+    if (data.type === 'tip') {
+      entry.tagEl = el.querySelector('.tip-tag');
+      entry.titleEl = el.querySelector('.tip-title');
+      entry.richEl = el.querySelector('.tip-rich');
+      autoGrowTipBlock(entry);
+    }
     applyLockedState(entry);
     updateElementBadges(entry);
 
@@ -1847,6 +1901,48 @@
     }
   }
 
+  // Un textarea non plus auto-expansif que la description/le titre d'un bloc consigne/tips : reset à
+  // 0 pour mesurer le scrollHeight réel du contenu, comme autoGrowRectangleTextarea.
+  function autoGrowTextareaField(t) {
+    if (!t) return;
+    t.style.height = '0px';
+    t.style.height = `${t.scrollHeight}px`;
+  }
+
+  // Blocs multi-champs (consigne, tips) : la largeur reste réglée à la main (poignée de
+  // redimensionnement, cf. wireCornerResize), seule la hauteur grandit pour suivre le contenu. Mesurée
+  // en repassant temporairement le bloc en hauteur "auto" (sa mise en page flex-column, posée en CSS,
+  // fait le calcul tout seul) plutôt qu'en ajoutant à la main la hauteur de chaque champ — jamais en
+  // dessous de la hauteur actuelle (un redimensionnement manuel plus petit reste possible tant que le
+  // contenu y tient).
+  function autoGrowFlexBlock(entry) {
+    const el = entry.el;
+    const prevHeight = el.style.height;
+    el.style.height = 'auto';
+    const natural = el.scrollHeight;
+    if (natural > entry.data.height) {
+      entry.data.height = natural;
+      el.style.height = `${natural}px`;
+    } else {
+      el.style.height = prevHeight;
+    }
+  }
+
+  function autoGrowInstructionBlock(entry) {
+    if (entry.data.type !== 'instruction' || !entry.titleEl || !entry.descEl) return;
+    autoGrowTextareaField(entry.titleEl);
+    autoGrowTextareaField(entry.descEl);
+    autoGrowFlexBlock(entry);
+  }
+
+  // Le texte riche (contenteditable) grandit tout seul avec son contenu comme n'importe quel bloc —
+  // contrairement à un textarea, pas besoin de lui recalculer sa hauteur à la main.
+  function autoGrowTipBlock(entry) {
+    if (entry.data.type !== 'tip' || !entry.titleEl) return;
+    autoGrowTextareaField(entry.titleEl);
+    autoGrowFlexBlock(entry);
+  }
+
   // Trait/connecteur continu = simple aplat de couleur ; pointillés = dégradé répété le long de la
   // longueur (l'élément est une barre pivotée, donc "vers la droite" correspond toujours à sa longueur).
   function applyLineStyle(entry) {
@@ -1960,6 +2056,18 @@
       if (document.activeElement !== entry.textEl) entry.textEl.value = data.text || '';
       applyRectangleStyle(entry);
       applyFrameTitleStyle(entry);
+    } else if (data.type === 'instruction') {
+      entry.el.style.background = data.color;
+      if (document.activeElement !== entry.numberEl) entry.numberEl.value = data.number || '';
+      if (document.activeElement !== entry.titleEl) entry.titleEl.value = data.title || '';
+      if (document.activeElement !== entry.descEl) entry.descEl.value = data.text || '';
+      autoGrowInstructionBlock(entry);
+    } else if (data.type === 'tip') {
+      entry.el.style.background = data.color;
+      if (document.activeElement !== entry.tagEl) entry.tagEl.value = data.tag || '';
+      if (document.activeElement !== entry.titleEl) entry.titleEl.value = data.title || '';
+      if (document.activeElement !== entry.richEl) entry.richEl.innerHTML = data.text || '';
+      autoGrowTipBlock(entry);
     }
 
     updateConnectorsFor(data.id);
@@ -2123,6 +2231,7 @@
       radius: d.radius, startCap: d.startCap, endCap: d.endCap,
       fromElementId: d.fromElementId, fromSide: d.fromSide, toElementId: d.toElementId, toSide: d.toSide,
       titleColor: d.titleColor, textColor: d.textColor, textAlign: d.textAlign, textValign: d.textValign, link: d.link,
+      title: d.title, number: d.number, tag: d.tag,
       // frameId explicite (plutôt que de laisser le serveur redéduire l'appartenance de la copie) :
       // avec un décalage aussi faible, une copie posée tout au bord de la frame pourrait sinon se
       // retrouver considérée hors de ses limites.
@@ -2150,6 +2259,7 @@
         lineStyle: cd.lineStyle, backgroundColor: cd.backgroundColor, strokeWidth: cd.strokeWidth, strokeColor: cd.strokeColor,
         radius: cd.radius, startCap: cd.startCap, endCap: cd.endCap,
         textColor: cd.textColor, textAlign: cd.textAlign, textValign: cd.textValign, link: cd.link,
+        title: cd.title, number: cd.number, tag: cd.tag,
         frameId: 'newFrame',
       };
     });
@@ -2434,7 +2544,7 @@
     const id = entry.data.id;
     const type = entry.data.type;
 
-    if (type === 'note' || type === 'text' || type === 'rectangle' || type === 'frame' || type === 'line' || type === 'connector') {
+    if (type === 'note' || type === 'text' || type === 'rectangle' || type === 'frame' || type === 'line' || type === 'connector' || type === 'instruction' || type === 'tip') {
       wireColorDropdown(entry, 'color', (color) => {
         entry.data.color = color;
         applyElementColor(entry);
@@ -2670,6 +2780,226 @@
     };
   }
 
+  function placeCaretAtEnd(el) {
+    const range = document.createRange();
+    range.selectNodeContents(el);
+    range.collapse(false);
+    const sel = window.getSelection();
+    sel.removeAllRanges();
+    sel.addRange(range);
+  }
+
+  // Généralise wireTextEditing aux blocs à PLUSIEURS champs indépendants (consigne : numéro/titre/
+  // description ; tips : tag/titre/texte riche) — chacun a son propre état "en édition" (posé sur LE
+  // CHAMP lui-même, pas sur l'élément entier comme pour un champ unique) : au repos, pointer-events:none
+  // le laisse traversé par le clic (glisser/sélection normale de l'élément, cf. .block-field dans
+  // board.css) ; l'activer (clic dessus pendant qu'il l'est déjà, ou double-clic dessus au repos via la
+  // recherche géométrique ci-dessous) lui rend l'interactivité et y place le focus.
+  // `fields`: [{ key, el, column, dataKey, rich, autoGrow }] — column = nom de champ API (text/title/
+  // number/tag), dataKey = clé correspondante dans entry.data, rich = true pour le contenteditable
+  // (innerHTML plutôt que .value), autoGrow = fonction(entry) rappelée après une frappe dans ce champ.
+  function wireMultiFieldEditing(entry, fields, defaultKey) {
+    // entry.data (jamais une variable "data" figée par déstructuration) : un écho serveur de CE MÊME
+    // client (cf. applyRemoteUpdate) réassigne entry.data à un tout nouvel objet en cours d'édition —
+    // une référence capturée une fois au câblage se retrouverait orpheline, déconnectée de l'objet que
+    // l'auto-grow (autoGrowInstructionBlock/autoGrowTipBlock) continue, lui, de muter via "entry".
+    const id = entry.data.id;
+
+    function fieldValue(f) { return f.rich ? f.el.innerHTML : f.el.value; }
+
+    function saveField(f, immediate) {
+      const value = fieldValue(f);
+      entry.data[f.dataKey] = value;
+      const patch = { [f.column]: value };
+      // Un champ dont la frappe fait grandir tout le bloc (description/titre) doit persister la
+      // nouvelle taille avec lui, comme pour le post-it/texte libre (cf. wireTextEditing).
+      if (f.autoGrow) { patch.width = entry.data.width; patch.height = entry.data.height; }
+      if (immediate) { clearTimeout(f._saveTimer); Api.updateElement(id, patch).catch(() => {}); return; }
+      clearTimeout(f._saveTimer);
+      f._saveTimer = setTimeout(() => Api.updateElement(id, patch).catch(() => {}), 600);
+    }
+
+    function stopField(f) {
+      f.el.classList.remove('is-field-editing');
+      if (editingElementId === id) editingElementId = null;
+      if (f.rich && activeRichField && activeRichField.el === f.el) { activeRichField = null; hideRichTextToolbar(); }
+    }
+
+    fields.forEach((f) => {
+      f.el.addEventListener('pointerdown', (e) => {
+        if (f.el.classList.contains('is-field-editing')) e.stopPropagation();
+      });
+      f.el.addEventListener('input', () => {
+        // Un contenteditable vidé de tout son texte garde souvent un "<br>" orphelin (quirk connu des
+        // navigateurs) — sans ce nettoyage, le champ ne redeviendrait jamais ":empty" et perdrait
+        // définitivement son placeholder (cf. board.css) après une première frappe puis un retour à vide.
+        if (f.rich && f.el.innerHTML === '<br>') f.el.innerHTML = '';
+        entry.data[f.dataKey] = fieldValue(f);
+        if (f.autoGrow) f.autoGrow(entry);
+        saveField(f, false);
+      });
+      f.el.addEventListener('blur', () => {
+        if (f.rich) {
+          // Cliquer "Lien" déplace le focus vers son propre champ URL, DANS la mini-barre de
+          // sélection (cf. showRichLinkInput) — un blur normal, mais qui ne doit pas couper l'édition
+          // ici. On tranche donc un tick plus tard, une fois le focus retombé quelque part de stable.
+          setTimeout(() => {
+            if (richTextToolbarEl.contains(document.activeElement)) return;
+            saveField(f, true);
+            stopField(f);
+          }, 0);
+          return;
+        }
+        saveField(f, true);
+        stopField(f);
+      });
+      if (f.rich) {
+        f.el.addEventListener('focus', () => { activeRichField = { entry, el: f.el }; });
+      }
+    });
+
+    entry.enterField = function enterField(key) {
+      if (entry.data.locked) return;
+      selectElement(id);
+      editingElementId = id;
+      const target = fields.find(f => f.key === key) || fields.find(f => f.key === defaultKey);
+      fields.forEach(f => f.el.classList.toggle('is-field-editing', f === target));
+      Api.updateElement(id, { bringToFront: true }).then(applyRemoteUpdate).catch(() => {});
+      requestAnimationFrame(() => {
+        target.el.focus();
+        if (target.rich) placeCaretAtEnd(target.el);
+      });
+    };
+
+    // Cliquer/double-cliquer sur l'élément (hors champ actif) n'indique pas QUEL champ éditer — la
+    // géométrie du clic (toujours disponible même si le champ visé a pointer-events:none, cf. plus
+    // haut) tranche : celui dont le rectangle contient le point cliqué, ou le champ par défaut sinon.
+    entry.enterEditing = function enterEditing(ev) {
+      let key = defaultKey;
+      if (ev && typeof ev.clientY === 'number') {
+        const hit = fields.find((f) => {
+          const r = f.el.getBoundingClientRect();
+          return ev.clientX >= r.left && ev.clientX <= r.right && ev.clientY >= r.top && ev.clientY <= r.bottom;
+        });
+        if (hit) key = hit.key;
+      }
+      entry.enterField(key);
+    };
+  }
+
+  // ---------- Mini barre de mise en forme sur sélection (texte riche du bloc "tips") ----------
+  // Contrairement à la barre d'action principale (au-dessus de l'ÉLÉMENT sélectionné), celle-ci
+  // apparaît au-dessus de la SÉLECTION DE TEXTE elle-même, façon Notion/Medium — seulement pendant
+  // qu'on édite le texte riche d'un bloc "tips" et qu'une portion de texte y est sélectionnée.
+  let activeRichField = null; // { entry, el } du champ .tip-rich actuellement en édition, ou null
+
+  function richTextToolbarHtml() {
+    return `
+      <button type="button" class="element-format-btn" data-rt="bold" title="Gras">B</button>
+      <button type="button" class="element-format-btn is-italic" data-rt="italic" title="Italique">I</button>
+      <span class="element-toolbar-sep"></span>
+      <button type="button" class="toolbar-dropdown-trigger" data-rt="link" title="Lien">${iconLinkChain()}</button>
+    `;
+  }
+
+  function onRichFieldChanged() {
+    if (!activeRichField) return;
+    const { entry, el } = activeRichField;
+    entry.data.text = el.innerHTML;
+    Api.updateElement(entry.data.id, { text: el.innerHTML }).catch(() => {});
+  }
+
+  function showRichLinkInput() {
+    const sel = window.getSelection();
+    const savedRange = sel && sel.rangeCount ? sel.getRangeAt(0).cloneRange() : null;
+    richTextToolbarEl.innerHTML = `
+      <input type="text" class="toolbar-link-input" data-role="rt-link-input" placeholder="https://…">
+      <button type="button" class="primary-btn toolbar-link-apply" data-role="rt-link-apply">OK</button>
+    `;
+    const input = richTextToolbarEl.querySelector('[data-role="rt-link-input"]');
+    const applyBtn = richTextToolbarEl.querySelector('[data-role="rt-link-apply"]');
+    const richField = activeRichField;
+    input.addEventListener('mousedown', e => e.stopPropagation());
+    input.addEventListener('keydown', (e) => { if (e.key === 'Enter') applyBtn.click(); });
+    // Le champ URL abandonné (clic ailleurs sans valider) : referme simplement la mini-barre — un tick
+    // plus tard, comme pour le blur du texte riche lui-même, pour laisser un clic sur "OK" (qui déplace
+    // aussi le focus) passer avant ce contrôle.
+    input.addEventListener('blur', () => {
+      setTimeout(() => { if (!richTextToolbarEl.contains(document.activeElement)) hideRichTextToolbar(); }, 0);
+    });
+    applyBtn.addEventListener('mousedown', e => e.preventDefault());
+    applyBtn.addEventListener('click', () => {
+      const raw = input.value.trim();
+      if (raw && savedRange && richField) {
+        const s = window.getSelection();
+        s.removeAllRanges();
+        s.addRange(savedRange);
+        const url = /^[a-z][a-z0-9+.-]*:\/\//i.test(raw) ? raw : `https://${raw}`;
+        document.execCommand('createLink', false, url);
+        richField.el.querySelectorAll('a:not([target])').forEach((a) => { a.target = '_blank'; a.rel = 'noopener'; });
+        onRichFieldChanged();
+      }
+      hideRichTextToolbar();
+      // Revient à l'édition du texte riche (le clic sur "OK" avait déplacé le focus vers ce champ
+      // URL, maintenant retiré du DOM) — pour pouvoir continuer à taper juste après avoir ajouté le lien.
+      if (richField) richField.el.focus();
+    });
+    requestAnimationFrame(() => input.focus());
+  }
+
+  function ensureRichTextToolbarWired() {
+    if (richTextToolbarEl.dataset.wired) return;
+    richTextToolbarEl.dataset.wired = '1';
+    // Empêche le focus/la sélection de sauter au clic sur un bouton de cette barre — sinon la
+    // sélection de texte visée disparaît avant même que la commande ne s'applique.
+    richTextToolbarEl.addEventListener('mousedown', (e) => { if (e.target.closest('[data-rt]')) e.preventDefault(); });
+    richTextToolbarEl.addEventListener('click', (e) => {
+      const btn = e.target.closest('[data-rt]');
+      if (!btn || !activeRichField) return;
+      const cmd = btn.dataset.rt;
+      if (cmd === 'bold' || cmd === 'italic') {
+        document.execCommand(cmd);
+        onRichFieldChanged();
+      } else if (cmd === 'link') {
+        showRichLinkInput();
+      }
+    });
+  }
+
+  function positionRichTextToolbarAt(rect) {
+    richTextToolbarEl.classList.add('is-open');
+    const tRect = richTextToolbarEl.getBoundingClientRect();
+    let top = rect.top - tRect.height - 8;
+    if (top < 4) top = rect.bottom + 8;
+    const left = clamp(rect.left, 4, window.innerWidth - tRect.width - 4);
+    richTextToolbarEl.style.left = `${left}px`;
+    richTextToolbarEl.style.top = `${top}px`;
+  }
+
+  function hideRichTextToolbar() {
+    richTextToolbarEl.classList.remove('is-open');
+    richTextToolbarEl.innerHTML = '';
+    // Ne PAS effacer dataset.wired ici : le conteneur (richTextToolbarEl) est un nœud stable, jamais
+    // recréé — seul son contenu (innerHTML) l'est à chaque réapparition. Le ré-effacer forcerait
+    // ensureRichTextToolbarWired à rebrancher un second écouteur "click" délégué à chaque cycle
+    // masquer/réafficher, qui s'accumulerait et déclencherait chaque commande plusieurs fois de suite.
+  }
+
+  function updateRichTextToolbarFromSelection() {
+    if (!activeRichField) { hideRichTextToolbar(); return; }
+    const sel = window.getSelection();
+    if (!sel || sel.rangeCount === 0 || sel.isCollapsed) { hideRichTextToolbar(); return; }
+    const range = sel.getRangeAt(0);
+    if (!activeRichField.el.contains(range.commonAncestorContainer)) { hideRichTextToolbar(); return; }
+    if (!richTextToolbarEl.innerHTML) {
+      richTextToolbarEl.innerHTML = richTextToolbarHtml();
+      ensureRichTextToolbarWired();
+    }
+    positionRichTextToolbarAt(range.getBoundingClientRect());
+  }
+
+  document.addEventListener('selectionchange', updateRichTextToolbarFromSelection);
+
   // Les éléments actuellement rattachés à une frame (déposés dedans, cf. containment côté serveur).
   function frameChildren(frameId) {
     const ids = [];
@@ -2887,7 +3217,7 @@
       }
     });
 
-    el.addEventListener('pointerup', () => {
+    el.addEventListener('pointerup', (e) => {
       if (!dragState) return;
       const wasMoved = dragState.moved;
       el.releasePointerCapture(dragState.pointerId);
@@ -2915,7 +3245,7 @@
           .catch(() => { entry.dragging = false; });
       } else {
         entry.dragging = false;
-        if (entry.enterEditing) entry.enterEditing();
+        if (entry.enterEditing) entry.enterEditing(e);
       }
     });
 
@@ -2926,7 +3256,7 @@
         if (entry.data.locked || !entry.enterEditing) return;
         e.stopPropagation();
         clearMultiSelection();
-        entry.enterEditing();
+        entry.enterEditing(e);
       });
     }
   }
@@ -3073,6 +3403,20 @@
   function wireElementInteractions(entry) {
     if (entry.data.type === 'connector') { wireConnectorSelect(entry); return; }
     if (entry.data.type === 'note' || entry.data.type === 'text' || entry.data.type === 'rectangle' || entry.data.type === 'frame') wireTextEditing(entry);
+    if (entry.data.type === 'instruction') {
+      wireMultiFieldEditing(entry, [
+        { key: 'number', el: entry.numberEl, column: 'number', dataKey: 'number' },
+        { key: 'title', el: entry.titleEl, column: 'title', dataKey: 'title', autoGrow: autoGrowInstructionBlock },
+        { key: 'desc', el: entry.descEl, column: 'text', dataKey: 'text', autoGrow: autoGrowInstructionBlock },
+      ], 'title');
+    }
+    if (entry.data.type === 'tip') {
+      wireMultiFieldEditing(entry, [
+        { key: 'tag', el: entry.tagEl, column: 'tag', dataKey: 'tag' },
+        { key: 'title', el: entry.titleEl, column: 'title', dataKey: 'title', autoGrow: autoGrowTipBlock },
+        { key: 'rich', el: entry.richEl, column: 'text', dataKey: 'text', rich: true, autoGrow: autoGrowTipBlock },
+      ], 'title');
+    }
     wireConnectorAnchors(entry);
     wireBodyDrag(entry);
     if (entry.data.type === 'line') wireLineHandle(entry);

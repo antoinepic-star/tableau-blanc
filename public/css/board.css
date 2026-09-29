@@ -392,6 +392,50 @@ body.is-linking .element:not(.is-locked) .connector-anchor { display: block; }
 }
 .element[data-type="frame"]:not(.is-editing) .frame-title { cursor: grab; pointer-events: none; }
 
+/* ---- Blocs "consigne" et "tips" (plusieurs champs indépendants, cf. wireMultiFieldEditing) : au
+   repos, chaque champ laisse le clic le traverser (glisser/sélectionner l'élément normalement) ;
+   seul celui actuellement en édition (.is-field-editing) redevient interactif. ---- */
+.block-field {
+  border: none; background: transparent; resize: none; outline: none;
+  font-family: inherit; cursor: text; color: inherit;
+}
+.block-field:not(.is-field-editing) { pointer-events: none; cursor: grab; }
+
+.element[data-type="instruction"], .element[data-type="tip"] {
+  display: flex; flex-direction: column; gap: 8px; padding: 16px;
+  border-radius: 10px; box-shadow: 0 1px 3px rgba(20,20,30,0.12);
+  cursor: grab;
+}
+.element[data-type="instruction"].is-dragging, .element[data-type="instruction"].is-resizing,
+.element[data-type="tip"].is-dragging, .element[data-type="tip"].is-resizing { cursor: grabbing; }
+
+.instruction-number-wrap {
+  width: 32px; height: 32px; border-radius: 50%; background: #1c1c28; flex: none;
+  display: flex; align-items: center; justify-content: center;
+}
+.instruction-number {
+  width: 100%; height: 100%; text-align: center; color: #fff; font-weight: 700; font-size: 14px;
+  line-height: 32px; white-space: pre; overflow: hidden; padding: 0;
+}
+.instruction-title, .tip-title { font-weight: 700; font-size: 15px; line-height: 1.35; padding: 0; overflow: hidden; }
+.instruction-desc { font-size: 13px; line-height: 1.5; color: var(--text-muted); padding: 0; overflow: hidden; }
+
+.tip-tag {
+  align-self: flex-start; width: auto; min-width: 32px; max-width: 100%;
+  background: #1c1c28; color: #fff; font-size: 10.5px; font-weight: 700; text-transform: uppercase;
+  letter-spacing: 0.03em; border-radius: 5px; padding: 3px 8px; line-height: 1.3;
+  white-space: pre; overflow: hidden;
+}
+.tip-rich {
+  font-size: 13px; line-height: 1.5; color: inherit; overflow-wrap: break-word;
+  min-height: 1.5em;
+}
+.tip-rich:empty::before { content: attr(data-placeholder); color: var(--text-muted); }
+.tip-rich a { color: #1a56db; text-decoration: underline; }
+
+/* ---- Mini barre de mise en forme sur sélection de texte (bloc "tips", cf. board.js) ---- */
+.rich-text-toolbar { gap: 2px; }
+
 /* ---- Rognage d'image ---- */
 .crop-overlay { position: absolute; inset: 0; cursor: default; }
 .crop-mask { position: absolute; background: rgba(20,20,30,0.55); pointer-events: none; }

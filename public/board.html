@@ -34,6 +34,7 @@
   </div>
   <div id="cursorLayer"></div>
   <div class="element-toolbar-floating" id="elementToolbar"></div>
+  <div class="rich-text-toolbar element-toolbar-floating" id="richTextToolbar"></div>
 
   <div class="hint-pill" id="hintPill">Molette = déplacer le tableau · Ctrl/Cmd + molette = zoomer</div>
   <div class="busy-pill" id="busyPill"><span class="busy-spinner"></span>Un instant…</div>
@@ -83,6 +84,18 @@
             <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 9V6a2 2 0 0 1 2-2h3"/><path d="M15 4h3a2 2 0 0 1 2 2v3"/><path d="M20 15v3a2 2 0 0 1-2 2h-3"/><path d="M9 20H6a2 2 0 0 1-2-2v-3"/></svg>
           </div>
           <span class="add-tile-label">Frame</span>
+        </button>
+        <button type="button" class="add-tile" data-type="instruction">
+          <div class="add-tile-icon">
+            <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="7" cy="7" r="4"/><path d="M6 5.5h2v3"/><line x1="4" y1="16" x2="20" y2="16"/><line x1="4" y1="20" x2="15" y2="20"/></svg>
+          </div>
+          <span class="add-tile-label">Consigne</span>
+        </button>
+        <button type="button" class="add-tile" data-type="tip">
+          <div class="add-tile-icon">
+            <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18h6"/><path d="M10 21h4"/><path d="M12 3a6 6 0 0 0-3.6 10.8c.5.4.8 1 .8 1.7v.5h5.6v-.5c0-.7.3-1.3.8-1.7A6 6 0 0 0 12 3z"/></svg>
+          </div>
+          <span class="add-tile-label">Tips</span>
         </button>
       </div>
     </div>
