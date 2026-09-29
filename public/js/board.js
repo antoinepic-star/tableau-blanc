@@ -374,21 +374,33 @@
   });
 
   // ---------- Barre "ajouter" flottante (façon Miro) ----------
-  // Remplace l'ancien drawer plein écran : chaque bouton pose directement son type au clic (ou se
-  // glisse jusqu'au point de dépôt, cf. startTileDrag), sauf les deux familles à plusieurs variantes
-  // (Formes, Blocs) qui ouvrent #addFlyout à la place.
+  // Chaque bouton "arme" un outil de pose (cf. armPlacement) : le curseur est suivi d'une pastille
+  // représentant l'élément, et c'est le PROCHAIN CLIC SUR LE CANVAS qui le crée, à cet endroit précis —
+  // jamais de création directe au centre de l'écran. Les familles à plusieurs variantes (Formes, Blocs)
+  // et les deux réglages "à choisir avant de poser" (couleur du post-it, taille du texte) passent par
+  // le même sous-menu #addFlyout, positionné à droite du bouton cliqué ; y choisir une option arme
+  // aussitôt l'outil correspondant.
 
   const ADD_TOOLBAR_COLLAPSED_KEY = 'tb_add_toolbar_collapsed';
 
   const ADD_FLYOUTS = {
-    shapes: [
-      { type: 'rectangle', label: 'Rectangle', icon: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="14" rx="2"/></svg>' },
-      { type: 'line', label: 'Trait', icon: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="5" y1="19" x2="19" y2="5"/></svg>' },
-    ],
-    blocks: [
-      { type: 'instruction', label: 'Consigne', icon: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="7" cy="7" r="4"/><path d="M6 5.5h2v3"/><line x1="4" y1="16" x2="20" y2="16"/><line x1="4" y1="20" x2="15" y2="20"/></svg>' },
-      { type: 'tip', label: 'Tips', icon: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18h6"/><path d="M10 21h4"/><path d="M12 3a6 6 0 0 0-3.6 10.8c.5.4.8 1 .8 1.7v.5h5.6v-.5c0-.7.3-1.3.8-1.7A6 6 0 0 0 12 3z"/></svg>' },
-    ],
+    shapes: {
+      kind: 'items',
+      items: [
+        { type: 'rectangle', label: 'Rectangle', icon: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="14" rx="2"/></svg>' },
+        { type: 'line', label: 'Trait', icon: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="5" y1="19" x2="19" y2="5"/></svg>' },
+        { type: 'rectangle', variant: 'ellipse', label: 'Rond', icon: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="8"/></svg>' },
+      ],
+    },
+    blocks: {
+      kind: 'items',
+      items: [
+        { type: 'instruction', label: 'Consigne', icon: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="7" cy="7" r="4"/><path d="M6 5.5h2v3"/><line x1="4" y1="16" x2="20" y2="16"/><line x1="4" y1="20" x2="15" y2="20"/></svg>' },
+        { type: 'tip', label: 'Tips', icon: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18h6"/><path d="M10 21h4"/><path d="M12 3a6 6 0 0 0-3.6 10.8c.5.4.8 1 .8 1.7v.5h5.6v-.5c0-.7.3-1.3.8-1.7A6 6 0 0 0 12 3z"/></svg>' },
+      ],
+    },
+    notecolors: { kind: 'colors' },
+    textstyles: { kind: 'textstyles' },
   };
 
   function viewportCenterWorld() {
@@ -401,73 +413,132 @@
     return clientX >= r.left && clientX <= r.right && clientY >= r.top && clientY <= r.bottom;
   }
 
-  function createElementOfType(type) {
-    const { x: wx, y: wy } = viewportCenterWorld();
-    placeNewElement(type, wx, wy, { cascade: true });
-  }
-
   function closeAddFlyout() { addFlyout.classList.remove('is-open'); }
 
-  // Glisser-déposer un bouton de la barre (ou du sous-menu d'une famille) vers le tableau : une
-  // pastille suit le curseur, et le dépôt sur le canvas crée l'élément centré sur le point de
-  // relâchement. Un simple clic (sans dépasser un petit seuil) garde le comportement historique :
-  // création au centre de la vue courante.
-  function startTileDrag(e, type, iconHtml) {
-    closeAddFlyout();
-    const startX = e.clientX, startY = e.clientY;
-    let dragging = false;
-    let ghost = null;
+  // ---- Armement d'un outil de pose ----
+  // Une seule pose à la fois : armer un nouvel outil (ou Échap, ou cliquer hors du canvas) désarme le
+  // précédent. Le clic qui pose l'élément est intercepté en phase de capture sur `window`, AVANT que
+  // le canvas ne le traite comme un clic normal (désélection, début de marquee...).
 
-    function onMove(ev) {
-      if (!dragging && Math.hypot(ev.clientX - startX, ev.clientY - startY) > 6) {
-        dragging = true;
-        ghost = document.createElement('div');
-        ghost.className = 'drag-ghost';
-        ghost.innerHTML = iconHtml;
-        document.body.appendChild(ghost);
-      }
-      if (dragging) {
-        ghost.style.left = `${ev.clientX + 14}px`;
-        ghost.style.top = `${ev.clientY + 14}px`;
-        viewportEl.classList.toggle('is-drop-target', isPointOverCanvas(ev.clientX, ev.clientY));
-      }
-    }
+  let armedPlacement = null; // { type, variant, options }
+  let placementGhostEl = null;
 
-    function onUp(ev) {
-      window.removeEventListener('pointermove', onMove);
-      window.removeEventListener('pointerup', onUp);
-      viewportEl.classList.remove('is-drop-target');
-      if (ghost) ghost.remove();
-
-      if (!dragging) {
-        createElementOfType(type);
-        return;
-      }
-      if (isPointOverCanvas(ev.clientX, ev.clientY)) {
-        const r = viewportEl.getBoundingClientRect();
-        const { x: wx, y: wy } = screenToWorld(ev.clientX - r.left, ev.clientY - r.top);
-        placeNewElement(type, wx, wy);
-      }
-    }
-
-    window.addEventListener('pointermove', onMove);
-    window.addEventListener('pointerup', onUp);
+  function disarmPlacement() {
+    if (!armedPlacement && !placementGhostEl) return;
+    armedPlacement = null;
+    if (placementGhostEl) { placementGhostEl.remove(); placementGhostEl = null; }
+    viewportEl.classList.remove('is-drop-target');
+    addToolbar.querySelectorAll('.add-toolbar-btn.is-armed').forEach(b => b.classList.remove('is-armed'));
+    window.removeEventListener('pointermove', onPlacementMove);
+    window.removeEventListener('pointerdown', onPlacementPointerDown, true);
+    window.removeEventListener('keydown', onPlacementKeydown);
   }
 
-  addToolbar.querySelectorAll('.add-toolbar-btn[data-type]').forEach((btn) => {
-    btn.addEventListener('pointerdown', (e) => startTileDrag(e, btn.dataset.type, btn.querySelector('svg').outerHTML));
+  function onPlacementMove(ev) {
+    if (!placementGhostEl) return;
+    placementGhostEl.style.left = `${ev.clientX + 14}px`;
+    placementGhostEl.style.top = `${ev.clientY + 14}px`;
+    viewportEl.classList.toggle('is-drop-target', isPointOverCanvas(ev.clientX, ev.clientY));
+  }
+
+  function onPlacementKeydown(ev) {
+    if (ev.key === 'Escape') disarmPlacement();
+  }
+
+  function onPlacementPointerDown(ev) {
+    if (!armedPlacement) return;
+    if (addToolbar.contains(ev.target) || addFlyout.contains(ev.target) || addToolbarRevealBtn.contains(ev.target)) return;
+    if (!isPointOverCanvas(ev.clientX, ev.clientY)) { disarmPlacement(); return; }
+    ev.preventDefault();
+    ev.stopPropagation();
+    const { type, variant, options } = armedPlacement;
+    const r = viewportEl.getBoundingClientRect();
+    const { x: wx, y: wy } = screenToWorld(ev.clientX - r.left, ev.clientY - r.top);
+    disarmPlacement();
+    placeNewElement(type, wx, wy, { ...options, variant });
+  }
+
+  function armPlacement(type, iconHtml, { variant = null, options = {}, sourceBtn = null, x = null, y = null } = {}) {
+    disarmPlacement();
+    closeAddFlyout();
+    armedPlacement = { type, variant, options };
+    if (sourceBtn) sourceBtn.classList.add('is-armed');
+    placementGhostEl = document.createElement('div');
+    placementGhostEl.className = 'drag-ghost';
+    placementGhostEl.innerHTML = iconHtml;
+    document.body.appendChild(placementGhostEl);
+    if (x != null && y != null) {
+      placementGhostEl.style.left = `${x + 14}px`;
+      placementGhostEl.style.top = `${y + 14}px`;
+      viewportEl.classList.toggle('is-drop-target', isPointOverCanvas(x, y));
+    }
+    window.addEventListener('pointermove', onPlacementMove);
+    window.addEventListener('pointerdown', onPlacementPointerDown, true);
+    window.addEventListener('keydown', onPlacementKeydown);
+  }
+
+  const textFlyoutBtn = addToolbar.querySelector('[data-flyout="textstyles"]');
+  const imageBtn = addToolbar.querySelector('[data-type="image"]');
+  const frameBtn = addToolbar.querySelector('[data-type="frame"]');
+
+  imageBtn.addEventListener('click', () => {
+    disarmPlacement();
+    closeAddFlyout();
+    const { x: wx, y: wy } = viewportCenterWorld();
+    placeNewElement('image', wx, wy);
   });
 
+  frameBtn.addEventListener('click', (e) => {
+    if (armedPlacement && armedPlacement.type === 'frame') { disarmPlacement(); return; }
+    armPlacement('frame', frameBtn.querySelector('svg').outerHTML, { sourceBtn: frameBtn, x: e.clientX, y: e.clientY });
+  });
+
+  // Construit le contenu du sous-menu pour une famille donnée. `items` : liste à icône+libellé
+  // (Formes, Blocs) — chaque entrée arme directement son type/variante. `colors` : palette de post-it
+  // (écran Miro fourni par Antoine) — arme "note" avec la couleur choisie, le curseur devenant une
+  // mini pastille de cette couleur. `textstyles` : la même échelle nommée que le reste de l'app (cf.
+  // FONT_SIZE_PRESETS) — arme "text" avec la taille choisie.
+  function renderFlyoutContent(key, sourceBtn) {
+    const cfg = ADD_FLYOUTS[key];
+    if (cfg.kind === 'items') {
+      addFlyout.innerHTML = cfg.items.map((it, i) => `
+        <button type="button" class="add-flyout-item" data-index="${i}">
+          <span class="add-flyout-item-icon">${it.icon}</span>
+          <span class="add-flyout-item-label">${it.label}</span>
+        </button>
+      `).join('');
+      addFlyout.querySelectorAll('.add-flyout-item').forEach((btn, i) => {
+        btn.addEventListener('click', (e) => {
+          const it = cfg.items[i];
+          armPlacement(it.type, it.icon, { variant: it.variant || null, sourceBtn, x: e.clientX, y: e.clientY });
+        });
+      });
+    } else if (cfg.kind === 'colors') {
+      addFlyout.innerHTML = `<div class="add-flyout-colors">${ELEMENT_COLORS.map(c => `<button type="button" class="toolbar-color-swatch" data-color="${c}" style="background:${c}"></button>`).join('')}</div>`;
+      addFlyout.querySelectorAll('.toolbar-color-swatch').forEach((sw) => {
+        sw.addEventListener('click', (e) => {
+          const color = sw.dataset.color;
+          armPlacement('note', `<div class="placement-ghost-note" style="background:${color}"></div>`, { options: { color }, sourceBtn, x: e.clientX, y: e.clientY });
+        });
+      });
+    } else if (cfg.kind === 'textstyles') {
+      addFlyout.innerHTML = FONT_SIZE_PRESETS.map(([label], i) => `
+        <button type="button" class="add-flyout-item" data-index="${i}">
+          <span class="add-flyout-item-textpreview">Aa</span>
+          <span class="add-flyout-item-label">${label}</span>
+        </button>
+      `).join('');
+      addFlyout.querySelectorAll('.add-flyout-item').forEach((btn, i) => {
+        btn.addEventListener('click', (e) => {
+          const fontSize = FONT_SIZE_PRESETS[i][1];
+          armPlacement('text', textFlyoutBtn.querySelector('svg').outerHTML, { options: { fontSize }, sourceBtn, x: e.clientX, y: e.clientY });
+        });
+      });
+    }
+  }
+
   function openAddFlyout(btn, key) {
-    addFlyout.innerHTML = ADD_FLYOUTS[key].map(it => `
-      <button type="button" class="add-flyout-item" data-type="${it.type}">
-        <span class="add-flyout-item-icon">${it.icon}</span>
-        <span class="add-flyout-item-label">${it.label}</span>
-      </button>
-    `).join('');
-    addFlyout.querySelectorAll('.add-flyout-item').forEach((item) => {
-      item.addEventListener('pointerdown', (e) => startTileDrag(e, item.dataset.type, item.querySelector('.add-flyout-item-icon').innerHTML));
-    });
+    renderFlyoutContent(key, btn);
     addFlyout.dataset.for = key;
     addFlyout.classList.add('is-open');
     const r = btn.getBoundingClientRect();
@@ -481,6 +552,7 @@
       e.stopPropagation();
       const key = btn.dataset.flyout;
       const wasOpenForThis = addFlyout.classList.contains('is-open') && addFlyout.dataset.for === key;
+      disarmPlacement();
       closeAddFlyout();
       if (!wasOpenForThis) openAddFlyout(btn, key);
     });
@@ -495,7 +567,7 @@
   function setAddToolbarCollapsed(collapsed) {
     addToolbar.hidden = collapsed;
     addToolbarRevealBtn.hidden = !collapsed;
-    if (collapsed) closeAddFlyout();
+    if (collapsed) { closeAddFlyout(); disarmPlacement(); }
     try { localStorage.setItem(ADD_TOOLBAR_COLLAPSED_KEY, collapsed ? '1' : '0'); } catch (_) {}
   }
   addToolbarCollapseBtn.addEventListener('click', () => setAddToolbarCollapsed(true));
@@ -509,52 +581,62 @@
   // cf. computeSnappedPosition), une pose ponctuelle se contente de la grille elle-même.
   function snapPoint(x, y) { return { x: snapToGrid(x), y: snapToGrid(y) }; }
 
-  function placeNewElement(type, wx, wy, { cascade = false } = {}) {
+  function placeNewElement(type, wx, wy, { color = null, fontSize = null, variant = null } = {}) {
     hideHint();
-    const offset = cascade ? (creationCount % 6) * 18 : 0;
     creationCount++;
 
     if (type === 'note') {
-      const color = ELEMENT_COLORS[creationCount % ELEMENT_COLORS.length];
+      const c = color || ELEMENT_COLORS[creationCount % ELEMENT_COLORS.length];
       const half = NOTE_DEFAULT_SIZE / 2;
-      const { x, y } = snapPoint(wx - half + offset, wy - half + offset);
-      createElementTracked({ type: 'note', x, y, width: NOTE_DEFAULT_SIZE, height: NOTE_DEFAULT_SIZE, color })
+      const { x, y } = snapPoint(wx - half, wy - half);
+      createElementTracked({ type: 'note', x, y, width: NOTE_DEFAULT_SIZE, height: NOTE_DEFAULT_SIZE, color: c })
         .catch(err => alert(err.message));
     } else if (type === 'line') {
-      const { x, y } = snapPoint(wx - 80 + offset, wy + offset);
+      const { x, y } = snapPoint(wx - 80, wy);
       createElementTracked({ type: 'line', x, y, width: 160, height: 6, rotation: 0, color: '#1c1c28' })
         .catch(err => alert(err.message));
     } else if (type === 'text') {
-      const initial = computeTextBoxSize({ text: '', fontSize: 15, bold: false, italic: false });
-      const { x, y } = snapPoint(wx - initial.width / 2 + offset, wy - initial.height / 2 + offset);
+      const fs = fontSize || 15;
+      const initial = computeTextBoxSize({ text: '', fontSize: fs, bold: false, italic: false });
+      const { x, y } = snapPoint(wx - initial.width / 2, wy - initial.height / 2);
       createElementTracked({
         type: 'text', x, y,
-        width: initial.width, height: initial.height, color: '#1c1c28', fontSize: 15,
+        width: initial.width, height: initial.height, color: '#1c1c28', fontSize: fs,
       })
         .then(data => { const entry = ensureRendered(data); entry.enterEditing?.(); })
         .catch(err => alert(err.message));
+    } else if (type === 'rectangle' && variant === 'ellipse') {
+      // Un "rond" est un rectangle carré avec un rayon de coin maximal (même valeur que le préréglage
+      // "Complet" du sélecteur de bordure, cf. RADIUS_PRESETS) — pas besoin d'un type d'élément dédié.
+      const c = ELEMENT_COLORS[creationCount % ELEMENT_COLORS.length];
+      const size = 150;
+      const { x, y } = snapPoint(wx - size / 2, wy - size / 2);
+      createElementTracked({
+        type: 'rectangle', x, y, width: size, height: size,
+        color: c, strokeWidth: 0, strokeColor: '#1c1c28', radius: 999,
+      }).catch(err => alert(err.message));
     } else if (type === 'rectangle') {
-      const color = ELEMENT_COLORS[creationCount % ELEMENT_COLORS.length];
-      const { x, y } = snapPoint(wx - 110 + offset, wy - 70 + offset);
+      const c = ELEMENT_COLORS[creationCount % ELEMENT_COLORS.length];
+      const { x, y } = snapPoint(wx - 110, wy - 70);
       createElementTracked({
         type: 'rectangle', x, y, width: 220, height: 140,
-        color, strokeWidth: 0, strokeColor: '#1c1c28', radius: 8,
+        color: c, strokeWidth: 0, strokeColor: '#1c1c28', radius: 8,
       }).catch(err => alert(err.message));
     } else if (type === 'image') {
-      pendingImagePlacement = { wx, wy, offset };
+      pendingImagePlacement = { wx, wy };
       imageFileInput.value = '';
       imageFileInput.click();
     } else if (type === 'frame') {
       // Couleur/contour/titre laissés aux valeurs par défaut du serveur (cf. ELEMENT_DEFAULTS.frame) :
       // contrairement au post-it/rectangle, on n'a pas besoin d'une couleur qui tourne à chaque
       // création, une frame est un conteneur neutre.
-      const { x, y } = snapPoint(wx - 240 + offset, wy - 180 + offset);
+      const { x, y } = snapPoint(wx - 240, wy - 180);
       createElementTracked({ type: 'frame', x, y, width: 480, height: 360 })
         .catch(err => alert(err.message));
     } else if (type === 'instruction' || type === 'tip') {
       // Couleur laissée à la valeur par défaut du serveur (blanc pour consigne, gris du tableau pour
       // tips, cf. ELEMENT_DEFAULTS) — prête à taper le titre tout de suite, comme le texte libre.
-      const { x, y } = snapPoint(wx - 140 + offset, wy - 85 + offset);
+      const { x, y } = snapPoint(wx - 140, wy - 85);
       createElementTracked({ type, x, y, width: 280, height: 170 })
         .then((data) => { const entry = ensureRendered(data); entry.enterField?.('title'); })
         .catch(err => alert(err.message));
@@ -572,8 +654,8 @@
         let w = img.naturalWidth, h = img.naturalHeight;
         if (w >= h && w > MAX_IMAGE_DIM) { h = h * (MAX_IMAGE_DIM / w); w = MAX_IMAGE_DIM; }
         else if (h > MAX_IMAGE_DIM) { w = w * (MAX_IMAGE_DIM / h); h = MAX_IMAGE_DIM; }
-        const { wx, wy, offset } = pendingImagePlacement || { wx: 0, wy: 0, offset: 0 };
-        const { x, y } = snapPoint(wx - w / 2 + offset, wy - h / 2 + offset);
+        const { wx, wy } = pendingImagePlacement || { wx: 0, wy: 0 };
+        const { x, y } = snapPoint(wx - w / 2, wy - h / 2);
         createElementTracked({ type: 'image', x, y, width: w, height: h, imageData: reader.result })
           .catch(err => alert(err.message));
       };

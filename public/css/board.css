@@ -72,6 +72,9 @@ body.board-page { overflow: hidden; height: 100vh; }
   position: relative; flex-shrink: 0;
 }
 .add-toolbar-btn:hover { background: #f4f4f6; }
+/* Outil actuellement "armé" (cf. armPlacement dans board.js) : la pose se fait au prochain clic sur
+   le canvas, ce halo indique quel bouton est actif en attendant. */
+.add-toolbar-btn.is-armed { background: var(--purple); color: #fff; }
 .add-toolbar-sep { width: 26px; height: 1px; background: var(--border); margin: 4px 0; flex-shrink: 0; }
 
 /* Infobulle sombre à droite du bouton au survol (façon Miro) plutôt que le "title" natif du
@@ -109,6 +112,20 @@ body.board-page { overflow: hidden; height: 100vh; }
 }
 .add-flyout-item:hover { background: #f4f4f6; }
 .add-flyout-item-icon { display: flex; align-items: center; justify-content: center; flex-shrink: 0; width: 22px; height: 22px; color: var(--text-muted); }
+
+/* Sous-menu "couleur du post-it" (kind: 'colors' dans ADD_FLYOUTS) : mêmes pastilles rondes que les
+   sélecteurs de couleur du toolbar d'élément (.toolbar-color-swatch), en grille. */
+.add-flyout-colors { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; padding: 6px 4px; }
+
+/* Sous-menu "taille de texte" (kind: 'textstyles') : aperçu "Aa" à la place de l'icône. */
+.add-flyout-item-textpreview {
+  display: flex; align-items: center; justify-content: center; flex-shrink: 0;
+  width: 22px; height: 22px; font-weight: 700; font-size: 13px; color: var(--text-muted);
+}
+
+/* Pastille suivant le curseur pendant la pose d'un post-it (cf. armPlacement) : un simple carré de la
+   couleur choisie plutôt que l'icône générique du bouton, pour rappeler quelle couleur va être posée. */
+.placement-ghost-note { width: 26px; height: 26px; border-radius: 4px; box-shadow: 0 1px 4px rgba(0,0,0,0.35); }
 
 /* Fermeture d'un panneau latéral (drawer commentaires) — nom hérité de l'ancien drawer "ajouter". */
 .add-drawer-close {
