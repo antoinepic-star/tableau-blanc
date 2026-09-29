@@ -357,12 +357,18 @@ body.is-linking .element:not(.is-locked) .connector-anchor { display: block; }
 /* Un textarea ne centre pas nativement son contenu verticalement : le cadre (en flex) centre la
    boîte de texte, qui elle-même grandit à la hauteur exacte de son contenu (cf. autoGrowRectangleTextarea). */
 .element-text-frame {
-  position: absolute; inset: 10px; display: flex; align-items: center; justify-content: center;
+  /* Alignement par défaut (ferré à gauche, centré verticalement) : justify-content/align-items sont
+     de toute façon reposés en JS par élément (cf. applyRectangleTextStyle), ces valeurs ne comptent
+     que le temps avant ce premier rendu. */
+  position: absolute; inset: 10px; display: flex; align-items: center; justify-content: flex-start;
 }
 .element-text-rect {
   position: static; inset: auto; width: 100%; max-height: 100%; flex: none;
-  text-align: center; color: rgba(0,0,0,0.82); padding: 2px 6px;
+  text-align: left; color: rgba(0,0,0,0.82); padding: 2px 6px;
 }
+/* Rectangle avec un lien (cf. wireTextEditing) : la main plutôt que le curseur texte au survol,
+   uniquement hors édition — sinon on ne pourrait plus placer le curseur pour corriger le texte. */
+.element[data-type="rectangle"].has-link:not(.is-editing) .element-text-rect { cursor: pointer; }
 
 /* ---- Frame (conteneur toujours en arrière-plan, cf. server.js) : fond + contour appliqués via
    applyRectangleStyle comme un rectangle, seul le titre épinglé en haut à gauche est spécifique. ---- */
@@ -492,6 +498,48 @@ body.is-linking .element:not(.is-locked) .connector-anchor { display: block; }
   background: repeating-linear-gradient(to right, var(--text) 0 4px, transparent 4px 7px);
   border-radius: 0;
 }
+
+/* ---- Barre d'action "rectangle" (façon Miro) : bordure combinée, lien, menu "⋮" ---- */
+
+/* Petit intitulé de section à l'intérieur d'un popover qui empile plusieurs réglages (bordure) —
+   distingue "angles" / "épaisseur" / "style" / "couleur" sans quatre boutons déclencheurs séparés. */
+.toolbar-popover-label { font-size: 10.5px; font-weight: 600; color: var(--text-muted); margin: 4px 0 2px; }
+.toolbar-popover-label:first-child { margin-top: 0; }
+
+.toolbar-border-popover.is-open { display: flex; flex-direction: column; width: 168px; }
+/* Grille de nuances TOUJOURS visible (contrairement à .toolbar-color-popover, repliée par défaut
+   derrière son propre déclencheur) : ici on est déjà dans le popover "bordure", pas besoin d'un
+   second niveau à ouvrir. */
+.toolbar-color-popover-inline {
+  display: grid; grid-template-columns: repeat(6, 1fr); gap: 5px;
+}
+.toolbar-color-popover-inline .toolbar-color-swatch { width: 20px; height: 20px; }
+
+.toolbar-link-popover.is-open { display: flex; flex-direction: column; gap: 8px; width: 220px; }
+.toolbar-link-input {
+  border: 1px solid var(--border); border-radius: 6px; font-size: 12.5px; font-family: inherit;
+  color: var(--text); padding: 6px 8px; width: 100%; box-sizing: border-box;
+}
+.toolbar-link-actions { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.toolbar-link-remove {
+  border: none; background: transparent; color: var(--text-muted); font-size: 12px; cursor: pointer;
+  padding: 4px 0; font-family: inherit;
+}
+.toolbar-link-remove:hover { color: #c8392c; }
+.toolbar-link-remove[hidden] { display: none; }
+.toolbar-link-apply { padding: 6px 14px; font-size: 12.5px; }
+
+/* Menu "⋮" (dupliquer / premier plan / arrière-plan / supprimer) : liste verticale d'intitulés,
+   plutôt qu'une grille d'icônes comme les autres popovers. */
+.toolbar-menu-popover.is-open { display: flex; flex-direction: column; width: 200px; padding: 6px; gap: 1px; }
+.toolbar-menu-item {
+  border: none; background: transparent; text-align: left; font-size: 13px; font-family: inherit;
+  color: var(--text); padding: 8px 10px; border-radius: 6px; cursor: pointer;
+}
+.toolbar-menu-item:hover { background: #f4f4f6; }
+.toolbar-menu-danger { color: #c8392c; }
+.toolbar-menu-danger:hover { background: #fbeceb; }
+.toolbar-menu-sep { display: block; height: 1px; background: var(--border); margin: 4px 2px; }
 
 /* ---------- Popin de confirmation de suppression ---------- */
 

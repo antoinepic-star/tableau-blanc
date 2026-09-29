@@ -84,7 +84,7 @@ const ELEMENT_DEFAULTS = {
   line: { width: 160, height: 6, color: '#1c1c28' },
   text: { width: 220, height: 60, color: '#1c1c28', fontSize: 18 },
   image: { width: 240, height: 240, color: null },
-  rectangle: { width: 220, height: 140, color: ELEMENT_COLORS[0], fontSize: 16 },
+  rectangle: { width: 220, height: 140, color: ELEMENT_COLORS[0], fontSize: 16, textAlign: 'left', textValign: 'center' },
   connector: { width: 0, height: 0, color: '#1c1c28' },
   frame: { width: 480, height: 360, color: '#EDEAE3', strokeWidth: 1, strokeColor: '#c9c4b8', fontSize: 14, titleColor: '#4a463c' },
 };
@@ -197,6 +197,12 @@ async function initDb() {
     // (auto_arrange, frame_order) — devenu une action ponctuelle (cf. applyFrameArrangement), elles
     // ne sont plus lues ni écrites. Pas retirées ici (une base déjà migrée les a de toute façon) mais
     // plus ajoutées pour une base neuve.
+    // Texte d'un rectangle (barre d'action façon Miro) : couleur/alignement propres, distincts de
+    // "color" (le fond) ; un lien optionnel qui rend le texte cliquable (cf. board.js).
+    'ALTER TABLE whiteboard_elements ADD COLUMN text_color TEXT',
+    "ALTER TABLE whiteboard_elements ADD COLUMN text_align TEXT NOT NULL DEFAULT 'left'",
+    "ALTER TABLE whiteboard_elements ADD COLUMN text_valign TEXT NOT NULL DEFAULT 'center'",
+    'ALTER TABLE whiteboard_elements ADD COLUMN link TEXT',
   ]) {
     try { await turso.execute(sql); } catch (_) {}
   }
@@ -609,6 +615,10 @@ function parseElement(row, { withImageData = true } = {}) {
     toSide: row.to_side,
     frameId: row.frame_id,
     titleColor: row.title_color,
+    textColor: row.text_color,
+    textAlign: row.text_align,
+    textValign: row.text_valign,
+    link: row.link,
     zIndex: row.z_index,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
@@ -729,7 +739,7 @@ app.post('/api/whiteboards/:whiteboardId/elements', whiteboardAuth, ah(async (re
   const {
     x, y, width, height, rotation, color, text, fontSize, bold, italic, underline, strikethrough, imageData, grayscale,
     startCap, endCap, lineStyle, backgroundColor, strokeWidth, strokeColor, radius, groupId, locked,
-    fromElementId, fromSide, toElementId, toSide, titleColor,
+    fromElementId, fromSide, toElementId, toSide, titleColor, textColor, textAlign, textValign, link,
   } = req.body || {};
   let { frameId } = req.body || {};
   // Une frame va toujours tout au fond (jamais au premier plan, cf. PATCH/batch-move) ; les autres
@@ -751,7 +761,7 @@ app.post('/api/whiteboards/:whiteboardId/elements', whiteboardAuth, ah(async (re
   const columns = ['id', 'whiteboard_id', 'type', 'x', 'y', 'width', 'height', 'rotation', 'color', 'text', 'font_size',
     'bold', 'italic', 'underline', 'strikethrough', 'image_data', 'grayscale', 'start_cap', 'end_cap', 'line_style', 'background_color',
     'stroke_width', 'stroke_color', 'radius', 'group_id', 'locked', 'from_element_id', 'from_side', 'to_element_id', 'to_side',
-    'frame_id', 'title_color', 'z_index'];
+    'frame_id', 'title_color', 'text_color', 'text_align', 'text_valign', 'link', 'z_index'];
   const values = [
     id, req.params.whiteboardId, type, x ?? 0, y ?? 0,
     width ?? defaults.width, height ?? defaults.height, rotation ?? 0,
@@ -760,7 +770,8 @@ app.post('/api/whiteboards/:whiteboardId/elements', whiteboardAuth, ah(async (re
     startCap || 'none', endCap || 'none', lineStyle || 'solid', backgroundColor || null,
     strokeWidth ?? defaults.strokeWidth ?? 0, strokeColor || defaults.strokeColor || null, radius ?? 0, groupId || null, locked ? 1 : 0,
     fromElementId || null, fromSide || null, toElementId || null, toSide || null,
-    frameId || null, titleColor || defaults.titleColor || null, zIndex,
+    frameId || null, titleColor || defaults.titleColor || null,
+    textColor || null, textAlign || defaults.textAlign || 'left', textValign || defaults.textValign || 'center', link || null, zIndex,
   ];
   await tursoRun(
     `INSERT INTO whiteboard_elements (${columns.join(', ')}) VALUES (${columns.map(() => '?').join(', ')})`,
@@ -805,7 +816,7 @@ app.post('/api/whiteboards/:whiteboardId/elements/batch', whiteboardAuth, ah(asy
   const columns = ['id', 'whiteboard_id', 'type', 'x', 'y', 'width', 'height', 'rotation', 'color', 'text', 'font_size',
     'bold', 'italic', 'underline', 'strikethrough', 'image_data', 'grayscale', 'start_cap', 'end_cap', 'line_style', 'background_color',
     'stroke_width', 'stroke_color', 'radius', 'group_id', 'locked', 'from_element_id', 'from_side', 'to_element_id', 'to_side',
-    'frame_id', 'title_color', 'z_index'];
+    'frame_id', 'title_color', 'text_color', 'text_align', 'text_valign', 'link', 'z_index'];
   const insertSql = `INSERT INTO whiteboard_elements (${columns.join(', ')}) VALUES (${columns.map(() => '?').join(', ')})`;
 
   const idByClientId = new Map();
@@ -818,7 +829,7 @@ app.post('/api/whiteboards/:whiteboardId/elements/batch', whiteboardAuth, ah(asy
     const {
       x, y, width, height, rotation, color, text, fontSize, bold, italic, underline, strikethrough, imageData, grayscale,
       startCap, endCap, lineStyle, backgroundColor, strokeWidth, strokeColor, radius, groupId, locked,
-      fromSide, toSide, titleColor, clientId,
+      fromSide, toSide, titleColor, textColor, textAlign, textValign, link, clientId,
     } = item || {};
     // fromElementId/toElementId (connecteur) : peut référencer soit un élément déjà existant, soit le
     // clientId d'un autre élément du MÊME lot (toujours placé après lui, cf. recreateElements côté
@@ -856,7 +867,8 @@ app.post('/api/whiteboards/:whiteboardId/elements/batch', whiteboardAuth, ah(asy
       startCap || 'none', endCap || 'none', lineStyle || 'solid', backgroundColor || null,
       strokeWidth ?? defaults.strokeWidth ?? 0, strokeColor || defaults.strokeColor || null, radius ?? 0, groupId || null, locked ? 1 : 0,
       fromElementId || null, fromSide || null, toElementId || null, toSide || null,
-      frameId || null, titleColor || defaults.titleColor || null, zIndex,
+      frameId || null, titleColor || defaults.titleColor || null,
+      textColor || null, textAlign || defaults.textAlign || 'left', textValign || defaults.textValign || 'center', link || null, zIndex,
     ];
     stmts.push({ sql: insertSql, args: values });
   }
@@ -889,7 +901,7 @@ app.patch('/api/whiteboards/:whiteboardId/elements/:id', whiteboardAuth, ah(asyn
     x, y, width, height, rotation, color, text, fontSize, bold, italic, underline, strikethrough, imageData, grayscale,
     startCap, endCap, lineStyle, backgroundColor, bringToFront, sendToBack,
     strokeWidth, strokeColor, radius, groupId, locked, fromElementId, fromSide, toElementId, toSide,
-    frameId, titleColor,
+    frameId, titleColor, textColor, textAlign, textValign, link,
   } = req.body || {};
 
   // Une frame reste toujours tout au fond : "premier plan" n'a pas de sens pour elle et est ignoré
@@ -943,6 +955,10 @@ app.patch('/api/whiteboards/:whiteboardId/elements/:id', whiteboardAuth, ah(asyn
     to_side: toSide !== undefined ? toSide : existing.to_side,
     frame_id: nextFrameId,
     title_color: titleColor !== undefined ? titleColor : existing.title_color,
+    text_color: textColor !== undefined ? textColor : existing.text_color,
+    text_align: textAlign !== undefined ? textAlign : existing.text_align,
+    text_valign: textValign !== undefined ? textValign : existing.text_valign,
+    link: link !== undefined ? link : existing.link,
     z_index: zIndex,
   };
   const setColumns = Object.keys(next);

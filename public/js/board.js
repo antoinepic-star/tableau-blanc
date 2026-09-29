@@ -5,6 +5,7 @@
   const LINE_STYLES = [['solid', 'Continu'], ['dashed', 'Pointillés']];
   const STROKE_WIDTHS = [0, 1, 2, 4, 6];
   const RADIUS_PRESETS = [['Aucun', 0, 0], ['Léger', 8, 3], ['Moyen', 20, 6], ['Complet', 999, 8]];
+  const LINK_COLOR = '#1a56db'; // couleur "lien" forcée sur le texte d'un rectangle qui en a un (cf. applyRectangleTextStyle)
   const MIN_W = 60;
   const MIN_H = 40;
   const MIN_LINE_LENGTH = 30;
@@ -566,6 +567,7 @@
       underline: d.underline, strikethrough: d.strikethrough, imageData: d.imageData, grayscale: d.grayscale,
       lineStyle: d.lineStyle, backgroundColor: d.backgroundColor, strokeWidth: d.strokeWidth, strokeColor: d.strokeColor,
       radius: d.radius, startCap: d.startCap, endCap: d.endCap, titleColor: d.titleColor,
+      textColor: d.textColor, textAlign: d.textAlign, textValign: d.textValign, link: d.link,
       fromElementId: d.fromElementId, fromSide: d.fromSide, toElementId: d.toElementId, toSide: d.toSide,
       frameId: d.frameId, _sourceId: d.id,
     };
@@ -988,7 +990,127 @@
     `;
   }
 
+  // Alignement du texte d'un rectangle : deux rangées (horizontal, vertical) dans UN seul popover —
+  // cliquer une option ne le referme pas (comme borderDropdownHtml ci-dessous), pour pouvoir ajuster
+  // les deux sans rouvrir le menu.
+  function alignDropdownHtml(data) {
+    const h = data.textAlign || 'left';
+    const v = data.textValign || 'center';
+    const hIcon = { left: iconTextAlignLeft, center: iconTextAlignCenter, right: iconTextAlignRight }[h]();
+    return `
+      <div class="toolbar-dropdown" data-role="align-wrap">
+        <button type="button" class="toolbar-dropdown-trigger" data-role="align-trigger" title="Alignement du texte">${hIcon}</button>
+        <div class="toolbar-popover toolbar-thickness-popover" data-role="align-popover">
+          <div class="toolbar-thickness-row">
+            <button type="button" class="toolbar-thickness-option${h === 'left' ? ' is-active' : ''}" data-align-h="left" title="Aligné à gauche">${iconTextAlignLeft()}</button>
+            <button type="button" class="toolbar-thickness-option${h === 'center' ? ' is-active' : ''}" data-align-h="center" title="Centré">${iconTextAlignCenter()}</button>
+            <button type="button" class="toolbar-thickness-option${h === 'right' ? ' is-active' : ''}" data-align-h="right" title="Aligné à droite">${iconTextAlignRight()}</button>
+          </div>
+          <div class="toolbar-thickness-row">
+            <button type="button" class="toolbar-thickness-option${v === 'top' ? ' is-active' : ''}" data-align-v="top" title="Aligné en haut">${iconValignTop()}</button>
+            <button type="button" class="toolbar-thickness-option${v === 'center' ? ' is-active' : ''}" data-align-v="center" title="Centré verticalement">${iconValignMiddle()}</button>
+            <button type="button" class="toolbar-thickness-option${v === 'bottom' ? ' is-active' : ''}" data-align-v="bottom" title="Aligné en bas">${iconValignBottom()}</button>
+          </div>
+        </div>
+      </div>
+    `;
+  }
+
+  function linkDropdownHtml(data) {
+    const hasLink = !!data.link;
+    const escaped = hasLink ? data.link.replace(/"/g, '&quot;') : '';
+    return `
+      <div class="toolbar-dropdown" data-role="link-wrap">
+        <button type="button" class="toolbar-dropdown-trigger${hasLink ? ' is-active' : ''}" data-role="link-trigger" title="${hasLink ? 'Modifier le lien' : 'Ajouter un lien'}">${iconLinkChain()}</button>
+        <div class="toolbar-popover toolbar-link-popover" data-role="link-popover">
+          <input type="text" class="toolbar-link-input" data-role="link-input" placeholder="https://…" value="${escaped}">
+          <div class="toolbar-link-actions">
+            <button type="button" class="toolbar-link-remove" data-role="link-remove"${hasLink ? '' : ' hidden'}>Retirer le lien</button>
+            <button type="button" class="primary-btn toolbar-link-apply" data-role="link-apply">OK</button>
+          </div>
+        </div>
+      </div>
+    `;
+  }
+
+  // Un seul bouton pour arrondi + épaisseur/style du contour + couleur du contour (façon Miro) — trois
+  // réglages qui décrivaient auparavant trois boutons distincts. Comme align/link ci-dessus, on
+  // n'échappe pas le popover après un choix : plusieurs réglages s'enchaînent souvent (ex. choisir le
+  // style ET la couleur du contour).
+  function borderDropdownHtml(data) {
+    const r = data.radius || 0;
+    const w = data.strokeWidth || 0;
+    const style = data.lineStyle === 'dashed' ? 'dashed' : 'solid';
+    return `
+      <div class="toolbar-dropdown" data-role="border-wrap">
+        <button type="button" class="toolbar-dropdown-trigger" data-role="border-trigger" title="Bordure">${radiusCornersIconSvg()}</button>
+        <div class="toolbar-popover toolbar-border-popover" data-role="border-popover">
+          <div class="toolbar-popover-label">Angles</div>
+          <div class="toolbar-thickness-row">
+            ${RADIUS_PRESETS.map(([label, val, iconRx]) => `<button type="button" class="toolbar-thickness-option${r === val ? ' is-active' : ''}" data-radius="${val}" title="${label}">${radiusIconSvg(iconRx)}</button>`).join('')}
+          </div>
+          <div class="toolbar-popover-label">Épaisseur du contour</div>
+          <div class="toolbar-thickness-row">
+            ${STROKE_WIDTHS.map(sw => `<button type="button" class="toolbar-thickness-option${w === sw ? ' is-active' : ''}" data-strokewidth="${sw}" title="${sw === 0 ? 'Aucun contour' : sw + 'px'}"><span class="toolbar-thickness-bar" style="height:${sw || 2}px; opacity:${sw ? 1 : 0.3}"></span></button>`).join('')}
+          </div>
+          <div class="toolbar-popover-label">Style du trait</div>
+          <div class="toolbar-thickness-row">
+            ${LINE_STYLES.map(([s, label]) => `<button type="button" class="toolbar-thickness-option${style === s ? ' is-active' : ''}" data-linestyle="${s}" title="${label}"><span class="toolbar-thickness-bar${s === 'dashed' ? ' is-dashed' : ''}" style="height:4px"></span></button>`).join('')}
+          </div>
+          <div class="toolbar-popover-label">Couleur du contour</div>
+          <div class="toolbar-color-popover-inline">
+            ${ELEMENT_COLORS.map(c => `<button type="button" class="toolbar-color-swatch${c === (data.strokeColor || null) ? ' is-active' : ''}" data-strokecolor="${c}" style="background:${c}"></button>`).join('')}
+          </div>
+        </div>
+      </div>
+    `;
+  }
+
+  // Menu "⋮" : regroupe dupliquer / premier plan / arrière-plan / supprimer, plutôt que quatre icônes
+  // séparées dans la barre (cf. la maquette Miro fournie) — "Arranger" y est aplati en ses deux
+  // actions déjà existantes plutôt qu'un sous-menu, elles ne sont que deux.
+  function moreMenuHtml() {
+    return `
+      <div class="toolbar-dropdown" data-role="more-wrap">
+        <button type="button" class="toolbar-dropdown-trigger" data-role="more-trigger" title="Plus d'options">${iconMoreDots()}</button>
+        <div class="toolbar-popover toolbar-menu-popover" data-role="more-popover">
+          <button type="button" class="toolbar-menu-item" data-role="more-duplicate">Dupliquer</button>
+          <button type="button" class="toolbar-menu-item" data-role="more-front">Mettre au premier plan</button>
+          <button type="button" class="toolbar-menu-item" data-role="more-back">Envoyer à l'arrière-plan</button>
+          <span class="toolbar-menu-sep"></span>
+          <button type="button" class="toolbar-menu-item toolbar-menu-danger" data-role="more-delete">Supprimer</button>
+        </div>
+      </div>
+    `;
+  }
+
+  // Barre d'action d'un rectangle (façon Miro, cf. maquette fournie) : assez différente du gabarit
+  // partagé ci-dessous (ordre des contrôles, séparateurs, dupliquer/premier plan/arrière-plan/
+  // supprimer regroupés dans un menu "⋮" plutôt qu'en icônes séparées) pour avoir sa propre mise en
+  // page plutôt que de complexifier buildToolbarHtml avec des cas particuliers partout.
+  function buildRectangleToolbarHtml(data) {
+    const voted = (data.votes || []).includes(myName);
+    return `
+      <select class="element-fontsize-select" data-role="rect-fontsize" title="Taille du texte">${FONT_SIZES.map(s => `<option value="${s}"${Number(data.fontSize) === s ? ' selected' : ''}>${s}</option>`).join('')}</select>
+      ${formatDropdownHtml(data)}
+      ${alignDropdownHtml(data)}
+      ${colorDropdownHtml('textcolor', data.textColor, false, 'Couleur du texte')}
+      ${linkDropdownHtml(data)}
+      <span class="element-toolbar-sep"></span>
+      ${colorDropdownHtml('color', data.color, false, 'Couleur de fond')}
+      ${borderDropdownHtml(data)}
+      <span class="element-toolbar-sep"></span>
+      <button type="button" class="element-icon-btn element-vote-btn${voted ? ' is-active' : ''}" title="${voted ? 'Retirer mon vote' : 'Voter'}">${iconVote()}</button>
+      <button type="button" class="element-icon-btn element-comment-btn" title="Commenter">${iconComment()}</button>
+      <span class="element-toolbar-sep"></span>
+      <button type="button" class="element-icon-btn element-lock-btn" title="Verrouiller">${iconLock()}</button>
+      <span class="element-toolbar-sep"></span>
+      ${moreMenuHtml()}
+    `;
+  }
+
   function buildToolbarHtml(data) {
+    if (data.type === 'rectangle') return buildRectangleToolbarHtml(data);
     let controls = '';
     if (data.type === 'note') {
       controls = colorDropdownHtml('color', data.color, false, 'Couleur');
@@ -1019,12 +1141,6 @@
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 2v14a2 2 0 0 0 2 2h14"/><path d="M18 22V8a2 2 0 0 0-2-2H2"/></svg>
         </button>
       `;
-    } else if (data.type === 'rectangle') {
-      controls = colorDropdownHtml('color', data.color, false, 'Couleur de fond')
-        + strokeWidthDropdownHtml(data)
-        + colorDropdownHtml('stroke', data.strokeColor, false, 'Couleur du contour', 'ring')
-        + radiusDropdownHtml(data)
-        + `<select class="element-fontsize-select" data-role="rect-fontsize" title="Taille du texte">${FONT_SIZES.map(s => `<option value="${s}"${Number(data.fontSize) === s ? ' selected' : ''}>${s}</option>`).join('')}</select>`;
     } else if (data.type === 'frame') {
       controls = colorDropdownHtml('color', data.color, false, 'Couleur de fond')
         + strokeWidthDropdownHtml(data)
@@ -1091,6 +1207,17 @@
   function iconToFront() { return '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="12" height="12" rx="1.5"/><rect x="9" y="9" width="12" height="12" rx="1.5" fill="currentColor" stroke="none"/></svg>'; }
   function iconToBack() { return '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="12" height="12" rx="1.5" fill="currentColor" stroke="none"/><rect x="9" y="9" width="12" height="12" rx="1.5"/></svg>'; }
   function iconArrange() { return '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>'; }
+  // Alignement du TEXTE dans une forme (distinct des icônes d'alignement d'ÉLÉMENTS ci-dessus,
+  // iconAlignLeft/Center/Right, qui représentent le calage d'objets les uns par rapport aux autres) :
+  // trois lignes de longueurs différentes, calées comme le ferait le texte lui-même.
+  function iconTextAlignLeft() { return '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="4" y1="6" x2="20" y2="6"/><line x1="4" y1="12" x2="14" y2="12"/><line x1="4" y1="18" x2="17" y2="18"/></svg>'; }
+  function iconTextAlignCenter() { return '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="4" y1="6" x2="20" y2="6"/><line x1="7" y1="12" x2="17" y2="12"/><line x1="6" y1="18" x2="18" y2="18"/></svg>'; }
+  function iconTextAlignRight() { return '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="4" y1="6" x2="20" y2="6"/><line x1="10" y1="12" x2="20" y2="12"/><line x1="7" y1="18" x2="20" y2="18"/></svg>'; }
+  function iconValignTop() { return '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="4" y="3" width="16" height="18" rx="1"/><line x1="7.5" y1="8" x2="16.5" y2="8"/></svg>'; }
+  function iconValignMiddle() { return '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="4" y="3" width="16" height="18" rx="1"/><line x1="7.5" y1="12" x2="16.5" y2="12"/></svg>'; }
+  function iconValignBottom() { return '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="4" y="3" width="16" height="18" rx="1"/><line x1="7.5" y1="16" x2="16.5" y2="16"/></svg>'; }
+  function iconLinkChain() { return '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 15l6-6"/><path d="M13 5.5l1-1a3.54 3.54 0 0 1 5 5l-1.5 1.5"/><path d="M11 18.5l-1 1a3.54 3.54 0 0 1-5-5l1.5-1.5"/></svg>'; }
+  function iconMoreDots() { return '<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="5" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="12" cy="19" r="2"/></svg>'; }
 
   function groupMembers(groupId) {
     if (!groupId) return [];
@@ -1618,11 +1745,12 @@
   }
 
   // Aussi utilisée par les frames (même fond + contour qu'un rectangle) — une frame n'expose juste
-  // pas de contrôle d'arrondi dans son toolbar, donc son radius reste à 0 (angles droits).
+  // pas de contrôle de style de trait dans son toolbar, donc son contour reste continu.
   function applyRectangleStyle(entry) {
     if (entry.data.type !== 'rectangle' && entry.data.type !== 'frame') return;
     entry.el.style.background = entry.data.color;
-    entry.el.style.border = entry.data.strokeWidth ? `${entry.data.strokeWidth}px solid ${entry.data.strokeColor || '#1c1c28'}` : 'none';
+    const style = entry.data.lineStyle === 'dashed' ? 'dashed' : 'solid';
+    entry.el.style.border = entry.data.strokeWidth ? `${entry.data.strokeWidth}px ${style} ${entry.data.strokeColor || '#1c1c28'}` : 'none';
     const r = entry.data.radius || 0;
     entry.el.style.borderRadius = r >= 999 ? '999px' : `${r}px`;
   }
@@ -1650,9 +1778,30 @@
     t.style.height = `${t.scrollHeight}px`;
   }
 
+  // Style du texte d'un rectangle : taille, gras/italique/souligné/barré (même principe que le type
+  // "texte" libre, cf. applyTextStyle), couleur, alignement horizontal/vertical, et — s'il a un lien
+  // (cf. wireRectangleLink) — le bleu souligné habituel des liens plutôt que la mise en forme choisie,
+  // pour qu'on le reconnaisse comme cliquable au premier coup d'œil.
   function applyRectangleTextStyle(entry) {
     if (entry.data.type !== 'rectangle' || !entry.textEl) return;
-    entry.textEl.style.fontSize = `${entry.data.fontSize || 16}px`;
+    const d = entry.data;
+    const t = entry.textEl;
+    const hasLink = !!d.link;
+    t.style.fontSize = `${d.fontSize || 16}px`;
+    t.style.fontWeight = d.bold ? '700' : '400';
+    t.style.fontStyle = d.italic ? 'italic' : 'normal';
+    const decorations = [];
+    if (d.underline || hasLink) decorations.push('underline');
+    if (d.strikethrough) decorations.push('line-through');
+    t.style.textDecoration = decorations.join(' ') || 'none';
+    t.style.color = hasLink ? LINK_COLOR : (d.textColor || 'rgba(0,0,0,0.82)');
+    t.style.textAlign = d.textAlign || 'left';
+    const frame = entry.el.querySelector('.element-text-frame');
+    if (frame) {
+      frame.style.justifyContent = { left: 'flex-start', center: 'center', right: 'flex-end' }[d.textAlign || 'left'];
+      frame.style.alignItems = { top: 'flex-start', center: 'center', bottom: 'flex-end' }[d.textValign || 'center'];
+    }
+    entry.el.classList.toggle('has-link', hasLink);
   }
 
   // Un post-it grandit avec son texte : la zone de texte (position absolue, sans hauteur fixe côté
@@ -1952,7 +2101,7 @@
       lineStyle: d.lineStyle, backgroundColor: d.backgroundColor, strokeWidth: d.strokeWidth, strokeColor: d.strokeColor,
       radius: d.radius, startCap: d.startCap, endCap: d.endCap,
       fromElementId: d.fromElementId, fromSide: d.fromSide, toElementId: d.toElementId, toSide: d.toSide,
-      titleColor: d.titleColor,
+      titleColor: d.titleColor, textColor: d.textColor, textAlign: d.textAlign, textValign: d.textValign, link: d.link,
       // frameId explicite (plutôt que de laisser le serveur redéduire l'appartenance de la copie) :
       // avec un décalage aussi faible, une copie posée tout au bord de la frame pourrait sinon se
       // retrouver considérée hors de ses limites.
@@ -1978,7 +2127,9 @@
         color: cd.color, text: cd.text, fontSize: cd.fontSize, bold: cd.bold, italic: cd.italic,
         underline: cd.underline, strikethrough: cd.strikethrough, imageData: cd.imageData, grayscale: cd.grayscale,
         lineStyle: cd.lineStyle, backgroundColor: cd.backgroundColor, strokeWidth: cd.strokeWidth, strokeColor: cd.strokeColor,
-        radius: cd.radius, startCap: cd.startCap, endCap: cd.endCap, frameId: 'newFrame',
+        radius: cd.radius, startCap: cd.startCap, endCap: cd.endCap,
+        textColor: cd.textColor, textAlign: cd.textAlign, textValign: cd.textValign, link: cd.link,
+        frameId: 'newFrame',
       };
     });
     withBusy(Api.createElementsBatch([{ ...payload, frameId: undefined, clientId: 'newFrame' }, ...childItems]))
@@ -2051,17 +2202,24 @@
     btn.addEventListener('click', () => toggleVote(entry));
   }
 
+  // Réutilisée par "texte" (applyTextStyle) et "rectangle" (applyRectangleTextStyle) — même popover,
+  // seule la fonction de style à réappliquer diffère (le rectangle a sa propre couleur de texte et
+  // son alignement en plus, cf. applyRectangleTextStyle).
   function wireFormatDropdown(entry) {
     const parts = wireDropdownToggle('format');
     if (!parts) return;
+    const isRect = entry.data.type === 'rectangle';
+    const applyStyle = isRect ? applyRectangleTextStyle : applyTextStyle;
     parts.popover.querySelectorAll('.element-format-btn[data-format]').forEach((btn) => {
       btn.addEventListener('pointerdown', e => e.stopPropagation());
       btn.addEventListener('click', () => {
         const key = btn.dataset.format;
         entry.data[key] = !entry.data[key];
         btn.classList.toggle('is-active', entry.data[key]);
-        applyTextStyle(entry);
-        if (key === 'bold' || key === 'italic') applyTextAutoSize(entry);
+        applyStyle(entry);
+        if (key === 'bold' || key === 'italic') {
+          if (isRect) autoGrowRectangleTextarea(entry); else applyTextAutoSize(entry);
+        }
         Api.updateElement(entry.data.id, { [key]: entry.data[key] }).catch(() => {});
       });
     });
@@ -2114,26 +2272,6 @@
     });
   }
 
-  function wireRadiusDropdown(entry) {
-    const parts = wireDropdownToggle('radius');
-    if (!parts) return;
-    const { trigger, popover } = parts;
-    popover.querySelectorAll('[data-radius]').forEach((opt) => {
-      opt.addEventListener('pointerdown', e => e.stopPropagation());
-      opt.addEventListener('click', () => {
-        const r = Number(opt.dataset.radius);
-        entry.data.radius = r;
-        applyRectangleStyle(entry);
-        popover.querySelectorAll('[data-radius]').forEach(o => o.classList.remove('is-active'));
-        opt.classList.add('is-active');
-        const preset = RADIUS_PRESETS.find(([, val]) => val === r);
-        if (preset) trigger.innerHTML = radiusIconSvg(preset[2]);
-        popover.classList.remove('is-open');
-        Api.updateElement(entry.data.id, { radius: r }).catch(() => {});
-      });
-    });
-  }
-
   function wireToolbarControls(entry) {
     const id = entry.data.id;
     const type = entry.data.type;
@@ -2175,13 +2313,124 @@
     }
 
     if (type === 'rectangle') {
-      wireColorDropdown(entry, 'stroke', (color) => {
-        entry.data.strokeColor = color;
-        applyRectangleStyle(entry);
-        Api.updateElement(id, { strokeColor: color }).catch(() => {});
+      wireColorDropdown(entry, 'textcolor', (color) => {
+        entry.data.textColor = color;
+        applyRectangleTextStyle(entry);
+        Api.updateElement(id, { textColor: color }).catch(() => {});
       });
-      wireStrokeWidthDropdown(entry);
-      wireRadiusDropdown(entry);
+      wireFormatDropdown(entry); // conscient du type rectangle (cf. plus haut) : applyRectangleTextStyle, pas applyTextStyle
+
+      // Alignement (deux rangées horizontal/vertical) : reste ouvert après un choix, on ajuste
+      // souvent les deux à la suite.
+      const alignParts = wireDropdownToggle('align');
+      if (alignParts) {
+        const { trigger, popover } = alignParts;
+        const hIcons = { left: iconTextAlignLeft, center: iconTextAlignCenter, right: iconTextAlignRight };
+        popover.querySelectorAll('[data-align-h]').forEach((btn) => {
+          btn.addEventListener('pointerdown', e => e.stopPropagation());
+          btn.addEventListener('click', () => {
+            entry.data.textAlign = btn.dataset.alignH;
+            applyRectangleTextStyle(entry);
+            popover.querySelectorAll('[data-align-h]').forEach(b => b.classList.remove('is-active'));
+            btn.classList.add('is-active');
+            trigger.innerHTML = hIcons[btn.dataset.alignH]();
+            Api.updateElement(id, { textAlign: entry.data.textAlign }).catch(() => {});
+          });
+        });
+        popover.querySelectorAll('[data-align-v]').forEach((btn) => {
+          btn.addEventListener('pointerdown', e => e.stopPropagation());
+          btn.addEventListener('click', () => {
+            entry.data.textValign = btn.dataset.alignV;
+            applyRectangleTextStyle(entry);
+            popover.querySelectorAll('[data-align-v]').forEach(b => b.classList.remove('is-active'));
+            btn.classList.add('is-active');
+            Api.updateElement(id, { textValign: entry.data.textValign }).catch(() => {});
+          });
+        });
+      }
+
+      // Lien : le texte devient cliquable (mis en forme "lien" forcée, cf. applyRectangleTextStyle),
+      // ouvrir sur un simple clic géré dans wireTextEditing.
+      const linkParts = wireDropdownToggle('link');
+      if (linkParts) {
+        const { trigger, popover } = linkParts;
+        const input = popover.querySelector('[data-role="link-input"]');
+        const applyBtn = popover.querySelector('[data-role="link-apply"]');
+        const removeBtn = popover.querySelector('[data-role="link-remove"]');
+        input.addEventListener('pointerdown', e => e.stopPropagation());
+        input.addEventListener('keydown', (e) => {
+          e.stopPropagation();
+          if (e.key === 'Enter') applyBtn.click();
+        });
+        applyBtn.addEventListener('pointerdown', e => e.stopPropagation());
+        applyBtn.addEventListener('click', () => {
+          const url = input.value.trim();
+          entry.data.link = url || null;
+          applyRectangleTextStyle(entry);
+          trigger.classList.toggle('is-active', !!entry.data.link);
+          removeBtn.hidden = !entry.data.link;
+          popover.classList.remove('is-open');
+          Api.updateElement(id, { link: entry.data.link }).catch(() => {});
+        });
+        removeBtn.addEventListener('pointerdown', e => e.stopPropagation());
+        removeBtn.addEventListener('click', () => {
+          input.value = '';
+          entry.data.link = null;
+          applyRectangleTextStyle(entry);
+          trigger.classList.remove('is-active');
+          removeBtn.hidden = true;
+          popover.classList.remove('is-open');
+          Api.updateElement(id, { link: null }).catch(() => {});
+        });
+      }
+
+      // Bordure combinée (angles, épaisseur, style du trait, couleur) : reste ouvert après un choix,
+      // comme "align" ci-dessus.
+      const borderParts = wireDropdownToggle('border');
+      if (borderParts) {
+        const { popover } = borderParts;
+        popover.querySelectorAll('[data-radius]').forEach((btn) => {
+          btn.addEventListener('pointerdown', e => e.stopPropagation());
+          btn.addEventListener('click', () => {
+            entry.data.radius = Number(btn.dataset.radius);
+            applyRectangleStyle(entry);
+            popover.querySelectorAll('[data-radius]').forEach(b => b.classList.remove('is-active'));
+            btn.classList.add('is-active');
+            Api.updateElement(id, { radius: entry.data.radius }).catch(() => {});
+          });
+        });
+        popover.querySelectorAll('[data-strokewidth]').forEach((btn) => {
+          btn.addEventListener('pointerdown', e => e.stopPropagation());
+          btn.addEventListener('click', () => {
+            entry.data.strokeWidth = Number(btn.dataset.strokewidth);
+            applyRectangleStyle(entry);
+            popover.querySelectorAll('[data-strokewidth]').forEach(b => b.classList.remove('is-active'));
+            btn.classList.add('is-active');
+            Api.updateElement(id, { strokeWidth: entry.data.strokeWidth }).catch(() => {});
+          });
+        });
+        popover.querySelectorAll('[data-linestyle]').forEach((btn) => {
+          btn.addEventListener('pointerdown', e => e.stopPropagation());
+          btn.addEventListener('click', () => {
+            entry.data.lineStyle = btn.dataset.linestyle;
+            applyRectangleStyle(entry);
+            popover.querySelectorAll('[data-linestyle]').forEach(b => b.classList.remove('is-active'));
+            btn.classList.add('is-active');
+            Api.updateElement(id, { lineStyle: entry.data.lineStyle }).catch(() => {});
+          });
+        });
+        popover.querySelectorAll('[data-strokecolor]').forEach((btn) => {
+          btn.addEventListener('pointerdown', e => e.stopPropagation());
+          btn.addEventListener('click', () => {
+            entry.data.strokeColor = btn.dataset.strokecolor;
+            applyRectangleStyle(entry);
+            popover.querySelectorAll('[data-strokecolor]').forEach(b => b.classList.remove('is-active'));
+            btn.classList.add('is-active');
+            Api.updateElement(id, { strokeColor: entry.data.strokeColor }).catch(() => {});
+          });
+        });
+      }
+
       const rectFontSizeSelect = toolbarEl.querySelector('[data-role="rect-fontsize"]');
       if (rectFontSizeSelect) {
         rectFontSizeSelect.addEventListener('pointerdown', e => e.stopPropagation());
@@ -2192,6 +2441,41 @@
           autoGrowRectangleTextarea(entry);
           Api.updateElement(id, { fontSize: size }).catch(() => {});
         });
+      }
+
+      // Menu "⋮" : dupliquer / premier plan / arrière-plan / supprimer (cf. moreMenuHtml).
+      const moreParts = wireDropdownToggle('more');
+      if (moreParts) {
+        const { trigger, popover } = moreParts;
+        const dup = popover.querySelector('[data-role="more-duplicate"]');
+        if (dup) {
+          dup.addEventListener('pointerdown', e => e.stopPropagation());
+          dup.addEventListener('click', () => { popover.classList.remove('is-open'); duplicateElement(entry); });
+        }
+        const front = popover.querySelector('[data-role="more-front"]');
+        if (front) {
+          front.addEventListener('pointerdown', e => e.stopPropagation());
+          front.addEventListener('click', () => {
+            popover.classList.remove('is-open');
+            Api.updateElement(id, { bringToFront: true }).then(applyRemoteUpdate).catch(() => {});
+          });
+        }
+        const back = popover.querySelector('[data-role="more-back"]');
+        if (back) {
+          back.addEventListener('pointerdown', e => e.stopPropagation());
+          back.addEventListener('click', () => {
+            popover.classList.remove('is-open');
+            Api.updateElement(id, { sendToBack: true }).then(applyRemoteUpdate).catch(() => {});
+          });
+        }
+        const del = popover.querySelector('[data-role="more-delete"]');
+        if (del) {
+          del.addEventListener('pointerdown', e => e.stopPropagation());
+          del.addEventListener('click', () => {
+            popover.classList.remove('is-open');
+            showDeleteConfirm(entry, trigger.getBoundingClientRect());
+          });
+        }
       }
     }
 
@@ -2309,13 +2593,18 @@
       });
     }
 
+    // Absents pour un rectangle (regroupés dans le menu "⋮" à la place, cf. moreMenuHtml).
     const dupBtn = toolbarEl.querySelector('.element-duplicate-btn');
-    dupBtn.addEventListener('pointerdown', e => e.stopPropagation());
-    dupBtn.addEventListener('click', () => duplicateElement(entry));
+    if (dupBtn) {
+      dupBtn.addEventListener('pointerdown', e => e.stopPropagation());
+      dupBtn.addEventListener('click', () => duplicateElement(entry));
+    }
 
     const delBtn = toolbarEl.querySelector('.element-delete-btn');
-    delBtn.addEventListener('pointerdown', e => e.stopPropagation());
-    delBtn.addEventListener('click', () => showDeleteConfirm(entry, delBtn.getBoundingClientRect()));
+    if (delBtn) {
+      delBtn.addEventListener('pointerdown', e => e.stopPropagation());
+      delBtn.addEventListener('click', () => showDeleteConfirm(entry, delBtn.getBoundingClientRect()));
+    }
   }
 
   function wireTextEditing(entry) {
@@ -2349,7 +2638,23 @@
       }, 600);
     });
     textEl.addEventListener('blur', () => { clearTimeout(textSaveTimer); stopEditing(true); });
-    textEl.addEventListener('pointerdown', (e) => { if (el.classList.contains('is-editing')) e.stopPropagation(); });
+    textEl.addEventListener('pointerdown', (e) => {
+      if (el.classList.contains('is-editing')) { e.stopPropagation(); return; }
+      // Un rectangle avec un lien : cliquer PILE sur le texte l'ouvre plutôt que de démarrer un
+      // glisser/passer en édition (cf. le clic ci-dessous) — un double-clic reste possible pour
+      // éditer, "dblclick" étant un évènement distinct qui continue de remonter jusqu'à l'élément.
+      if (data.type === 'rectangle' && data.link) e.stopPropagation();
+    });
+    if (data.type === 'rectangle') {
+      textEl.addEventListener('click', (e) => {
+        if (!entry.data.link || el.classList.contains('is-editing')) return;
+        if (e.detail > 1) return; // laisse le double-clic (dblclick) déclencher l'édition à la place
+        e.preventDefault();
+        const raw = entry.data.link.trim();
+        const url = /^[a-z][a-z0-9+.-]*:\/\//i.test(raw) ? raw : `https://${raw}`;
+        window.open(url, '_blank', 'noopener');
+      });
+    }
 
     entry.enterEditing = function enterEditing() {
       if (entry.data.locked) return;
