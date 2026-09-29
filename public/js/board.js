@@ -39,10 +39,10 @@
   const hintPill = document.getElementById('hintPill');
   const busyPill = document.getElementById('busyPill');
   const gridToggleBtn = document.getElementById('gridToggleBtn');
-  const addDrawerBtn = document.getElementById('addDrawerBtn');
-  const addDrawer = document.getElementById('addDrawer');
-  const addDrawerOverlay = document.getElementById('addDrawerOverlay');
-  const addDrawerCloseBtn = document.getElementById('addDrawerCloseBtn');
+  const addToolbar = document.getElementById('addToolbar');
+  const addToolbarCollapseBtn = document.getElementById('addToolbarCollapseBtn');
+  const addToolbarRevealBtn = document.getElementById('addToolbarRevealBtn');
+  const addFlyout = document.getElementById('addFlyout');
   const imageFileInput = document.getElementById('imageFileInput');
   const toolbarEl = document.getElementById('elementToolbar');
   const richTextToolbarEl = document.getElementById('richTextToolbar');
@@ -332,7 +332,7 @@
     deselectElement();
     clearMultiSelection();
     closeConfirmPopover();
-    closeAddDrawer();
+    closeAddFlyout();
     isSelecting = true;
     selectionMoved = false;
     selectionStartScreen = { x: e.clientX, y: e.clientY };
@@ -373,28 +373,23 @@
     else if (captured.length >= 2) setMultiSelection(captured);
   });
 
-  // ---------- Drawer "Ajouter un élément" ----------
+  // ---------- Barre "ajouter" flottante (façon Miro) ----------
+  // Remplace l'ancien drawer plein écran : chaque bouton pose directement son type au clic (ou se
+  // glisse jusqu'au point de dépôt, cf. startTileDrag), sauf les deux familles à plusieurs variantes
+  // (Formes, Blocs) qui ouvrent #addFlyout à la place.
 
-  function openAddDrawer() {
-    deselectElement();
-    clearMultiSelection();
-    addDrawer.classList.add('is-open');
-    addDrawerOverlay.classList.add('is-open');
-  }
-  function closeAddDrawer() {
-    addDrawer.classList.remove('is-open');
-    addDrawerOverlay.classList.remove('is-open');
-  }
+  const ADD_TOOLBAR_COLLAPSED_KEY = 'tb_add_toolbar_collapsed';
 
-  addDrawerBtn.addEventListener('click', (e) => {
-    e.stopPropagation();
-    openAddDrawer();
-  });
-  addDrawerCloseBtn.addEventListener('click', closeAddDrawer);
-  addDrawerOverlay.addEventListener('click', closeAddDrawer);
-  addDrawer.querySelectorAll('.add-tile').forEach((btn) => {
-    btn.addEventListener('pointerdown', (e) => startTileDrag(e, btn));
-  });
+  const ADD_FLYOUTS = {
+    shapes: [
+      { type: 'rectangle', label: 'Rectangle', icon: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="14" rx="2"/></svg>' },
+      { type: 'line', label: 'Trait', icon: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="5" y1="19" x2="19" y2="5"/></svg>' },
+    ],
+    blocks: [
+      { type: 'instruction', label: 'Consigne', icon: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="7" cy="7" r="4"/><path d="M6 5.5h2v3"/><line x1="4" y1="16" x2="20" y2="16"/><line x1="4" y1="20" x2="15" y2="20"/></svg>' },
+      { type: 'tip', label: 'Tips', icon: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18h6"/><path d="M10 21h4"/><path d="M12 3a6 6 0 0 0-3.6 10.8c.5.4.8 1 .8 1.7v.5h5.6v-.5c0-.7.3-1.3.8-1.7A6 6 0 0 0 12 3z"/></svg>' },
+    ],
+  };
 
   function viewportCenterWorld() {
     const rect = viewportEl.getBoundingClientRect();
@@ -406,12 +401,19 @@
     return clientX >= r.left && clientX <= r.right && clientY >= r.top && clientY <= r.bottom;
   }
 
-  // Glisser-déposer d'un bloc du drawer vers le tableau : le drawer se ferme dès que le geste est
-  // reconnu comme un glissement (au-delà d'un petit seuil), une pastille suit le curseur, et le
-  // dépôt sur le canvas crée l'élément centré sur le point de relâchement. Un simple clic (sans
-  // dépasser le seuil) garde l'ancien comportement : création au centre de la vue courante.
-  function startTileDrag(e, btn) {
-    const type = btn.dataset.type;
+  function createElementOfType(type) {
+    const { x: wx, y: wy } = viewportCenterWorld();
+    placeNewElement(type, wx, wy, { cascade: true });
+  }
+
+  function closeAddFlyout() { addFlyout.classList.remove('is-open'); }
+
+  // Glisser-déposer un bouton de la barre (ou du sous-menu d'une famille) vers le tableau : une
+  // pastille suit le curseur, et le dépôt sur le canvas crée l'élément centré sur le point de
+  // relâchement. Un simple clic (sans dépasser un petit seuil) garde le comportement historique :
+  // création au centre de la vue courante.
+  function startTileDrag(e, type, iconHtml) {
+    closeAddFlyout();
     const startX = e.clientX, startY = e.clientY;
     let dragging = false;
     let ghost = null;
@@ -419,10 +421,9 @@
     function onMove(ev) {
       if (!dragging && Math.hypot(ev.clientX - startX, ev.clientY - startY) > 6) {
         dragging = true;
-        closeAddDrawer();
         ghost = document.createElement('div');
         ghost.className = 'drag-ghost';
-        ghost.appendChild(btn.querySelector('.add-tile-icon').cloneNode(true));
+        ghost.innerHTML = iconHtml;
         document.body.appendChild(ghost);
       }
       if (dragging) {
@@ -439,7 +440,6 @@
       if (ghost) ghost.remove();
 
       if (!dragging) {
-        closeAddDrawer();
         createElementOfType(type);
         return;
       }
@@ -454,10 +454,55 @@
     window.addEventListener('pointerup', onUp);
   }
 
-  function createElementOfType(type) {
-    const { x: wx, y: wy } = viewportCenterWorld();
-    placeNewElement(type, wx, wy, { cascade: true });
+  addToolbar.querySelectorAll('.add-toolbar-btn[data-type]').forEach((btn) => {
+    btn.addEventListener('pointerdown', (e) => startTileDrag(e, btn.dataset.type, btn.querySelector('svg').outerHTML));
+  });
+
+  function openAddFlyout(btn, key) {
+    addFlyout.innerHTML = ADD_FLYOUTS[key].map(it => `
+      <button type="button" class="add-flyout-item" data-type="${it.type}">
+        <span class="add-flyout-item-icon">${it.icon}</span>
+        <span class="add-flyout-item-label">${it.label}</span>
+      </button>
+    `).join('');
+    addFlyout.querySelectorAll('.add-flyout-item').forEach((item) => {
+      item.addEventListener('pointerdown', (e) => startTileDrag(e, item.dataset.type, item.querySelector('.add-flyout-item-icon').innerHTML));
+    });
+    addFlyout.dataset.for = key;
+    addFlyout.classList.add('is-open');
+    const r = btn.getBoundingClientRect();
+    const fRect = addFlyout.getBoundingClientRect();
+    addFlyout.style.left = `${r.right + 10}px`;
+    addFlyout.style.top = `${clamp(r.top + r.height / 2 - fRect.height / 2, 8, window.innerHeight - fRect.height - 8)}px`;
   }
+
+  addToolbar.querySelectorAll('.add-toolbar-btn[data-flyout]').forEach((btn) => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const key = btn.dataset.flyout;
+      const wasOpenForThis = addFlyout.classList.contains('is-open') && addFlyout.dataset.for === key;
+      closeAddFlyout();
+      if (!wasOpenForThis) openAddFlyout(btn, key);
+    });
+  });
+
+  document.addEventListener('pointerdown', (e) => {
+    if (!addFlyout.contains(e.target) && !e.target.closest('[data-flyout]')) closeAddFlyout();
+  });
+
+  // Repliée/dépliée : mémorisé d'une session à l'autre (même principe que le quadrillage, cf.
+  // applyGridVisibility plus bas), pour ne pas avoir à la remasquer à chaque ouverture du tableau.
+  function setAddToolbarCollapsed(collapsed) {
+    addToolbar.hidden = collapsed;
+    addToolbarRevealBtn.hidden = !collapsed;
+    if (collapsed) closeAddFlyout();
+    try { localStorage.setItem(ADD_TOOLBAR_COLLAPSED_KEY, collapsed ? '1' : '0'); } catch (_) {}
+  }
+  addToolbarCollapseBtn.addEventListener('click', () => setAddToolbarCollapsed(true));
+  addToolbarRevealBtn.addEventListener('click', () => setAddToolbarCollapsed(false));
+  let addToolbarInitiallyCollapsed = false;
+  try { addToolbarInitiallyCollapsed = localStorage.getItem(ADD_TOOLBAR_COLLAPSED_KEY) === '1'; } catch (_) {}
+  setAddToolbarCollapsed(addToolbarInitiallyCollapsed);
 
   // Un élément posé (toolbar, image) doit atterrir sur la grille comme un élément glissé — jamais
   // "entre deux cases". Contrairement au glisser (qui accroche aussi sur les autres éléments proches,

@@ -54,49 +54,68 @@ body.board-page { overflow: hidden; height: 100vh; }
 }
 .zoom-pct:hover { color: var(--text); }
 
-/* ---------- Drawer "Ajouter un élément" ---------- */
+/* ---------- Barre "ajouter" flottante (façon Miro) ---------- */
 
-.add-drawer-overlay {
-  position: fixed; inset: 0; background: rgba(20,20,30,0.35);
-  opacity: 0; pointer-events: none; transition: opacity 0.2s ease;
-  z-index: 20100;
+.add-toolbar {
+  position: fixed; left: 16px; top: 50%; transform: translateY(-50%); z-index: 100;
+  display: flex; flex-direction: column; align-items: center; gap: 2px;
+  background: #fff; border-radius: 16px; padding: 6px;
+  box-shadow: 0 4px 14px rgba(20,20,40,0.16);
 }
-.add-drawer-overlay.is-open { opacity: 1; pointer-events: auto; }
+/* Même spécificité que la règle "display: flex" ci-dessus (une classe) : sans ce doublon, l'attribut
+   [hidden] posé en JS (cf. setAddToolbarCollapsed dans board.js) perdrait le duel de spécificité et
+   la barre resterait affichée malgré lui. */
+.add-toolbar[hidden] { display: none; }
+.add-toolbar-btn {
+  width: 40px; height: 40px; border: none; background: transparent; border-radius: 10px;
+  display: flex; align-items: center; justify-content: center; color: var(--text); cursor: pointer;
+  position: relative; flex-shrink: 0;
+}
+.add-toolbar-btn:hover { background: #f4f4f6; }
+.add-toolbar-sep { width: 26px; height: 1px; background: var(--border); margin: 4px 0; flex-shrink: 0; }
 
-.add-drawer {
-  position: fixed; top: 0; right: -420px; bottom: 0; width: 400px; max-width: 90vw;
-  background: #fff; box-shadow: -8px 0 28px rgba(20,20,30,.15);
-  display: flex; flex-direction: column;
-  transition: right 0.25s cubic-bezier(.4,0,.2,1);
-  z-index: 20101;
+/* Infobulle sombre à droite du bouton au survol (façon Miro) plutôt que le "title" natif du
+   navigateur — cf. data-tooltip posé sur chaque bouton dans board.html. */
+.add-toolbar-btn[data-tooltip]::after {
+  content: attr(data-tooltip);
+  position: absolute; left: calc(100% + 10px); top: 50%; transform: translateY(-50%);
+  background: #1c1c28; color: #fff; font-size: 12px; font-weight: 500; white-space: nowrap;
+  padding: 6px 10px; border-radius: 6px; opacity: 0; visibility: hidden; transition: opacity 0.12s;
+  pointer-events: none; z-index: 20100;
 }
-.add-drawer.is-open { right: 0; }
+.add-toolbar-btn[data-tooltip]:hover::after { opacity: 1; visibility: visible; }
 
-.add-drawer-header {
-  display: flex; align-items: center; justify-content: space-between;
-  padding: 26px 26px 4px;
+.add-toolbar-reveal {
+  position: fixed; left: 16px; top: 50%; transform: translateY(-50%); z-index: 100;
+  width: 40px; height: 40px; border: none; border-radius: 50%; background: var(--purple); color: #fff;
+  display: flex; align-items: center; justify-content: center; cursor: pointer;
+  box-shadow: 0 4px 14px rgba(20,20,40,0.16);
 }
-.add-drawer-header h2 { font-size: 19px; font-weight: 700; color: var(--text); }
+.add-toolbar-reveal:hover { background: var(--purple-dark); }
+.add-toolbar-reveal[hidden] { display: none; }
+
+/* Sous-menu d'une famille à plusieurs variantes (Formes, Blocs) : positionné en JS à droite du bouton
+   cliqué (cf. openAddFlyout dans board.js), même styles de liste que le menu "⋮" des éléments. */
+.add-flyout {
+  position: fixed; z-index: 110; display: none; flex-direction: column; gap: 1px;
+  background: #fff; border-radius: 12px; padding: 6px; min-width: 180px;
+  box-shadow: 0 8px 24px rgba(20,20,40,0.2);
+}
+.add-flyout.is-open { display: flex; }
+.add-flyout-item {
+  display: flex; align-items: center; gap: 10px; border: none; background: transparent;
+  padding: 9px 10px; border-radius: 8px; cursor: pointer; text-align: left;
+  font-size: 13px; font-family: inherit; color: var(--text);
+}
+.add-flyout-item:hover { background: #f4f4f6; }
+.add-flyout-item-icon { display: flex; align-items: center; justify-content: center; flex-shrink: 0; width: 22px; height: 22px; color: var(--text-muted); }
+
+/* Fermeture d'un panneau latéral (drawer commentaires) — nom hérité de l'ancien drawer "ajouter". */
 .add-drawer-close {
   width: 34px; height: 34px; border: none; background: transparent; border-radius: 8px;
   color: var(--text-muted); cursor: pointer; display: flex; align-items: center; justify-content: center; flex-shrink: 0;
 }
 .add-drawer-close:hover { background: #f4f4f6; color: var(--text); }
-
-.add-drawer-body { padding: 22px 26px; overflow-y: auto; }
-
-.add-tiles-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
-.add-tile {
-  display: flex; flex-direction: column; align-items: center; gap: 14px;
-  border: 1.5px solid var(--border); background: #fff; border-radius: 14px;
-  padding: 30px 12px; cursor: pointer; font-family: inherit; transition: border-color 0.15s, background 0.15s;
-}
-.add-tile:hover { border-color: var(--purple); background: #fdf8ec; }
-.add-tile-icon {
-  width: 52px; height: 52px; border-radius: 12px; background: var(--purple); color: #fff;
-  display: flex; align-items: center; justify-content: center; flex-shrink: 0;
-}
-.add-tile-label { font-size: 13.5px; font-weight: 600; color: var(--text); }
 
 /* ---------- Drawer "Commentaires" ---------- */
 
