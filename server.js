@@ -80,7 +80,7 @@ const ELEMENT_COLORS = ['#FFF176', '#F8BBD0', '#90CAF9', '#A5D6A7', '#FFCC80', '
 // Valeurs par défaut à la création, selon le type d'élément — voir ELEMENT_TYPES côté client
 // (public/js/board.js) pour le détail des interactions propres à chaque type.
 const ELEMENT_DEFAULTS = {
-  note: { width: 130, height: 130, color: ELEMENT_COLORS[0], fontSize: 14, textAlign: 'left', textValign: 'center' },
+  note: { width: 130, height: 130, color: ELEMENT_COLORS[0], fontSize: 14, textAlign: 'left', textValign: 'top' },
   line: { width: 160, height: 6, color: '#1c1c28' },
   text: { width: 220, height: 60, color: '#1c1c28', fontSize: 18, textAlign: 'center' },
   image: { width: 240, height: 240, color: null },

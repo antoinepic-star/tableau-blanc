@@ -1023,27 +1023,22 @@
     `;
   }
 
-  // Bouton "Trait" combiné (style continu/pointillé + épaisseur + couleur) pour le trait et le
-  // connecteur — même principe que "Bordure" ci-dessus, ces trois réglages s'ajustent souvent
-  // ensemble. Remplace l'ancien duo "couleur" + "épaisseur/style" séparés.
+  // Bouton "Style et épaisseur" du trait/connecteur : continu/pointillé + épaisseur, dans UN popover
+  // (reste ouvert après un choix) — la couleur, elle, garde son propre bouton séparé (colorDropdownHtml),
+  // comme pour les autres types, plutôt que d'être regroupée ici.
   function lineDropdownHtml(data) {
     const currentStyle = data.lineStyle || 'solid';
     return `
       <div class="toolbar-dropdown" data-role="linestyle-wrap">
-        <button type="button" class="toolbar-dropdown-trigger" data-role="linestyle-trigger" title="Trait">
+        <button type="button" class="toolbar-dropdown-trigger" data-role="linestyle-trigger" title="Style et épaisseur">
           <span class="toolbar-thickness-preview${currentStyle === 'dashed' ? ' is-dashed' : ''}" style="height:${clamp(data.height, 2, 12)}px"></span>
         </button>
-        <div class="toolbar-popover toolbar-border-popover" data-role="linestyle-popover">
-          <div class="toolbar-popover-label">Style et épaisseur</div>
+        <div class="toolbar-popover toolbar-thickness-popover" data-role="linestyle-popover">
           ${LINE_STYLES.map(([style, label]) => `
             <div class="toolbar-thickness-row">
               ${LINE_THICKNESSES.map(t => `<button type="button" class="toolbar-thickness-option${data.height === t && currentStyle === style ? ' is-active' : ''}" data-thickness="${t}" data-style="${style}" title="${label} ${t}px"><span class="toolbar-thickness-bar${style === 'dashed' ? ' is-dashed' : ''}" style="height:${t}px"></span></button>`).join('')}
             </div>
           `).join('')}
-          <div class="toolbar-popover-label">Couleur</div>
-          <div class="toolbar-color-popover-inline">
-            ${ELEMENT_COLORS.map(c => `<button type="button" class="toolbar-color-swatch${c === (data.color || null) ? ' is-active' : ''}" data-linecolor="${c}" style="background:${c}"></button>`).join('')}
-          </div>
         </div>
       </div>
     `;
@@ -1101,9 +1096,10 @@
       controls = `<select class="element-fontsize-select" data-role="note-fontsize" title="Taille du texte">${FONT_SIZES.map(s => `<option value="${s}"${Number(data.fontSize) === s ? ' selected' : ''}>${s}</option>`).join('')}</select>`
         + formatDropdownHtml(data)
         + alignDropdownHtml(data)
+        + `<span class="element-toolbar-sep"></span>`
         + colorDropdownHtml('color', data.color, false, 'Couleur de fond');
     } else if (data.type === 'line' || data.type === 'connector') {
-      controls = lineDropdownHtml(data);
+      controls = colorDropdownHtml('color', data.color, false, 'Couleur') + lineDropdownHtml(data);
       if (data.type === 'connector') {
         controls += `
           <button type="button" class="element-icon-btn element-arrow-start-btn${data.startCap === 'arrow' ? ' is-active' : ''}" title="Flèche au début">
@@ -1134,9 +1130,11 @@
     } else if (data.type === 'frame') {
       controls = colorDropdownHtml('color', data.color, false, 'Couleur de fond')
         + borderDropdownHtml(data, { withRadius: false })
-        + colorDropdownHtml('title', data.titleColor, false, 'Couleur du titre')
+        + `<span class="element-toolbar-sep"></span>`
+        + `<button type="button" class="element-icon-btn element-arrange-btn" title="Ordonner (ranger le contenu actuel en grille)">${iconArrange()}</button>`
+        + `<span class="element-toolbar-sep"></span>`
         + `<select class="element-fontsize-select" data-role="title-fontsize" title="Taille du titre">${FONT_SIZES.map(s => `<option value="${s}"${Number(data.fontSize) === s ? ' selected' : ''}>${s}</option>`).join('')}</select>`
-        + `<button type="button" class="element-icon-btn element-arrange-btn" title="Ordonner (ranger le contenu actuel en grille)">${iconArrange()}</button>`;
+        + colorDropdownHtml('title', data.titleColor, false, 'Couleur du titre');
     }
     const sep = controls ? '<span class="element-toolbar-sep"></span>' : '';
     const voted = (data.votes || []).includes(myName);
@@ -2367,9 +2365,8 @@
     });
   }
 
-  // Bouton "Trait" combiné (style+épaisseur+couleur) du trait/connecteur — remplace l'ancien duo
-  // "couleur" + "épaisseur/style" séparés (cf. lineDropdownHtml). Reste ouvert après un choix, comme
-  // "Bordure" ci-dessus.
+  // Bouton "Style et épaisseur" du trait/connecteur (cf. lineDropdownHtml) — la couleur a son propre
+  // bouton séparé, wiré par le wireColorDropdown générique plus bas. Reste ouvert après un choix.
   function wireLineDropdown(entry) {
     const id = entry.data.id;
     const lineParts = wireDropdownToggle('linestyle');
@@ -2392,17 +2389,6 @@
         preview.classList.toggle('is-dashed', style === 'dashed');
         Api.updateElement(id, { height: h, lineStyle: style }).catch(() => {});
         repositionToolbar(entry);
-      });
-    });
-    popover.querySelectorAll('[data-linecolor]').forEach((btn) => {
-      btn.addEventListener('pointerdown', e => e.stopPropagation());
-      btn.addEventListener('click', () => {
-        entry.data.color = btn.dataset.linecolor;
-        applyLineStyle(entry);
-        if (entry.data.type === 'connector') applyConnectorCaps(entry);
-        popover.querySelectorAll('[data-linecolor]').forEach(b => b.classList.remove('is-active'));
-        btn.classList.add('is-active');
-        Api.updateElement(id, { color: entry.data.color }).catch(() => {});
       });
     });
   }
@@ -2448,10 +2434,11 @@
     const id = entry.data.id;
     const type = entry.data.type;
 
-    if (type === 'note' || type === 'text' || type === 'rectangle' || type === 'frame') {
+    if (type === 'note' || type === 'text' || type === 'rectangle' || type === 'frame' || type === 'line' || type === 'connector') {
       wireColorDropdown(entry, 'color', (color) => {
         entry.data.color = color;
         applyElementColor(entry);
+        if (type === 'connector') applyConnectorCaps(entry);
         Api.updateElement(id, { color }).catch(err => alert(err.message));
       });
     }
