@@ -930,40 +930,6 @@
     `;
   }
 
-  function thicknessDropdownHtml(data) {
-    const currentStyle = data.lineStyle || 'solid';
-    return `
-      <div class="toolbar-dropdown" data-role="thickness-wrap">
-        <button type="button" class="toolbar-dropdown-trigger" data-role="thickness-trigger" title="Épaisseur et style">
-          <span class="toolbar-thickness-preview${currentStyle === 'dashed' ? ' is-dashed' : ''}" style="height:${clamp(data.height, 2, 12)}px"></span>
-        </button>
-        <div class="toolbar-popover toolbar-thickness-popover" data-role="thickness-popover">
-          ${LINE_STYLES.map(([style, label]) => `
-            <div class="toolbar-thickness-row">
-              ${LINE_THICKNESSES.map(t => `<button type="button" class="toolbar-thickness-option${data.height === t && currentStyle === style ? ' is-active' : ''}" data-thickness="${t}" data-style="${style}" title="${label} ${t}px"><span class="toolbar-thickness-bar${style === 'dashed' ? ' is-dashed' : ''}" style="height:${t}px"></span></button>`).join('')}
-            </div>
-          `).join('')}
-        </div>
-      </div>
-    `;
-  }
-
-  function strokeWidthDropdownHtml(data) {
-    const w = data.strokeWidth || 0;
-    return `
-      <div class="toolbar-dropdown" data-role="strokewidth-wrap">
-        <button type="button" class="toolbar-dropdown-trigger" data-role="strokewidth-trigger" title="Épaisseur du contour">
-          <span class="toolbar-thickness-preview" style="height:${w ? clamp(w, 2, 10) : 2}px; opacity:${w ? 1 : 0.35}"></span>
-        </button>
-        <div class="toolbar-popover toolbar-thickness-popover" data-role="strokewidth-popover">
-          <div class="toolbar-thickness-row">
-            ${STROKE_WIDTHS.map(sw => `<button type="button" class="toolbar-thickness-option${w === sw ? ' is-active' : ''}" data-strokewidth="${sw}" title="${sw === 0 ? 'Aucun contour' : sw + 'px'}"><span class="toolbar-thickness-bar" style="height:${sw || 2}px; opacity:${sw ? 1 : 0.3}"></span></button>`).join('')}
-          </div>
-        </div>
-      </div>
-    `;
-  }
-
   function radiusIconSvg(iconRx) {
     return `<svg width="18" height="18" viewBox="0 0 18 18"><rect x="2" y="2" width="14" height="14" rx="${iconRx}" fill="none" stroke="currentColor" stroke-width="2"/></svg>`;
   }
@@ -974,26 +940,12 @@
     return `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M4 9V6a2 2 0 0 1 2-2h3"/><path d="M15 4h3a2 2 0 0 1 2 2v3"/><path d="M20 15v3a2 2 0 0 1-2 2h-3"/><path d="M9 20H6a2 2 0 0 1-2-2v-3"/></svg>`;
   }
 
-  function radiusDropdownHtml(data) {
-    const r = data.radius || 0;
-    return `
-      <div class="toolbar-dropdown" data-role="radius-wrap">
-        <button type="button" class="toolbar-dropdown-trigger" data-role="radius-trigger" title="Arrondi des angles">
-          ${radiusCornersIconSvg()}
-        </button>
-        <div class="toolbar-popover toolbar-thickness-popover" data-role="radius-popover">
-          <div class="toolbar-thickness-row">
-            ${RADIUS_PRESETS.map(([label, val, iconRx]) => `<button type="button" class="toolbar-thickness-option${r === val ? ' is-active' : ''}" data-radius="${val}" title="${label}">${radiusIconSvg(iconRx)}</button>`).join('')}
-          </div>
-        </div>
-      </div>
-    `;
-  }
-
-  // Alignement du texte d'un rectangle : deux rangées (horizontal, vertical) dans UN seul popover —
-  // cliquer une option ne le referme pas (comme borderDropdownHtml ci-dessous), pour pouvoir ajuster
-  // les deux sans rouvrir le menu.
-  function alignDropdownHtml(data) {
+  // Alignement du texte : une rangée horizontale, et (withVertical) une seconde rangée verticale, dans
+  // UN seul popover — cliquer une option ne le referme pas (comme borderDropdownHtml ci-dessous), pour
+  // pouvoir ajuster les deux sans rouvrir le menu. Partagé par rectangle/post-it (les deux rangées) et
+  // texte libre (rangée horizontale seule : sa boîte épouse toujours exactement son contenu, cf.
+  // applyTextAutoSize, un alignement vertical n'y aurait aucun effet visible).
+  function alignDropdownHtml(data, { withVertical = true } = {}) {
     const h = data.textAlign || 'left';
     const v = data.textValign || 'center';
     const hIcon = { left: iconTextAlignLeft, center: iconTextAlignCenter, right: iconTextAlignRight }[h]();
@@ -1006,11 +958,13 @@
             <button type="button" class="toolbar-thickness-option${h === 'center' ? ' is-active' : ''}" data-align-h="center" title="Centré">${iconTextAlignCenter()}</button>
             <button type="button" class="toolbar-thickness-option${h === 'right' ? ' is-active' : ''}" data-align-h="right" title="Aligné à droite">${iconTextAlignRight()}</button>
           </div>
-          <div class="toolbar-thickness-row">
-            <button type="button" class="toolbar-thickness-option${v === 'top' ? ' is-active' : ''}" data-align-v="top" title="Aligné en haut">${iconValignTop()}</button>
-            <button type="button" class="toolbar-thickness-option${v === 'center' ? ' is-active' : ''}" data-align-v="center" title="Centré verticalement">${iconValignMiddle()}</button>
-            <button type="button" class="toolbar-thickness-option${v === 'bottom' ? ' is-active' : ''}" data-align-v="bottom" title="Aligné en bas">${iconValignBottom()}</button>
-          </div>
+          ${withVertical ? `
+            <div class="toolbar-thickness-row">
+              <button type="button" class="toolbar-thickness-option${v === 'top' ? ' is-active' : ''}" data-align-v="top" title="Aligné en haut">${iconValignTop()}</button>
+              <button type="button" class="toolbar-thickness-option${v === 'center' ? ' is-active' : ''}" data-align-v="center" title="Centré verticalement">${iconValignMiddle()}</button>
+              <button type="button" class="toolbar-thickness-option${v === 'bottom' ? ' is-active' : ''}" data-align-v="bottom" title="Aligné en bas">${iconValignBottom()}</button>
+            </div>
+          ` : ''}
         </div>
       </div>
     `;
@@ -1036,19 +990,22 @@
   // Un seul bouton pour arrondi + épaisseur/style du contour + couleur du contour (façon Miro) — trois
   // réglages qui décrivaient auparavant trois boutons distincts. Comme align/link ci-dessus, on
   // n'échappe pas le popover après un choix : plusieurs réglages s'enchaînent souvent (ex. choisir le
-  // style ET la couleur du contour).
-  function borderDropdownHtml(data) {
+  // style ET la couleur du contour). withRadius: false pour la frame, qui reste toujours à angles
+  // droits (cf. applyRectangleStyle).
+  function borderDropdownHtml(data, { withRadius = true } = {}) {
     const r = data.radius || 0;
     const w = data.strokeWidth || 0;
     const style = data.lineStyle === 'dashed' ? 'dashed' : 'solid';
     return `
       <div class="toolbar-dropdown" data-role="border-wrap">
-        <button type="button" class="toolbar-dropdown-trigger" data-role="border-trigger" title="Bordure">${radiusCornersIconSvg()}</button>
+        <button type="button" class="toolbar-dropdown-trigger" data-role="border-trigger" title="Bordure">${withRadius ? radiusCornersIconSvg() : iconBorderSquare()}</button>
         <div class="toolbar-popover toolbar-border-popover" data-role="border-popover">
-          <div class="toolbar-popover-label">Angles</div>
-          <div class="toolbar-thickness-row">
-            ${RADIUS_PRESETS.map(([label, val, iconRx]) => `<button type="button" class="toolbar-thickness-option${r === val ? ' is-active' : ''}" data-radius="${val}" title="${label}">${radiusIconSvg(iconRx)}</button>`).join('')}
-          </div>
+          ${withRadius ? `
+            <div class="toolbar-popover-label">Angles</div>
+            <div class="toolbar-thickness-row">
+              ${RADIUS_PRESETS.map(([label, val, iconRx]) => `<button type="button" class="toolbar-thickness-option${r === val ? ' is-active' : ''}" data-radius="${val}" title="${label}">${radiusIconSvg(iconRx)}</button>`).join('')}
+            </div>
+          ` : ''}
           <div class="toolbar-popover-label">Épaisseur du contour</div>
           <div class="toolbar-thickness-row">
             ${STROKE_WIDTHS.map(sw => `<button type="button" class="toolbar-thickness-option${w === sw ? ' is-active' : ''}" data-strokewidth="${sw}" title="${sw === 0 ? 'Aucun contour' : sw + 'px'}"><span class="toolbar-thickness-bar" style="height:${sw || 2}px; opacity:${sw ? 1 : 0.3}"></span></button>`).join('')}
@@ -1066,17 +1023,44 @@
     `;
   }
 
+  // Bouton "Trait" combiné (style continu/pointillé + épaisseur + couleur) pour le trait et le
+  // connecteur — même principe que "Bordure" ci-dessus, ces trois réglages s'ajustent souvent
+  // ensemble. Remplace l'ancien duo "couleur" + "épaisseur/style" séparés.
+  function lineDropdownHtml(data) {
+    const currentStyle = data.lineStyle || 'solid';
+    return `
+      <div class="toolbar-dropdown" data-role="linestyle-wrap">
+        <button type="button" class="toolbar-dropdown-trigger" data-role="linestyle-trigger" title="Trait">
+          <span class="toolbar-thickness-preview${currentStyle === 'dashed' ? ' is-dashed' : ''}" style="height:${clamp(data.height, 2, 12)}px"></span>
+        </button>
+        <div class="toolbar-popover toolbar-border-popover" data-role="linestyle-popover">
+          <div class="toolbar-popover-label">Style et épaisseur</div>
+          ${LINE_STYLES.map(([style, label]) => `
+            <div class="toolbar-thickness-row">
+              ${LINE_THICKNESSES.map(t => `<button type="button" class="toolbar-thickness-option${data.height === t && currentStyle === style ? ' is-active' : ''}" data-thickness="${t}" data-style="${style}" title="${label} ${t}px"><span class="toolbar-thickness-bar${style === 'dashed' ? ' is-dashed' : ''}" style="height:${t}px"></span></button>`).join('')}
+            </div>
+          `).join('')}
+          <div class="toolbar-popover-label">Couleur</div>
+          <div class="toolbar-color-popover-inline">
+            ${ELEMENT_COLORS.map(c => `<button type="button" class="toolbar-color-swatch${c === (data.color || null) ? ' is-active' : ''}" data-linecolor="${c}" style="background:${c}"></button>`).join('')}
+          </div>
+        </div>
+      </div>
+    `;
+  }
+
   // Menu "⋮" : regroupe dupliquer / premier plan / arrière-plan / supprimer, plutôt que quatre icônes
-  // séparées dans la barre (cf. la maquette Miro fournie) — "Arranger" y est aplati en ses deux
-  // actions déjà existantes plutôt qu'un sous-menu, elles ne sont que deux.
-  function moreMenuHtml() {
+  // séparées dans la barre (cf. la maquette Miro fournie) — généralisé à tous les types d'éléments,
+  // pas seulement le rectangle. Une frame n'a pas de premier/arrière-plan (elle reste toujours tout
+  // au fond, cf. server.js) : showFront/showBack les masquent pour elle.
+  function moreMenuHtml({ showFront = true, showBack = true } = {}) {
     return `
       <div class="toolbar-dropdown" data-role="more-wrap">
         <button type="button" class="toolbar-dropdown-trigger" data-role="more-trigger" title="Plus d'options">${iconMoreDots()}</button>
         <div class="toolbar-popover toolbar-menu-popover" data-role="more-popover">
           <button type="button" class="toolbar-menu-item" data-role="more-duplicate">Dupliquer</button>
-          <button type="button" class="toolbar-menu-item" data-role="more-front">Mettre au premier plan</button>
-          <button type="button" class="toolbar-menu-item" data-role="more-back">Envoyer à l'arrière-plan</button>
+          ${showFront ? `<button type="button" class="toolbar-menu-item" data-role="more-front">Mettre au premier plan</button>` : ''}
+          ${showBack ? `<button type="button" class="toolbar-menu-item" data-role="more-back">Envoyer à l'arrière-plan</button>` : ''}
           <span class="toolbar-menu-sep"></span>
           <button type="button" class="toolbar-menu-item toolbar-menu-danger" data-role="more-delete">Supprimer</button>
         </div>
@@ -1113,10 +1097,13 @@
     if (data.type === 'rectangle') return buildRectangleToolbarHtml(data);
     let controls = '';
     if (data.type === 'note') {
-      controls = colorDropdownHtml('color', data.color, false, 'Couleur');
+      // Couleur du texte volontairement absente pour le moment : le post-it reste noir fixe.
+      controls = `<select class="element-fontsize-select" data-role="note-fontsize" title="Taille du texte">${FONT_SIZES.map(s => `<option value="${s}"${Number(data.fontSize) === s ? ' selected' : ''}>${s}</option>`).join('')}</select>`
+        + formatDropdownHtml(data)
+        + alignDropdownHtml(data)
+        + colorDropdownHtml('color', data.color, false, 'Couleur de fond');
     } else if (data.type === 'line' || data.type === 'connector') {
-      controls = colorDropdownHtml('color', data.color, false, 'Couleur')
-        + thicknessDropdownHtml(data);
+      controls = lineDropdownHtml(data);
       if (data.type === 'connector') {
         controls += `
           <button type="button" class="element-icon-btn element-arrow-start-btn${data.startCap === 'arrow' ? ' is-active' : ''}" title="Flèche au début">
@@ -1128,10 +1115,13 @@
         `;
       }
     } else if (data.type === 'text') {
-      controls = colorDropdownHtml('color', data.color, false, 'Couleur du texte')
-        + colorDropdownHtml('bg', data.backgroundColor, true, 'Couleur de fond')
+      controls = `<select class="element-fontsize-select" data-role="fontsize" title="Taille">${FONT_SIZES.map(s => `<option value="${s}"${Number(data.fontSize) === s ? ' selected' : ''}>${s}</option>`).join('')}</select>`
         + formatDropdownHtml(data)
-        + `<select class="element-fontsize-select" data-role="fontsize" title="Taille">${FONT_SIZES.map(s => `<option value="${s}"${Number(data.fontSize) === s ? ' selected' : ''}>${s}</option>`).join('')}</select>`;
+        + alignDropdownHtml(data, { withVertical: false })
+        + colorDropdownHtml('color', data.color, false, 'Couleur du texte')
+        + linkDropdownHtml(data)
+        + `<span class="element-toolbar-sep"></span>`
+        + colorDropdownHtml('bg', data.backgroundColor, true, 'Couleur de fond');
     } else if (data.type === 'image') {
       controls = `
         <button type="button" class="element-icon-btn element-grayscale-btn${data.grayscale ? ' is-active' : ''}" title="Noir et blanc">
@@ -1143,33 +1133,30 @@
       `;
     } else if (data.type === 'frame') {
       controls = colorDropdownHtml('color', data.color, false, 'Couleur de fond')
-        + strokeWidthDropdownHtml(data)
-        + colorDropdownHtml('stroke', data.strokeColor, false, 'Couleur du contour', 'ring')
+        + borderDropdownHtml(data, { withRadius: false })
         + colorDropdownHtml('title', data.titleColor, false, 'Couleur du titre')
         + `<select class="element-fontsize-select" data-role="title-fontsize" title="Taille du titre">${FONT_SIZES.map(s => `<option value="${s}"${Number(data.fontSize) === s ? ' selected' : ''}>${s}</option>`).join('')}</select>`
         + `<button type="button" class="element-icon-btn element-arrange-btn" title="Ordonner (ranger le contenu actuel en grille)">${iconArrange()}</button>`;
     }
     const sep = controls ? '<span class="element-toolbar-sep"></span>' : '';
     const voted = (data.votes || []).includes(myName);
-    // Une frame reste toujours tout au fond (cf. server.js) : pas de "premier plan"/"arrière-plan"
-    // dans son toolbar, ce serait sans effet.
-    const frontBackButtons = data.type === 'frame' ? '' : `
-      <button type="button" class="element-icon-btn element-front-btn" title="Mettre au premier plan">${iconToFront()}</button>
-      <button type="button" class="element-icon-btn element-back-btn" title="Envoyer à l'arrière-plan">${iconToBack()}</button>
-    `;
-    return `
-      ${controls}${sep}
+    // Un trait/connecteur n'a pas de contenu sur lequel voter ou commenter : ces deux boutons ne
+    // s'affichent pas pour ces deux types.
+    const hasVoteComment = data.type !== 'line' && data.type !== 'connector';
+    const voteCommentHtml = hasVoteComment ? `
       <button type="button" class="element-icon-btn element-vote-btn${voted ? ' is-active' : ''}" title="${voted ? 'Retirer mon vote' : 'Voter'}">${iconVote()}</button>
       <button type="button" class="element-icon-btn element-comment-btn" title="Commenter">${iconComment()}</button>
       <span class="element-toolbar-sep"></span>
+    ` : '';
+    // Une frame reste toujours tout au fond (cf. server.js) : le menu "⋮" n'y propose pas de
+    // premier/arrière-plan, ce serait sans effet.
+    const isFrame = data.type === 'frame';
+    return `
+      ${controls}${sep}
+      ${voteCommentHtml}
       <button type="button" class="element-icon-btn element-lock-btn" title="Verrouiller">${iconLock()}</button>
-      ${frontBackButtons}
-      <button type="button" class="element-icon-btn element-duplicate-btn" title="Dupliquer">
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15H4a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h10a1 1 0 0 1 1 1v1"/></svg>
-      </button>
-      <button type="button" class="element-icon-btn element-delete-btn" title="Supprimer">
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
-      </button>
+      <span class="element-toolbar-sep"></span>
+      ${moreMenuHtml({ showFront: !isFrame, showBack: !isFrame })}
     `;
   }
 
@@ -1218,6 +1205,9 @@
   function iconValignBottom() { return '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="4" y="3" width="16" height="18" rx="1"/><line x1="7.5" y1="16" x2="16.5" y2="16"/></svg>'; }
   function iconLinkChain() { return '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 15l6-6"/><path d="M13 5.5l1-1a3.54 3.54 0 0 1 5 5l-1.5 1.5"/><path d="M11 18.5l-1 1a3.54 3.54 0 0 1-5-5l1.5-1.5"/></svg>'; }
   function iconMoreDots() { return '<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="5" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="12" cy="19" r="2"/></svg>'; }
+  // Déclencheur du bouton "Bordure" quand l'arrondi n'est pas proposé (frame) : un simple rectangle à
+  // angles droits, pour ne pas laisser croire qu'on peut y régler un arrondi (cf. radiusCornersIconSvg).
+  function iconBorderSquare() { return '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="4" y="4" width="16" height="16" rx="1"/></svg>'; }
 
   function groupMembers(groupId) {
     if (!groupId) return [];
@@ -1634,7 +1624,9 @@
     if (data.type === 'note') {
       el.style.background = data.color;
       el.innerHTML = `
-        <textarea class="element-text" placeholder="Écris ici…" maxlength="4000"></textarea>
+        <div class="element-text-frame">
+          <textarea class="element-text" placeholder="Écris ici…" maxlength="4000"></textarea>
+        </div>
         <div class="element-resize-handle"></div>
         ${anchorsHtml}
       `;
@@ -1691,7 +1683,7 @@
     if (data.type === 'image') applyImageFilters(entry);
     if (data.type === 'rectangle') { applyRectangleStyle(entry); applyRectangleTextStyle(entry); autoGrowRectangleTextarea(entry); }
     if (data.type === 'frame') { applyRectangleStyle(entry); applyFrameTitleStyle(entry); }
-    if (data.type === 'note') syncNoteTextareaHeight(entry);
+    if (data.type === 'note') { applyNoteTextStyle(entry); syncNoteTextareaHeight(entry); }
     applyLockedState(entry);
     updateElementBadges(entry);
 
@@ -1719,23 +1711,33 @@
   }
 
   function applyElementColor(entry) {
-    if (entry.data.type === 'text') { if (entry.textEl) entry.textEl.style.color = entry.data.color; }
+    // Un lien force sa propre couleur (cf. applyTextStyle) : passer par elle plutôt que d'écrire
+    // directement la couleur choisie évite d'écraser ce forçage quand un lien est présent.
+    if (entry.data.type === 'text') applyTextStyle(entry);
     else if (entry.data.type === 'line' || entry.data.type === 'connector') applyLineStyle(entry);
     else if (entry.data.type === 'rectangle' || entry.data.type === 'frame') applyRectangleStyle(entry);
     else entry.el.style.background = entry.data.color;
   }
 
+  // Style du texte libre : taille, gras/italique/souligné/barré, couleur, alignement horizontal, et —
+  // s'il a un lien (cf. applyRectangleTextStyle pour le même principe côté rectangle) — le bleu
+  // souligné habituel des liens plutôt que la mise en forme choisie. Pas d'alignement vertical : sa
+  // boîte épouse toujours exactement son contenu (cf. applyTextAutoSize), ça n'y aurait aucun effet.
   function applyTextStyle(entry) {
     const t = entry.textEl;
     if (!t) return;
-    t.style.fontWeight = entry.data.bold ? '700' : '400';
-    t.style.fontStyle = entry.data.italic ? 'italic' : 'normal';
+    const d = entry.data;
+    const hasLink = !!d.link;
+    t.style.fontWeight = d.bold ? '700' : '400';
+    t.style.fontStyle = d.italic ? 'italic' : 'normal';
     const decorations = [];
-    if (entry.data.underline) decorations.push('underline');
-    if (entry.data.strikethrough) decorations.push('line-through');
+    if (d.underline || hasLink) decorations.push('underline');
+    if (d.strikethrough) decorations.push('line-through');
     t.style.textDecoration = decorations.join(' ') || 'none';
-    t.style.fontSize = `${entry.data.fontSize || 18}px`;
-    t.style.color = entry.data.color;
+    t.style.fontSize = `${d.fontSize || 18}px`;
+    t.style.color = hasLink ? LINK_COLOR : d.color;
+    t.style.textAlign = d.textAlign || 'center';
+    entry.el.classList.toggle('has-link', hasLink);
   }
 
   function applyElementBackground(entry) {
@@ -1804,27 +1806,47 @@
     entry.el.classList.toggle('has-link', hasLink);
   }
 
-  // Un post-it grandit avec son texte : la zone de texte (position absolue, sans hauteur fixe côté
-  // CSS pour ce type — cf. board.css) est explicitement calée sur la hauteur courante de l'élément
-  // (moins ses marges verticales), pour tout affichage qui ne vient pas d'une frappe locale (rendu
+  // Style du texte d'un post-it : taille, gras/italique/souligné/barré (même principe que "texte"/
+  // "rectangle") et alignement horizontal/vertical — sans couleur de texte pour le moment, un post-it
+  // reste toujours noir.
+  function applyNoteTextStyle(entry) {
+    if (entry.data.type !== 'note' || !entry.textEl) return;
+    const d = entry.data;
+    const t = entry.textEl;
+    t.style.fontSize = `${d.fontSize || 14}px`;
+    t.style.fontWeight = d.bold ? '700' : '400';
+    t.style.fontStyle = d.italic ? 'italic' : 'normal';
+    const decorations = [];
+    if (d.underline) decorations.push('underline');
+    if (d.strikethrough) decorations.push('line-through');
+    t.style.textDecoration = decorations.join(' ') || 'none';
+    t.style.textAlign = d.textAlign || 'left';
+    const frame = entry.el.querySelector('.element-text-frame');
+    if (frame) frame.style.alignItems = { top: 'flex-start', center: 'center', bottom: 'flex-end' }[d.textValign || 'center'];
+  }
+
+  // Un textarea ne centre pas nativement son contenu verticalement : comme pour le rectangle
+  // (autoGrowRectangleTextarea), la zone de texte grandit à la hauteur exacte de son contenu, et c'est
+  // le cadre parent (.element-text-frame, en flex) qui centre/aligne cette boîte plus courte dans le
+  // post-it (cf. applyNoteTextStyle) — pour tout affichage qui ne vient pas d'une frappe locale (rendu
   // initial, mise à jour distante, redimensionnement manuel via la poignée).
   function syncNoteTextareaHeight(entry) {
     if (entry.data.type !== 'note' || !entry.textEl) return;
-    entry.textEl.style.height = `${Math.max(0, entry.data.height - 20)}px`;
+    const t = entry.textEl;
+    t.style.height = '0px';
+    t.style.height = `${t.scrollHeight}px`;
   }
 
   // Au clavier : le post-it grandit pour suivre son texte, mais ne rétrécit jamais tout seul (un
   // redimensionnement manuel plus petit reste possible tant que le texte y tient, cf. wireCornerResize).
   function autoGrowNoteOnInput(entry) {
     if (entry.data.type !== 'note' || !entry.textEl) return;
-    const t = entry.textEl;
-    t.style.height = '0px';
-    const needed = t.scrollHeight + 20;
+    syncNoteTextareaHeight(entry);
+    const needed = entry.textEl.scrollHeight + 20;
     if (needed > entry.data.height) {
       entry.data.height = needed;
       entry.el.style.height = `${needed}px`;
     }
-    syncNoteTextareaHeight(entry);
   }
 
   // Trait/connecteur continu = simple aplat de couleur ; pointillés = dégradé répété le long de la
@@ -1916,6 +1938,7 @@
     } else if (data.type === 'note') {
       entry.el.style.background = data.color;
       if (document.activeElement !== entry.textEl) entry.textEl.value = data.text || '';
+      applyNoteTextStyle(entry);
       syncNoteTextareaHeight(entry);
     } else if (data.type === 'text') {
       if (document.activeElement !== entry.textEl) entry.textEl.value = data.text || '';
@@ -2202,14 +2225,15 @@
     btn.addEventListener('click', () => toggleVote(entry));
   }
 
-  // Réutilisée par "texte" (applyTextStyle) et "rectangle" (applyRectangleTextStyle) — même popover,
-  // seule la fonction de style à réappliquer diffère (le rectangle a sa propre couleur de texte et
-  // son alignement en plus, cf. applyRectangleTextStyle).
+  // Réutilisée par "texte", "post-it" et "rectangle" — même popover, seule la fonction de style à
+  // réappliquer diffère (rectangle/post-it ont leur propre alignement en plus, cf.
+  // applyRectangleTextStyle/applyNoteTextStyle).
   function wireFormatDropdown(entry) {
     const parts = wireDropdownToggle('format');
     if (!parts) return;
-    const isRect = entry.data.type === 'rectangle';
-    const applyStyle = isRect ? applyRectangleTextStyle : applyTextStyle;
+    const type = entry.data.type;
+    const applyStyle = type === 'rectangle' ? applyRectangleTextStyle : type === 'note' ? applyNoteTextStyle : applyTextStyle;
+    const autoGrow = type === 'rectangle' ? autoGrowRectangleTextarea : type === 'note' ? autoGrowNoteOnInput : applyTextAutoSize;
     parts.popover.querySelectorAll('.element-format-btn[data-format]').forEach((btn) => {
       btn.addEventListener('pointerdown', e => e.stopPropagation());
       btn.addEventListener('click', () => {
@@ -2217,76 +2241,223 @@
         entry.data[key] = !entry.data[key];
         btn.classList.toggle('is-active', entry.data[key]);
         applyStyle(entry);
-        if (key === 'bold' || key === 'italic') {
-          if (isRect) autoGrowRectangleTextarea(entry); else applyTextAutoSize(entry);
-        }
+        if (key === 'bold' || key === 'italic') autoGrow(entry);
         Api.updateElement(entry.data.id, { [key]: entry.data[key] }).catch(() => {});
       });
     });
   }
 
-  function wireThicknessDropdown(entry) {
-    const parts = wireDropdownToggle('thickness');
-    if (!parts) return;
-    const { trigger, popover } = parts;
-    popover.querySelectorAll('.toolbar-thickness-option').forEach((opt) => {
-      opt.addEventListener('pointerdown', e => e.stopPropagation());
-      opt.addEventListener('click', () => {
-        const h = Number(opt.dataset.thickness);
-        const style = opt.dataset.style;
+  // Réutilisée par rectangle/post-it (deux rangées) et texte libre (rangée horizontale seule, cf.
+  // alignDropdownHtml) — reste ouvert après un choix, on ajuste souvent plusieurs valeurs à la suite.
+  function wireAlignDropdown(entry, applyStyle, withVertical = true) {
+    const id = entry.data.id;
+    const alignParts = wireDropdownToggle('align');
+    if (!alignParts) return;
+    const { trigger, popover } = alignParts;
+    const hIcons = { left: iconTextAlignLeft, center: iconTextAlignCenter, right: iconTextAlignRight };
+    popover.querySelectorAll('[data-align-h]').forEach((btn) => {
+      btn.addEventListener('pointerdown', e => e.stopPropagation());
+      btn.addEventListener('click', () => {
+        entry.data.textAlign = btn.dataset.alignH;
+        applyStyle(entry);
+        popover.querySelectorAll('[data-align-h]').forEach(b => b.classList.remove('is-active'));
+        btn.classList.add('is-active');
+        trigger.innerHTML = hIcons[btn.dataset.alignH]();
+        Api.updateElement(id, { textAlign: entry.data.textAlign }).catch(() => {});
+      });
+    });
+    if (!withVertical) return;
+    popover.querySelectorAll('[data-align-v]').forEach((btn) => {
+      btn.addEventListener('pointerdown', e => e.stopPropagation());
+      btn.addEventListener('click', () => {
+        entry.data.textValign = btn.dataset.alignV;
+        applyStyle(entry);
+        popover.querySelectorAll('[data-align-v]').forEach(b => b.classList.remove('is-active'));
+        btn.classList.add('is-active');
+        Api.updateElement(id, { textValign: entry.data.textValign }).catch(() => {});
+      });
+    });
+  }
+
+  // Réutilisée par rectangle et texte libre : le texte devient cliquable (mis en forme "lien" forcée,
+  // cf. applyRectangleTextStyle/applyTextStyle), ouvrir sur un simple clic géré dans wireTextEditing.
+  function wireLinkDropdown(entry, applyStyle) {
+    const id = entry.data.id;
+    const linkParts = wireDropdownToggle('link');
+    if (!linkParts) return;
+    const { trigger, popover } = linkParts;
+    const input = popover.querySelector('[data-role="link-input"]');
+    const applyBtn = popover.querySelector('[data-role="link-apply"]');
+    const removeBtn = popover.querySelector('[data-role="link-remove"]');
+    input.addEventListener('pointerdown', e => e.stopPropagation());
+    input.addEventListener('keydown', (e) => {
+      e.stopPropagation();
+      if (e.key === 'Enter') applyBtn.click();
+    });
+    applyBtn.addEventListener('pointerdown', e => e.stopPropagation());
+    applyBtn.addEventListener('click', () => {
+      const url = input.value.trim();
+      entry.data.link = url || null;
+      applyStyle(entry);
+      trigger.classList.toggle('is-active', !!entry.data.link);
+      removeBtn.hidden = !entry.data.link;
+      popover.classList.remove('is-open');
+      Api.updateElement(id, { link: entry.data.link }).catch(() => {});
+    });
+    removeBtn.addEventListener('pointerdown', e => e.stopPropagation());
+    removeBtn.addEventListener('click', () => {
+      input.value = '';
+      entry.data.link = null;
+      applyStyle(entry);
+      trigger.classList.remove('is-active');
+      removeBtn.hidden = true;
+      popover.classList.remove('is-open');
+      Api.updateElement(id, { link: null }).catch(() => {});
+    });
+  }
+
+  // Réutilisée par rectangle (avec angles) et frame (sans, cf. borderDropdownHtml) — reste ouvert
+  // après un choix, style/épaisseur/couleur du contour s'ajustent souvent à la suite.
+  function wireBorderDropdown(entry, { withRadius = true } = {}) {
+    const id = entry.data.id;
+    const borderParts = wireDropdownToggle('border');
+    if (!borderParts) return;
+    const { popover } = borderParts;
+    if (withRadius) {
+      popover.querySelectorAll('[data-radius]').forEach((btn) => {
+        btn.addEventListener('pointerdown', e => e.stopPropagation());
+        btn.addEventListener('click', () => {
+          entry.data.radius = Number(btn.dataset.radius);
+          applyRectangleStyle(entry);
+          popover.querySelectorAll('[data-radius]').forEach(b => b.classList.remove('is-active'));
+          btn.classList.add('is-active');
+          Api.updateElement(id, { radius: entry.data.radius }).catch(() => {});
+        });
+      });
+    }
+    popover.querySelectorAll('[data-strokewidth]').forEach((btn) => {
+      btn.addEventListener('pointerdown', e => e.stopPropagation());
+      btn.addEventListener('click', () => {
+        entry.data.strokeWidth = Number(btn.dataset.strokewidth);
+        applyRectangleStyle(entry);
+        popover.querySelectorAll('[data-strokewidth]').forEach(b => b.classList.remove('is-active'));
+        btn.classList.add('is-active');
+        Api.updateElement(id, { strokeWidth: entry.data.strokeWidth }).catch(() => {});
+      });
+    });
+    popover.querySelectorAll('[data-linestyle]').forEach((btn) => {
+      btn.addEventListener('pointerdown', e => e.stopPropagation());
+      btn.addEventListener('click', () => {
+        entry.data.lineStyle = btn.dataset.linestyle;
+        applyRectangleStyle(entry);
+        popover.querySelectorAll('[data-linestyle]').forEach(b => b.classList.remove('is-active'));
+        btn.classList.add('is-active');
+        Api.updateElement(id, { lineStyle: entry.data.lineStyle }).catch(() => {});
+      });
+    });
+    popover.querySelectorAll('[data-strokecolor]').forEach((btn) => {
+      btn.addEventListener('pointerdown', e => e.stopPropagation());
+      btn.addEventListener('click', () => {
+        entry.data.strokeColor = btn.dataset.strokecolor;
+        applyRectangleStyle(entry);
+        popover.querySelectorAll('[data-strokecolor]').forEach(b => b.classList.remove('is-active'));
+        btn.classList.add('is-active');
+        Api.updateElement(id, { strokeColor: entry.data.strokeColor }).catch(() => {});
+      });
+    });
+  }
+
+  // Bouton "Trait" combiné (style+épaisseur+couleur) du trait/connecteur — remplace l'ancien duo
+  // "couleur" + "épaisseur/style" séparés (cf. lineDropdownHtml). Reste ouvert après un choix, comme
+  // "Bordure" ci-dessus.
+  function wireLineDropdown(entry) {
+    const id = entry.data.id;
+    const lineParts = wireDropdownToggle('linestyle');
+    if (!lineParts) return;
+    const { trigger, popover } = lineParts;
+    popover.querySelectorAll('[data-thickness]').forEach((btn) => {
+      btn.addEventListener('pointerdown', e => e.stopPropagation());
+      btn.addEventListener('click', () => {
+        const h = Number(btn.dataset.thickness);
+        const style = btn.dataset.style;
         entry.data.height = h;
         entry.data.lineStyle = style;
         entry.el.style.height = `${h}px`;
         applyLineStyle(entry);
         if (entry.data.type === 'connector') applyConnectorCaps(entry);
-        popover.querySelectorAll('.toolbar-thickness-option').forEach(o => o.classList.remove('is-active'));
-        opt.classList.add('is-active');
+        popover.querySelectorAll('[data-thickness]').forEach(b => b.classList.remove('is-active'));
+        btn.classList.add('is-active');
         const preview = trigger.querySelector('.toolbar-thickness-preview');
         preview.style.height = `${h}px`;
         preview.classList.toggle('is-dashed', style === 'dashed');
-        popover.classList.remove('is-open');
-        Api.updateElement(entry.data.id, { height: h, lineStyle: style }).catch(() => {});
+        Api.updateElement(id, { height: h, lineStyle: style }).catch(() => {});
         repositionToolbar(entry);
+      });
+    });
+    popover.querySelectorAll('[data-linecolor]').forEach((btn) => {
+      btn.addEventListener('pointerdown', e => e.stopPropagation());
+      btn.addEventListener('click', () => {
+        entry.data.color = btn.dataset.linecolor;
+        applyLineStyle(entry);
+        if (entry.data.type === 'connector') applyConnectorCaps(entry);
+        popover.querySelectorAll('[data-linecolor]').forEach(b => b.classList.remove('is-active'));
+        btn.classList.add('is-active');
+        Api.updateElement(id, { color: entry.data.color }).catch(() => {});
       });
     });
   }
 
-  function wireStrokeWidthDropdown(entry) {
-    const parts = wireDropdownToggle('strokewidth');
-    if (!parts) return;
-    const { trigger, popover } = parts;
-    popover.querySelectorAll('.toolbar-thickness-option').forEach((opt) => {
-      opt.addEventListener('pointerdown', e => e.stopPropagation());
-      opt.addEventListener('click', () => {
-        const w = Number(opt.dataset.strokewidth);
-        entry.data.strokeWidth = w;
-        applyRectangleStyle(entry);
-        popover.querySelectorAll('.toolbar-thickness-option').forEach(o => o.classList.remove('is-active'));
-        opt.classList.add('is-active');
-        const preview = trigger.querySelector('.toolbar-thickness-preview');
-        preview.style.height = `${w ? clamp(w, 2, 10) : 2}px`;
-        preview.style.opacity = w ? 1 : 0.35;
+  // Menu "⋮" (cf. moreMenuHtml) : généralisé à tous les types d'éléments.
+  function wireMoreMenu(entry) {
+    const id = entry.data.id;
+    const moreParts = wireDropdownToggle('more');
+    if (!moreParts) return;
+    const { trigger, popover } = moreParts;
+    const dup = popover.querySelector('[data-role="more-duplicate"]');
+    if (dup) {
+      dup.addEventListener('pointerdown', e => e.stopPropagation());
+      dup.addEventListener('click', () => { popover.classList.remove('is-open'); duplicateElement(entry); });
+    }
+    const front = popover.querySelector('[data-role="more-front"]');
+    if (front) {
+      front.addEventListener('pointerdown', e => e.stopPropagation());
+      front.addEventListener('click', () => {
         popover.classList.remove('is-open');
-        Api.updateElement(entry.data.id, { strokeWidth: w }).catch(() => {});
+        Api.updateElement(id, { bringToFront: true }).then(applyRemoteUpdate).catch(() => {});
       });
-    });
+    }
+    const back = popover.querySelector('[data-role="more-back"]');
+    if (back) {
+      back.addEventListener('pointerdown', e => e.stopPropagation());
+      back.addEventListener('click', () => {
+        popover.classList.remove('is-open');
+        Api.updateElement(id, { sendToBack: true }).then(applyRemoteUpdate).catch(() => {});
+      });
+    }
+    const del = popover.querySelector('[data-role="more-delete"]');
+    if (del) {
+      del.addEventListener('pointerdown', e => e.stopPropagation());
+      del.addEventListener('click', () => {
+        popover.classList.remove('is-open');
+        showDeleteConfirm(entry, trigger.getBoundingClientRect());
+      });
+    }
   }
 
   function wireToolbarControls(entry) {
     const id = entry.data.id;
     const type = entry.data.type;
 
-    if (type === 'note' || type === 'line' || type === 'text' || type === 'rectangle' || type === 'connector' || type === 'frame') {
+    if (type === 'note' || type === 'text' || type === 'rectangle' || type === 'frame') {
       wireColorDropdown(entry, 'color', (color) => {
         entry.data.color = color;
         applyElementColor(entry);
-        if (type === 'connector') applyConnectorCaps(entry);
         Api.updateElement(id, { color }).catch(err => alert(err.message));
       });
     }
 
     if (type === 'line' || type === 'connector') {
-      wireThicknessDropdown(entry);
+      wireLineDropdown(entry);
     }
 
     if (type === 'connector') {
@@ -2312,6 +2483,22 @@
       }
     }
 
+    if (type === 'note') {
+      wireFormatDropdown(entry); // conscient du type post-it (cf. plus haut) : applyNoteTextStyle
+      wireAlignDropdown(entry, applyNoteTextStyle, true);
+      const noteFontSizeSelect = toolbarEl.querySelector('[data-role="note-fontsize"]');
+      if (noteFontSizeSelect) {
+        noteFontSizeSelect.addEventListener('pointerdown', e => e.stopPropagation());
+        noteFontSizeSelect.addEventListener('change', () => {
+          const size = Number(noteFontSizeSelect.value);
+          entry.data.fontSize = size;
+          applyNoteTextStyle(entry);
+          autoGrowNoteOnInput(entry);
+          Api.updateElement(id, { fontSize: size, width: entry.data.width, height: entry.data.height }).catch(() => {});
+        });
+      }
+    }
+
     if (type === 'rectangle') {
       wireColorDropdown(entry, 'textcolor', (color) => {
         entry.data.textColor = color;
@@ -2319,117 +2506,9 @@
         Api.updateElement(id, { textColor: color }).catch(() => {});
       });
       wireFormatDropdown(entry); // conscient du type rectangle (cf. plus haut) : applyRectangleTextStyle, pas applyTextStyle
-
-      // Alignement (deux rangées horizontal/vertical) : reste ouvert après un choix, on ajuste
-      // souvent les deux à la suite.
-      const alignParts = wireDropdownToggle('align');
-      if (alignParts) {
-        const { trigger, popover } = alignParts;
-        const hIcons = { left: iconTextAlignLeft, center: iconTextAlignCenter, right: iconTextAlignRight };
-        popover.querySelectorAll('[data-align-h]').forEach((btn) => {
-          btn.addEventListener('pointerdown', e => e.stopPropagation());
-          btn.addEventListener('click', () => {
-            entry.data.textAlign = btn.dataset.alignH;
-            applyRectangleTextStyle(entry);
-            popover.querySelectorAll('[data-align-h]').forEach(b => b.classList.remove('is-active'));
-            btn.classList.add('is-active');
-            trigger.innerHTML = hIcons[btn.dataset.alignH]();
-            Api.updateElement(id, { textAlign: entry.data.textAlign }).catch(() => {});
-          });
-        });
-        popover.querySelectorAll('[data-align-v]').forEach((btn) => {
-          btn.addEventListener('pointerdown', e => e.stopPropagation());
-          btn.addEventListener('click', () => {
-            entry.data.textValign = btn.dataset.alignV;
-            applyRectangleTextStyle(entry);
-            popover.querySelectorAll('[data-align-v]').forEach(b => b.classList.remove('is-active'));
-            btn.classList.add('is-active');
-            Api.updateElement(id, { textValign: entry.data.textValign }).catch(() => {});
-          });
-        });
-      }
-
-      // Lien : le texte devient cliquable (mis en forme "lien" forcée, cf. applyRectangleTextStyle),
-      // ouvrir sur un simple clic géré dans wireTextEditing.
-      const linkParts = wireDropdownToggle('link');
-      if (linkParts) {
-        const { trigger, popover } = linkParts;
-        const input = popover.querySelector('[data-role="link-input"]');
-        const applyBtn = popover.querySelector('[data-role="link-apply"]');
-        const removeBtn = popover.querySelector('[data-role="link-remove"]');
-        input.addEventListener('pointerdown', e => e.stopPropagation());
-        input.addEventListener('keydown', (e) => {
-          e.stopPropagation();
-          if (e.key === 'Enter') applyBtn.click();
-        });
-        applyBtn.addEventListener('pointerdown', e => e.stopPropagation());
-        applyBtn.addEventListener('click', () => {
-          const url = input.value.trim();
-          entry.data.link = url || null;
-          applyRectangleTextStyle(entry);
-          trigger.classList.toggle('is-active', !!entry.data.link);
-          removeBtn.hidden = !entry.data.link;
-          popover.classList.remove('is-open');
-          Api.updateElement(id, { link: entry.data.link }).catch(() => {});
-        });
-        removeBtn.addEventListener('pointerdown', e => e.stopPropagation());
-        removeBtn.addEventListener('click', () => {
-          input.value = '';
-          entry.data.link = null;
-          applyRectangleTextStyle(entry);
-          trigger.classList.remove('is-active');
-          removeBtn.hidden = true;
-          popover.classList.remove('is-open');
-          Api.updateElement(id, { link: null }).catch(() => {});
-        });
-      }
-
-      // Bordure combinée (angles, épaisseur, style du trait, couleur) : reste ouvert après un choix,
-      // comme "align" ci-dessus.
-      const borderParts = wireDropdownToggle('border');
-      if (borderParts) {
-        const { popover } = borderParts;
-        popover.querySelectorAll('[data-radius]').forEach((btn) => {
-          btn.addEventListener('pointerdown', e => e.stopPropagation());
-          btn.addEventListener('click', () => {
-            entry.data.radius = Number(btn.dataset.radius);
-            applyRectangleStyle(entry);
-            popover.querySelectorAll('[data-radius]').forEach(b => b.classList.remove('is-active'));
-            btn.classList.add('is-active');
-            Api.updateElement(id, { radius: entry.data.radius }).catch(() => {});
-          });
-        });
-        popover.querySelectorAll('[data-strokewidth]').forEach((btn) => {
-          btn.addEventListener('pointerdown', e => e.stopPropagation());
-          btn.addEventListener('click', () => {
-            entry.data.strokeWidth = Number(btn.dataset.strokewidth);
-            applyRectangleStyle(entry);
-            popover.querySelectorAll('[data-strokewidth]').forEach(b => b.classList.remove('is-active'));
-            btn.classList.add('is-active');
-            Api.updateElement(id, { strokeWidth: entry.data.strokeWidth }).catch(() => {});
-          });
-        });
-        popover.querySelectorAll('[data-linestyle]').forEach((btn) => {
-          btn.addEventListener('pointerdown', e => e.stopPropagation());
-          btn.addEventListener('click', () => {
-            entry.data.lineStyle = btn.dataset.linestyle;
-            applyRectangleStyle(entry);
-            popover.querySelectorAll('[data-linestyle]').forEach(b => b.classList.remove('is-active'));
-            btn.classList.add('is-active');
-            Api.updateElement(id, { lineStyle: entry.data.lineStyle }).catch(() => {});
-          });
-        });
-        popover.querySelectorAll('[data-strokecolor]').forEach((btn) => {
-          btn.addEventListener('pointerdown', e => e.stopPropagation());
-          btn.addEventListener('click', () => {
-            entry.data.strokeColor = btn.dataset.strokecolor;
-            applyRectangleStyle(entry);
-            popover.querySelectorAll('[data-strokecolor]').forEach(b => b.classList.remove('is-active'));
-            btn.classList.add('is-active');
-            Api.updateElement(id, { strokeColor: entry.data.strokeColor }).catch(() => {});
-          });
-        });
-      }
+      wireAlignDropdown(entry, applyRectangleTextStyle, true);
+      wireLinkDropdown(entry, applyRectangleTextStyle);
+      wireBorderDropdown(entry, { withRadius: true });
 
       const rectFontSizeSelect = toolbarEl.querySelector('[data-role="rect-fontsize"]');
       if (rectFontSizeSelect) {
@@ -2442,50 +2521,10 @@
           Api.updateElement(id, { fontSize: size }).catch(() => {});
         });
       }
-
-      // Menu "⋮" : dupliquer / premier plan / arrière-plan / supprimer (cf. moreMenuHtml).
-      const moreParts = wireDropdownToggle('more');
-      if (moreParts) {
-        const { trigger, popover } = moreParts;
-        const dup = popover.querySelector('[data-role="more-duplicate"]');
-        if (dup) {
-          dup.addEventListener('pointerdown', e => e.stopPropagation());
-          dup.addEventListener('click', () => { popover.classList.remove('is-open'); duplicateElement(entry); });
-        }
-        const front = popover.querySelector('[data-role="more-front"]');
-        if (front) {
-          front.addEventListener('pointerdown', e => e.stopPropagation());
-          front.addEventListener('click', () => {
-            popover.classList.remove('is-open');
-            Api.updateElement(id, { bringToFront: true }).then(applyRemoteUpdate).catch(() => {});
-          });
-        }
-        const back = popover.querySelector('[data-role="more-back"]');
-        if (back) {
-          back.addEventListener('pointerdown', e => e.stopPropagation());
-          back.addEventListener('click', () => {
-            popover.classList.remove('is-open');
-            Api.updateElement(id, { sendToBack: true }).then(applyRemoteUpdate).catch(() => {});
-          });
-        }
-        const del = popover.querySelector('[data-role="more-delete"]');
-        if (del) {
-          del.addEventListener('pointerdown', e => e.stopPropagation());
-          del.addEventListener('click', () => {
-            popover.classList.remove('is-open');
-            showDeleteConfirm(entry, trigger.getBoundingClientRect());
-          });
-        }
-      }
     }
 
     if (type === 'frame') {
-      wireColorDropdown(entry, 'stroke', (color) => {
-        entry.data.strokeColor = color;
-        applyRectangleStyle(entry);
-        Api.updateElement(id, { strokeColor: color }).catch(() => {});
-      });
-      wireStrokeWidthDropdown(entry);
+      wireBorderDropdown(entry, { withRadius: false });
       wireColorDropdown(entry, 'title', (color) => {
         entry.data.titleColor = color;
         applyFrameTitleStyle(entry);
@@ -2513,12 +2552,14 @@
     }
 
     if (type === 'text') {
+      wireFormatDropdown(entry);
+      wireAlignDropdown(entry, applyTextStyle, false);
+      wireLinkDropdown(entry, applyTextStyle);
       wireColorDropdown(entry, 'bg', (color) => {
         entry.data.backgroundColor = color;
         applyElementBackground(entry);
         Api.updateElement(id, { backgroundColor: color }).catch(() => {});
       });
-      wireFormatDropdown(entry);
       const fontSizeSelect = toolbarEl.querySelector('[data-role="fontsize"]');
       if (fontSizeSelect) {
         fontSizeSelect.addEventListener('pointerdown', e => e.stopPropagation());
@@ -2577,34 +2618,7 @@
       });
     }
 
-    const frontBtn = toolbarEl.querySelector('.element-front-btn');
-    if (frontBtn) {
-      frontBtn.addEventListener('pointerdown', e => e.stopPropagation());
-      frontBtn.addEventListener('click', () => {
-        Api.updateElement(id, { bringToFront: true }).then(applyRemoteUpdate).catch(() => {});
-      });
-    }
-
-    const backBtn = toolbarEl.querySelector('.element-back-btn');
-    if (backBtn) {
-      backBtn.addEventListener('pointerdown', e => e.stopPropagation());
-      backBtn.addEventListener('click', () => {
-        Api.updateElement(id, { sendToBack: true }).then(applyRemoteUpdate).catch(() => {});
-      });
-    }
-
-    // Absents pour un rectangle (regroupés dans le menu "⋮" à la place, cf. moreMenuHtml).
-    const dupBtn = toolbarEl.querySelector('.element-duplicate-btn');
-    if (dupBtn) {
-      dupBtn.addEventListener('pointerdown', e => e.stopPropagation());
-      dupBtn.addEventListener('click', () => duplicateElement(entry));
-    }
-
-    const delBtn = toolbarEl.querySelector('.element-delete-btn');
-    if (delBtn) {
-      delBtn.addEventListener('pointerdown', e => e.stopPropagation());
-      delBtn.addEventListener('click', () => showDeleteConfirm(entry, delBtn.getBoundingClientRect()));
-    }
+    wireMoreMenu(entry);
   }
 
   function wireTextEditing(entry) {
@@ -2638,14 +2652,15 @@
       }, 600);
     });
     textEl.addEventListener('blur', () => { clearTimeout(textSaveTimer); stopEditing(true); });
+    const canHaveLink = data.type === 'rectangle' || data.type === 'text';
     textEl.addEventListener('pointerdown', (e) => {
       if (el.classList.contains('is-editing')) { e.stopPropagation(); return; }
-      // Un rectangle avec un lien : cliquer PILE sur le texte l'ouvre plutôt que de démarrer un
+      // Un rectangle/texte avec un lien : cliquer PILE sur le texte l'ouvre plutôt que de démarrer un
       // glisser/passer en édition (cf. le clic ci-dessous) — un double-clic reste possible pour
       // éditer, "dblclick" étant un évènement distinct qui continue de remonter jusqu'à l'élément.
-      if (data.type === 'rectangle' && data.link) e.stopPropagation();
+      if (canHaveLink && data.link) e.stopPropagation();
     });
-    if (data.type === 'rectangle') {
+    if (canHaveLink) {
       textEl.addEventListener('click', (e) => {
         if (!entry.data.link || el.classList.contains('is-editing')) return;
         if (e.detail > 1) return; // laisse le double-clic (dblclick) déclencher l'édition à la place

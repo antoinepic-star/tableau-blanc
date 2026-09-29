@@ -281,10 +281,12 @@ body.board-page { overflow: hidden; height: 100vh; }
   resize: none; outline: none; cursor: text; overflow-wrap: break-word; overflow-y: auto;
 }
 .element[data-type="note"]:not(.is-editing) .element-text { cursor: grab; pointer-events: none; }
-/* Un post-it grandit avec son texte plutôt que de le faire défiler dans une hauteur fixe : sa marge
-   basse n'est donc plus contrainte par "inset" ci-dessus, sa hauteur explicite est posée en JS
-   (cf. syncNoteTextareaHeight/autoGrowNoteOnInput dans board.js). */
-.element[data-type="note"] .element-text { bottom: auto; height: auto; }
+/* Un post-it partage le même cadre flex que le rectangle (.element-text-frame, cf. plus bas) pour
+   centrer/aligner verticalement une zone de texte qui grandit à la hauteur exacte de son contenu
+   plutôt que de remplir toute la hauteur disponible (cf. syncNoteTextareaHeight/autoGrowNoteOnInput
+   dans board.js) : la zone de texte elle-même passe donc en position "statique" (dans le flux), c'est
+   le cadre qui porte l'inset et l'alignement.*/
+.element[data-type="note"] .element-text { position: static; inset: auto; width: 100%; max-height: 100%; }
 
 .element-resize-handle {
   position: absolute; right: 2px; bottom: 2px; width: 16px; height: 16px;
@@ -338,12 +340,15 @@ body.is-linking .element:not(.is-locked) .connector-anchor { display: block; }
 /* ---- Texte ---- */
 .element[data-type="text"] { cursor: grab; }
 .element[data-type="text"] .element-text {
-  color: inherit; font-weight: inherit; font-style: inherit; text-decoration: inherit; text-align: center;
+  color: inherit; font-weight: inherit; font-style: inherit; text-decoration: inherit;
   padding: 0; inset: auto;
 }
 .element[data-type="text"]:not(.is-editing) .element-text { cursor: grab; pointer-events: none; }
 .element[data-type="text"].is-dragging, .element[data-type="text"].is-resizing { cursor: grabbing; }
 .element[data-type="text"].is-selected { outline: 1.5px dashed var(--purple); outline-offset: 0; }
+/* Texte libre avec un lien (cf. wireTextEditing) : la main plutôt que le curseur texte au survol,
+   uniquement hors édition — sinon on ne pourrait plus placer le curseur pour corriger le texte. */
+.element[data-type="text"].has-link:not(.is-editing) .element-text { cursor: pointer; }
 
 /* ---- Image ---- */
 .element[data-type="image"] { cursor: grab; }
@@ -355,7 +360,9 @@ body.is-linking .element:not(.is-locked) .connector-anchor { display: block; }
 .element[data-type="rectangle"] { cursor: grab; }
 .element[data-type="rectangle"].is-dragging, .element[data-type="rectangle"].is-resizing { cursor: grabbing; }
 /* Un textarea ne centre pas nativement son contenu verticalement : le cadre (en flex) centre la
-   boîte de texte, qui elle-même grandit à la hauteur exacte de son contenu (cf. autoGrowRectangleTextarea). */
+   boîte de texte, qui elle-même grandit à la hauteur exacte de son contenu (cf.
+   autoGrowRectangleTextarea/autoGrowNoteOnInput dans board.js) — partagé avec le post-it, cf. plus
+   haut. */
 .element-text-frame {
   /* Alignement par défaut (ferré à gauche, centré verticalement) : justify-content/align-items sont
      de toute façon reposés en JS par élément (cf. applyRectangleTextStyle), ces valeurs ne comptent
@@ -430,7 +437,6 @@ body.is-linking .element:not(.is-locked) .connector-anchor { display: block; }
   color: var(--text-muted); cursor: pointer; display: flex; align-items: center; justify-content: center; flex-shrink: 0;
 }
 .element-icon-btn:hover { background: #f4f4f6; color: var(--text); }
-.element-icon-btn.element-delete-btn:hover { background: #fbeceb; color: #c8392c; }
 .element-icon-btn.is-active { background: var(--purple); color: #fff; }
 
 .element-fontsize-select {
@@ -499,7 +505,8 @@ body.is-linking .element:not(.is-locked) .connector-anchor { display: block; }
   border-radius: 0;
 }
 
-/* ---- Barre d'action "rectangle" (façon Miro) : bordure combinée, lien, menu "⋮" ---- */
+/* ---- Barres d'action façon Miro : bordure/trait combinés, lien, menu "⋮" — partagés par plusieurs
+   types d'éléments (rectangle, frame, texte, post-it, trait, connecteur), cf. board.js ---- */
 
 /* Petit intitulé de section à l'intérieur d'un popover qui empile plusieurs réglages (bordure) —
    distingue "angles" / "épaisseur" / "style" / "couleur" sans quatre boutons déclencheurs séparés. */
