@@ -1734,6 +1734,7 @@
       entry.tagEl = el.querySelector('.tip-tag');
       entry.titleEl = el.querySelector('.tip-title');
       entry.richEl = el.querySelector('.tip-rich');
+      autoWidthTag(entry.tagEl);
       autoGrowTipBlock(entry);
     }
     applyLockedState(entry);
@@ -1811,13 +1812,17 @@
 
   function applyFrameTitleStyle(entry) {
     if (entry.data.type !== 'frame' || !entry.textEl) return;
-    const size = entry.data.fontSize || 14;
+    // Même taille par défaut que le titre des blocs consigne/tips (cf. .instruction-title/.tip-title
+    // dans board.css), pour rester cohérent visuellement entre les trois.
+    const size = entry.data.fontSize || 15;
     entry.textEl.style.color = entry.data.titleColor || '#4a463c';
     entry.textEl.style.fontSize = `${size}px`;
     // La hauteur/interligne du titre était fixée (24px) dans board.css, calée sur la taille de police
     // par défaut : au-delà, le bas du texte se retrouvait tronqué par cette hauteur trop courte.
-    // On les calcule plutôt ici, proportionnels à la taille choisie.
-    const lineHeight = Math.round(size * 1.3);
+    // On les calcule plutôt ici, proportionnels à la taille choisie — un peu plus généreux (1.5 plutôt
+    // que 1.3) pour qu'il respire davantage, comme demandé (cf. .frame-title dans board.css pour son
+    // padding gauche/haut, sur le même principe).
+    const lineHeight = Math.round(size * 1.5);
     entry.textEl.style.lineHeight = `${lineHeight}px`;
     entry.textEl.style.height = `${lineHeight}px`;
   }
@@ -1943,6 +1948,15 @@
     autoGrowFlexBlock(entry);
   }
 
+  // Le tag ("Tips" par défaut) épouse la largeur de son texte plutôt que de remplir tout le bloc :
+  // même technique de mesure que autoGrowTextareaField, sur l'axe horizontal (border-box, cf. board.css,
+  // pour que la largeur posée corresponde exactement au scrollWidth mesuré, padding compris).
+  function autoWidthTag(t) {
+    if (!t) return;
+    t.style.width = '0px';
+    t.style.width = `${t.scrollWidth}px`;
+  }
+
   // Trait/connecteur continu = simple aplat de couleur ; pointillés = dégradé répété le long de la
   // longueur (l'élément est une barre pivotée, donc "vers la droite" correspond toujours à sa longueur).
   function applyLineStyle(entry) {
@@ -2064,7 +2078,7 @@
       autoGrowInstructionBlock(entry);
     } else if (data.type === 'tip') {
       entry.el.style.background = data.color;
-      if (document.activeElement !== entry.tagEl) entry.tagEl.value = data.tag || '';
+      if (document.activeElement !== entry.tagEl) { entry.tagEl.value = data.tag || ''; autoWidthTag(entry.tagEl); }
       if (document.activeElement !== entry.titleEl) entry.titleEl.value = data.title || '';
       if (document.activeElement !== entry.richEl) entry.richEl.innerHTML = data.text || '';
       autoGrowTipBlock(entry);
@@ -2867,7 +2881,12 @@
       Api.updateElement(id, { bringToFront: true }).then(applyRemoteUpdate).catch(() => {});
       requestAnimationFrame(() => {
         target.el.focus();
-        if (target.rich) placeCaretAtEnd(target.el);
+        // Seulement s'il est vide (rien à cliquer dessus, donc rien que le natif puisse positionner) :
+        // sur un champ qui a déjà du texte, cet appel arrivant après coup (rAF) écraserait sinon une
+        // sélection de mot que le double-clic natif venait tout juste de faire (le focus() du dessus
+        // ne perturbe rien puisqu'il est déjà focus au 2e clic, mais forcer le curseur à la fin, lui,
+        // annule silencieusement cette sélection).
+        if (target.rich && !target.el.textContent) placeCaretAtEnd(target.el);
       });
     };
 
@@ -2897,6 +2916,8 @@
     return `
       <button type="button" class="element-format-btn" data-rt="bold" title="Gras">B</button>
       <button type="button" class="element-format-btn is-italic" data-rt="italic" title="Italique">I</button>
+      <button type="button" class="element-format-btn is-underline" data-rt="underline" title="Souligné">U</button>
+      <button type="button" class="element-format-btn is-strike" data-rt="strikeThrough" title="Barré">S</button>
       <span class="element-toolbar-sep"></span>
       <button type="button" class="toolbar-dropdown-trigger" data-rt="link" title="Lien">${iconLinkChain()}</button>
     `;
@@ -2957,7 +2978,7 @@
       const btn = e.target.closest('[data-rt]');
       if (!btn || !activeRichField) return;
       const cmd = btn.dataset.rt;
-      if (cmd === 'bold' || cmd === 'italic') {
+      if (cmd === 'bold' || cmd === 'italic' || cmd === 'underline' || cmd === 'strikeThrough') {
         document.execCommand(cmd);
         onRichFieldChanged();
       } else if (cmd === 'link') {
@@ -3416,6 +3437,9 @@
         { key: 'title', el: entry.titleEl, column: 'title', dataKey: 'title', autoGrow: autoGrowTipBlock },
         { key: 'rich', el: entry.richEl, column: 'text', dataKey: 'text', rich: true, autoGrow: autoGrowTipBlock },
       ], 'title');
+      // Purement visuel (jamais persisté, cf. autoWidthTag) : pas un "autoGrow" au sens des autres
+      // champs ci-dessus, qui persistent aussi width/height du bloc entier avec eux.
+      if (entry.tagEl) entry.tagEl.addEventListener('input', () => autoWidthTag(entry.tagEl));
     }
     wireConnectorAnchors(entry);
     wireBodyDrag(entry);

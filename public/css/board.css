@@ -384,8 +384,9 @@ body.is-linking .element:not(.is-locked) .connector-anchor { display: block; }
 .frame-title {
   /* height/line-height posés en JS, proportionnels à la taille de police choisie
      (cf. applyFrameTitleStyle dans board.js) — une valeur fixe ici tronquait le bas du texte dès
-     qu'on dépassait la taille par défaut. */
-  position: absolute; top: 8px; left: 12px; right: 40px;
+     qu'on dépassait la taille par défaut. Décalage gauche/haut aligné sur le padding des blocs
+     consigne/tips (16px, cf. plus bas), pour qu'il respire autant qu'eux. */
+  position: absolute; top: 16px; left: 16px; right: 40px;
   padding: 0; border: none; background: transparent; resize: none; outline: none;
   font-family: inherit; font-weight: 600;
   white-space: pre; overflow: hidden; cursor: text;
@@ -421,7 +422,9 @@ body.is-linking .element:not(.is-locked) .connector-anchor { display: block; }
 .instruction-desc { font-size: 13px; line-height: 1.5; color: var(--text-muted); padding: 0; overflow: hidden; }
 
 .tip-tag {
-  align-self: flex-start; width: auto; min-width: 32px; max-width: 100%;
+  /* border-box : sa largeur posée en JS (cf. autoWidthTag dans board.js) inclut le padding — sans ça,
+     le mot mesuré (scrollWidth) et la largeur qu'on lui donne ensuite ne coïncideraient pas. */
+  align-self: flex-start; box-sizing: border-box; min-width: 32px; max-width: 100%;
   background: #1c1c28; color: #fff; font-size: 10.5px; font-weight: 700; text-transform: uppercase;
   letter-spacing: 0.03em; border-radius: 5px; padding: 3px 8px; line-height: 1.3;
   white-space: pre; overflow: hidden;

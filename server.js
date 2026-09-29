@@ -86,7 +86,7 @@ const ELEMENT_DEFAULTS = {
   image: { width: 240, height: 240, color: null },
   rectangle: { width: 220, height: 140, color: ELEMENT_COLORS[0], fontSize: 16, textAlign: 'left', textValign: 'center' },
   connector: { width: 0, height: 0, color: '#1c1c28' },
-  frame: { width: 480, height: 360, color: '#EDEAE3', strokeWidth: 1, strokeColor: '#c9c4b8', fontSize: 14, titleColor: '#4a463c' },
+  frame: { width: 480, height: 360, color: '#EDEAE3', strokeWidth: 1, strokeColor: '#c9c4b8', fontSize: 15, titleColor: '#4a463c' },
   // Bloc "consigne" (numéro + titre + description) et bloc "tips" (tag + titre + texte riche) : voir
   // board.js pour le détail de leurs champs multiples (title/number/tag, en plus de "text" et "color").
   instruction: { width: 280, height: 170, color: '#FFFFFF', number: '1', title: '' },
@@ -582,11 +582,12 @@ const ELEMENT_LABELS = { note: 'post-it', line: 'trait', text: 'bloc de texte', 
 // (cf. board.js) — contrairement à tous les autres types, dont le "text" brut n'est jamais interprété
 // comme du HTML côté client (affiché via .value, pas .innerHTML). Liste blanche volontairement
 // restrictive (pas d'outil ouvert au public, mais on évite quand même de stocker/diffuser des balises
-// arbitraires) : conserve seulement gras/italique/lien/retour à la ligne, retire tout le reste
-// (attributs compris, sauf href sur <a> s'il pointe vers un schéma http(s) explicite).
+// arbitraires) : conserve seulement gras/italique/souligné/barré/lien/retour à la ligne (les balises
+// que produit document.execCommand pour chacun dans Chrome), retire tout le reste (attributs compris,
+// sauf href sur <a> s'il pointe vers un schéma http(s) explicite).
 function sanitizeRichText(html) {
   if (!html) return '';
-  const allowed = new Set(['b', 'strong', 'i', 'em', 'a', 'br']);
+  const allowed = new Set(['b', 'strong', 'i', 'em', 'u', 'strike', 'a', 'br']);
   return html.replace(/<\/?([a-zA-Z0-9]+)([^>]*)>/g, (match, tag, attrs) => {
     const lower = tag.toLowerCase();
     if (!allowed.has(lower)) return '';
@@ -690,8 +691,8 @@ function findContainingFrame(x, y, width, height, frameRows, excludeId) {
 // puis la ligne suivante démarre sous la plus haute image de la ligne précédente (un élément plus
 // large que la frame reste seul sur sa ligne plutôt que de forcer un débordement infini). La frame
 // grandit/rétrécit en hauteur pour accueillir tout le monde sans jamais changer sa largeur.
-const FRAME_ARRANGE_PADDING = 16;
-const FRAME_TITLE_HEIGHT = 36;
+const FRAME_ARRANGE_PADDING = 16; // même valeur que le padding des blocs consigne/tips (cf. board.css)
+const FRAME_TITLE_HEIGHT = 40; // espace réservé au titre (cf. applyFrameTitleStyle, taille 15px par défaut)
 const FRAME_MIN_HEIGHT = 100;
 
 async function applyFrameArrangement(whiteboardId, frameId) {
@@ -712,14 +713,17 @@ async function applyFrameArrangement(whiteboardId, frameId) {
       await tursoRun('UPDATE whiteboard_elements SET height = ?, updated_at = unixepoch() WHERE id = ?', [FRAME_MIN_HEIGHT, frameId]);
     }
   } else {
-    const innerWidth = Math.max(frame.width - FRAME_ARRANGE_PADDING, 40);
+    // Bord droit du contenu (pas juste sa largeur totale) : l'ancien calcul ne réservait de marge qu'à
+    // gauche, laissant les éléments toucher le bord droit du cadre au lieu de garder eux aussi
+    // FRAME_ARRANGE_PADDING de marge.
+    const maxX = Math.max(frame.width - FRAME_ARRANGE_PADDING, FRAME_ARRANGE_PADDING + 40);
     let cursorX = FRAME_ARRANGE_PADDING;
     let cursorY = FRAME_TITLE_HEIGHT + FRAME_ARRANGE_PADDING;
     let rowHeight = 0;
     let placedInRow = 0;
 
     for (const c of children) {
-      if (placedInRow > 0 && (cursorX - FRAME_ARRANGE_PADDING + c.width) > innerWidth) {
+      if (placedInRow > 0 && (cursorX + c.width) > maxX) {
         cursorY += rowHeight + FRAME_ARRANGE_PADDING;
         cursorX = FRAME_ARRANGE_PADDING;
         rowHeight = 0;
