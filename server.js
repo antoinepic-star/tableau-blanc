@@ -950,15 +950,42 @@ app.patch('/api/whiteboards/:whiteboardId/elements/:id', whiteboardAuth, ah(asyn
     frameId, titleColor, textColor, textAlign, textValign, link, title, number, tag,
   } = req.body || {};
 
-  // Une frame reste toujours tout au fond : "premier plan" n'a pas de sens pour elle et est ignoré
-  // silencieusement (cf. aussi le toolbar côté client, qui ne propose pas ces actions sur une frame).
+  // Une frame reste toujours tout au fond : "premier plan"/"arrière-plan" n'ont pas de sens pour elle
+  // et sont ignorés silencieusement (cf. aussi le toolbar côté client, qui ne propose pas ces actions
+  // sur une frame).
   let zIndex = existing.z_index;
   if (bringToFront && existing.type !== 'frame') {
     const { max } = await tursoGet('SELECT MAX(z_index) as max FROM whiteboard_elements WHERE whiteboard_id = ?', [req.params.whiteboardId]);
     zIndex = (max ?? -1) + 1;
-  } else if (sendToBack) {
-    const { min } = await tursoGet('SELECT MIN(z_index) as min FROM whiteboard_elements WHERE whiteboard_id = ?', [req.params.whiteboardId]);
-    zIndex = (min ?? 1) - 1;
+  } else if (sendToBack && existing.type !== 'frame') {
+    // Reste devant TOUTES les frames (qui doivent, elles, toujours rester tout au fond) : le minimum
+    // se calcule parmi les autres éléments non-frame seulement, jamais plus bas que la frame la plus
+    // "avancée" — sinon "envoyer à l'arrière-plan" pouvait glisser un élément SOUS une frame qui le
+    // contient, le rendant invisible (son fond la recouvrant entièrement).
+    const { min } = await tursoGet(
+      "SELECT MIN(z_index) as min FROM whiteboard_elements WHERE whiteboard_id = ? AND type != 'frame' AND id != ?",
+      [req.params.whiteboardId, req.params.id]
+    );
+    const { maxFrame } = await tursoGet(
+      "SELECT MAX(z_index) as maxFrame FROM whiteboard_elements WHERE whiteboard_id = ? AND type = 'frame'",
+      [req.params.whiteboardId]
+    );
+    const floor = maxFrame != null ? maxFrame + 1 : null;
+    if (min == null) {
+      zIndex = floor ?? -1;
+    } else if (floor != null && min - 1 < floor) {
+      // Pas la place de passer strictement sous tout le monde sans finir sous une frame (le
+      // précédent dernier est collé juste au-dessus d'une frame) : décale tous les autres éléments
+      // non-frame d'un cran plutôt que de tomber à égalité avec lui — une égalité rendrait l'ordre
+      // entre les deux ambigu (parfois l'un cache l'autre au hasard du rendu).
+      await tursoRun(
+        "UPDATE whiteboard_elements SET z_index = z_index + 1, updated_at = unixepoch() WHERE whiteboard_id = ? AND type != 'frame' AND id != ?",
+        [req.params.whiteboardId, req.params.id]
+      );
+      zIndex = floor;
+    } else {
+      zIndex = min - 1;
+    }
   }
 
   // Si la position ou la taille change pour un élément qui n'est pas lui-même une frame, on
