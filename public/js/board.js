@@ -1,6 +1,12 @@
 (() => {
   const ELEMENT_COLORS = ['#FFF176', '#FFCC80', '#F8BBD0', '#EF9A9A', '#A5D6A7', '#80CBC4', '#90CAF9', '#CE93D8', '#FFFFFF', '#989898', '#232323'];
-  const FONT_SIZES = [12, 14, 16, 18, 22, 28, 36, 48];
+  // Échelle nommée plutôt qu'un choix de tailles en pixels — mêmes valeurs que les tailles fixes du
+  // bloc "consigne" pour "Sous-titre"/"Texte" (cf. .instruction-title/.instruction-desc dans board.css),
+  // pour rester visuellement cohérent d'un bloc à l'autre.
+  const FONT_SIZE_PRESETS = [['Gros titre', 52], ['Titre', 28], ['Sous-titre', 15], ['Texte', 13], ['Légende', 11]];
+  function fontSizeOptionsHtml(current) {
+    return FONT_SIZE_PRESETS.map(([label, s]) => `<option value="${s}"${Number(current) === s ? ' selected' : ''}>${label}</option>`).join('');
+  }
   const LINE_THICKNESSES = [2, 4, 6, 10];
   const LINE_STYLES = [['solid', 'Continu'], ['dashed', 'Pointillés']];
   const STROKE_WIDTHS = [0, 1, 2, 4, 6];
@@ -474,11 +480,11 @@
       createElementTracked({ type: 'line', x, y, width: 160, height: 6, rotation: 0, color: '#1c1c28' })
         .catch(err => alert(err.message));
     } else if (type === 'text') {
-      const initial = computeTextBoxSize({ text: '', fontSize: 18, bold: false, italic: false });
+      const initial = computeTextBoxSize({ text: '', fontSize: 15, bold: false, italic: false });
       const { x, y } = snapPoint(wx - initial.width / 2 + offset, wy - initial.height / 2 + offset);
       createElementTracked({
         type: 'text', x, y,
-        width: initial.width, height: initial.height, color: '#1c1c28', fontSize: 18,
+        width: initial.width, height: initial.height, color: '#1c1c28', fontSize: 15,
       })
         .then(data => { const entry = ensureRendered(data); entry.enterEditing?.(); })
         .catch(err => alert(err.message));
@@ -871,7 +877,7 @@
   }
 
   function computeTextBoxSize(data) {
-    const size = data.fontSize || 18;
+    const size = data.fontSize || 15;
     const raw = (data.text && data.text.length) ? data.text : 'Texte…';
     const lines = raw.split('\n');
     let maxLineWidth = 0;
@@ -1079,7 +1085,7 @@
   function buildRectangleToolbarHtml(data) {
     const voted = (data.votes || []).includes(myName);
     return `
-      <select class="element-fontsize-select" data-role="rect-fontsize" title="Taille du texte">${FONT_SIZES.map(s => `<option value="${s}"${Number(data.fontSize) === s ? ' selected' : ''}>${s}</option>`).join('')}</select>
+      <select class="element-fontsize-select" data-role="rect-fontsize" title="Taille du texte">${fontSizeOptionsHtml(data.fontSize)}</select>
       ${formatDropdownHtml(data)}
       ${alignDropdownHtml(data)}
       ${colorDropdownHtml('textcolor', data.textColor, false, 'Couleur du texte')}
@@ -1123,7 +1129,7 @@
     } else if (data.type === 'text') {
       // Pas d'alignement ici : sa boîte épouse toujours exactement son contenu (cf.
       // applyTextAutoSize), ça n'aurait pas d'effet visible.
-      controls = `<select class="element-fontsize-select" data-role="fontsize" title="Taille">${FONT_SIZES.map(s => `<option value="${s}"${Number(data.fontSize) === s ? ' selected' : ''}>${s}</option>`).join('')}</select>`
+      controls = `<select class="element-fontsize-select" data-role="fontsize" title="Taille">${fontSizeOptionsHtml(data.fontSize)}</select>`
         + formatDropdownHtml(data)
         + colorDropdownHtml('color', data.color, false, 'Couleur du texte')
         + linkDropdownHtml(data)
@@ -1144,7 +1150,7 @@
         + `<span class="element-toolbar-sep"></span>`
         + `<button type="button" class="element-icon-btn element-arrange-btn" title="Ordonner (ranger le contenu actuel en grille)">${iconArrange()}</button>`
         + `<span class="element-toolbar-sep"></span>`
-        + `<select class="element-fontsize-select" data-role="title-fontsize" title="Taille du titre">${FONT_SIZES.map(s => `<option value="${s}"${Number(data.fontSize) === s ? ' selected' : ''}>${s}</option>`).join('')}</select>`
+        + `<select class="element-fontsize-select" data-role="title-fontsize" title="Taille du titre">${fontSizeOptionsHtml(data.fontSize)}</select>`
         + colorDropdownHtml('title', data.titleColor, false, 'Couleur du titre');
     } else if (data.type === 'instruction' || data.type === 'tip') {
       // Pas de format/alignement ici : le titre/numéro/tag ont une mise en forme fixe, et le texte
@@ -1789,7 +1795,7 @@
     if (d.underline || hasLink) decorations.push('underline');
     if (d.strikethrough) decorations.push('line-through');
     t.style.textDecoration = decorations.join(' ') || 'none';
-    t.style.fontSize = `${d.fontSize || 18}px`;
+    t.style.fontSize = `${d.fontSize || 15}px`;
     t.style.color = hasLink ? LINK_COLOR : d.color;
     t.style.textAlign = d.textAlign || 'center';
     entry.el.classList.toggle('has-link', hasLink);
@@ -1848,7 +1854,7 @@
     const d = entry.data;
     const t = entry.textEl;
     const hasLink = !!d.link;
-    t.style.fontSize = `${d.fontSize || 16}px`;
+    t.style.fontSize = `${d.fontSize || 15}px`;
     t.style.fontWeight = d.bold ? '700' : '400';
     t.style.fontStyle = d.italic ? 'italic' : 'normal';
     const decorations = [];

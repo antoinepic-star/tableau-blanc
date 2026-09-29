@@ -82,9 +82,9 @@ const ELEMENT_COLORS = ['#FFF176', '#F8BBD0', '#90CAF9', '#A5D6A7', '#FFCC80', '
 const ELEMENT_DEFAULTS = {
   note: { width: 130, height: 130, color: ELEMENT_COLORS[0], fontSize: 14, textAlign: 'left', textValign: 'top' },
   line: { width: 160, height: 6, color: '#1c1c28' },
-  text: { width: 220, height: 60, color: '#1c1c28', fontSize: 18, textAlign: 'center' },
+  text: { width: 220, height: 60, color: '#1c1c28', fontSize: 15, textAlign: 'center' },
   image: { width: 240, height: 240, color: null },
-  rectangle: { width: 220, height: 140, color: ELEMENT_COLORS[0], fontSize: 16, textAlign: 'left', textValign: 'center' },
+  rectangle: { width: 220, height: 140, color: ELEMENT_COLORS[0], fontSize: 15, textAlign: 'left', textValign: 'center' },
   connector: { width: 0, height: 0, color: '#1c1c28' },
   frame: { width: 480, height: 360, color: '#EDEAE3', strokeWidth: 1, strokeColor: '#c9c4b8', fontSize: 15, titleColor: '#4a463c' },
   // Bloc "consigne" (numéro + titre + description) et bloc "tips" (tag + titre + texte riche) : voir
