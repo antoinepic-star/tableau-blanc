@@ -1688,6 +1688,7 @@
     } else if (data.type === 'instruction') {
       // Trois champs indépendants (numéro/titre/description), contrairement à tous les autres types
       // qui n'en ont qu'un seul (cf. wireMultiFieldEditing, qui généralise wireTextEditing pour ce cas).
+      el.style.background = data.color;
       el.innerHTML = `
         <div class="instruction-number-wrap"><textarea class="instruction-number block-field" maxlength="4" rows="1"></textarea></div>
         <textarea class="instruction-title block-field" placeholder="Titre…" maxlength="200"></textarea>
@@ -1701,6 +1702,7 @@
     } else if (data.type === 'tip') {
       // Le corps est un texte riche (contenteditable, pas un textarea) : seul champ à supporter du
       // gras/italique/lien sur une PORTION de texte (cf. le mini-toolbar de sélection plus bas).
+      el.style.background = data.color;
       el.innerHTML = `
         <textarea class="tip-tag block-field" placeholder="Tips" maxlength="40" rows="1"></textarea>
         <textarea class="tip-title block-field" placeholder="Titre…" maxlength="200"></textarea>
@@ -3111,7 +3113,11 @@
           const en = elements.get(mid);
           return en ? { id: mid, x: en.data.x, y: en.data.y } : null;
         }).filter(Boolean);
-        Api.updateElementsBatch(moves)
+        // bringToFront: false — glisser (même un peu, ce qu'un simple clic imprécis peut suffire à
+        // déclencher) ne doit pas réordonner l'élément de façon permanente ; le voir par-dessus les
+        // autres PENDANT le geste est déjà assuré visuellement par DRAG_Z_BOOST ci-dessus, sans toucher
+        // à son z_index persisté.
+        Api.updateElementsBatch(moves, false)
           .then(({ elements: updated, superseded, isLatest }) => {
             if (superseded) return; // un glisser plus récent du même lot a pris le relais avant l'envoi
             updated.forEach((data) => {
@@ -3241,7 +3247,10 @@
         // partir) — utile aussi pour un seul élément dès que sa réponse est lourde (une image renvoyait
         // avant ça plusieurs Mo à chaque déplacement, cf. server.js, rendant l'aller-retour assez lent
         // pour que l'ordre d'arrivée cesse d'être fiable).
-        Api.updateElementsBatch([{ id, x: entry.data.x, y: entry.data.y }])
+        // bringToFront: false — même raison que pour un glisser groupé (cf. plus haut) : un simple
+        // clic peu précis suffit à déclencher un tout petit déplacement, qui ne doit pas pour autant
+        // réordonner l'élément de façon permanente.
+        Api.updateElementsBatch([{ id, x: entry.data.x, y: entry.data.y }], false)
           .then(({ elements: updated, superseded, isLatest }) => {
             if (superseded) return;
             entry.dragging = false;
