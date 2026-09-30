@@ -243,7 +243,17 @@ body.board-page { overflow: hidden; height: 100vh; }
    ne débordent pas de la même quantité. Pareil pour l'indicateur de sélection ci-dessous : en dehors
    de la boîte, aligner "à l'œil" dessus n'aligne pas vraiment les éléments. */
 .element { position: absolute; user-select: none; box-sizing: border-box; }
-.element.is-dragging, .element.is-resizing, .element.is-rotating, .element.is-cropping { z-index: 9999 !important; }
+/* :not([data-type="frame"]) : une frame doit TOUJOURS rester derrière son contenu (cf. sendToBack
+   côté serveur) — y compris pendant son propre redimensionnement. Sans cette exclusion, la redimen-
+   sionner la faisait passer devant les éléments posés dedans (dont le z-index, lui, ne bouge pas
+   pendant le geste), qui disparaissaient donc jusqu'au relâchement. Glisser une frame n'a pas ce
+   problème : startGroupDrag hisse alors aussi son contenu, en conservant leur ordre relatif (cf.
+   DRAG_Z_BOOST) — cette règle ne s'applique de toute façon pas à ce cas, un z-index inline !important
+   étant plus spécifique qu'une règle de classe, même !important elle aussi. */
+.element.is-dragging:not([data-type="frame"]),
+.element.is-resizing:not([data-type="frame"]),
+.element.is-rotating:not([data-type="frame"]),
+.element.is-cropping:not([data-type="frame"]) { z-index: 9999 !important; }
 /* outline plutôt que box-shadow : un post-it (et d'autres types) a déjà son propre box-shadow (ombre
    portée, cf. plus bas) — une SEULE valeur de box-shadow peut s'appliquer par élément, la règle la
    plus spécifique/tardive du fichier écrase alors silencieusement celle-ci, rendant la sélection

@@ -219,7 +219,10 @@
       });
     });
 
-    return { x, y, guideVWorldX, guideHWorldY };
+    // Toujours un multiple de GRID_SIZE au final, même quand l'alignement sur un autre élément a pris
+    // le dessus ci-dessus (son bord/centre visé n'en est pas forcément un — ex. le centre d'un "rond"
+    // de largeur 150) : le calage sur la grille prime toujours sur l'alignement fin.
+    return { x: snapToGrid(x), y: snapToGrid(y), guideVWorldX, guideHWorldY };
   }
 
   // Utilisée par un glisser (simple/groupé) : applique l'accrochage, affiche/masque les repères, et
@@ -614,6 +617,7 @@
       createElementTracked({
         type: 'rectangle', x, y, width: size, height: size,
         color: c, strokeWidth: 0, strokeColor: '#1c1c28', radius: 999,
+        textAlign: 'center', textValign: 'center',
       }).catch(err => alert(err.message));
     } else if (type === 'rectangle') {
       const c = ELEMENT_COLORS[creationCount % ELEMENT_COLORS.length];
@@ -1707,9 +1711,12 @@
     });
   }
 
-  // Le remplissage se fait DANS le bouton du toolbar (comme Miro) — plus d'overlay sur l'élément
-  // lui-même. On annule si le bouton est relâché ou si le pointeur le quitte avant la fin.
-  function startUnlockHold(entry, btn) {
+  // Le remplissage se fait DANS le bouton du toolbar (comme Miro), mais l'appui qui le déclenche peut
+  // venir d'ailleurs (cf. `cancelEl`) : appuyer longtemps directement sur l'élément verrouillé marche
+  // aussi (cf. wireBodyDrag), pas seulement sur ce bouton — plus besoin de viser précisément le bouton
+  // une fois l'élément sélectionné. `cancelEl` (l'élément dont on écoute le survol/relâchement pour
+  // annuler l'appui) vaut le bouton lui-même par défaut, ou l'élément quand l'appui vient de lui.
+  function startUnlockHold(entry, btn, cancelEl = btn) {
     const fill = btn.querySelector('.unlock-hold-fill');
     const startTime = Date.now();
     let done = false;
@@ -1720,7 +1727,7 @@
       if (raf) cancelAnimationFrame(raf);
       if (fill) fill.style.width = '0%';
       window.removeEventListener('pointerup', onUp);
-      btn.removeEventListener('pointerleave', onLeave);
+      cancelEl.removeEventListener('pointerleave', onLeave);
     }
     function onUp() { cleanup(); }
     function onLeave() { cleanup(); }
@@ -1746,7 +1753,7 @@
       raf = requestAnimationFrame(tick);
     }
     window.addEventListener('pointerup', onUp);
-    btn.addEventListener('pointerleave', onLeave);
+    cancelEl.addEventListener('pointerleave', onLeave);
     raf = requestAnimationFrame(tick);
   }
 
@@ -2089,7 +2096,11 @@
   function autoWidthTag(t) {
     if (!t) return;
     t.style.width = '0px';
-    t.style.width = `${t.scrollWidth}px`;
+    // scrollWidth d'un <textarea> mono-ligne omet son padding-right (quirk connu, contrairement au
+    // padding-left qu'il inclut) : sans ce correctif, le fond du tag s'arrête juste après la dernière
+    // lettre au lieu de respecter le même espace que côté gauche.
+    const rightPad = parseFloat(getComputedStyle(t).paddingRight) || 0;
+    t.style.width = `${t.scrollWidth + rightPad}px`;
   }
 
   // Trait/connecteur continu = simple aplat de couleur ; pointillés = dégradé répété le long de la
@@ -3295,9 +3306,17 @@
         toggleMultiSelect(id);
         return;
       }
-      // Verrouillé : juste sélectionner (montre le bouton "appui long pour déverrouiller" dans le
-      // toolbar) — le décompte de déverrouillage se déclenche sur ce bouton, pas sur l'élément lui-même.
-      if (entry.data.locked) { e.stopPropagation(); selectElement(id); closeConfirmPopover(); return; }
+      // Verrouillé : sélectionner (montre le toolbar "appui long pour déverrouiller") ET démarrer tout
+      // de suite ce décompte sur l'élément lui-même — pas besoin de relâcher puis viser précisément le
+      // bouton du toolbar, un appui long sur l'élément suffit (cf. startUnlockHold).
+      if (entry.data.locked) {
+        e.stopPropagation();
+        selectElement(id);
+        closeConfirmPopover();
+        const unlockBtn = toolbarEl.querySelector('.unlock-hold-btn');
+        if (unlockBtn) startUnlockHold(entry, unlockBtn, el);
+        return;
+      }
       if (entry.cropping) return;
       // Pas de garde sur is-editing ici : un clic sur le textarea lui-même stoppe déjà la
       // propagation (cf. wireTextEditing) quand on édite, donc seul un clic sur le bord — hors
