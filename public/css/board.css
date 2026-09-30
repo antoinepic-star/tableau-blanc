@@ -430,6 +430,10 @@ body.is-linking .element:not(.is-locked) .connector-anchor { display: block; }
 /* ---- Rectangle (forme éditable : fond, contour, arrondi, texte centré) ---- */
 .element[data-type="rectangle"] { cursor: grab; }
 .element[data-type="rectangle"].is-dragging, .element[data-type="rectangle"].is-resizing { cursor: grabbing; }
+/* Losange (tag: 'diamond', cf. board.js) : le polygone remplit toute la boîte, sous le texte —
+   fond/contour posés dessus en JS (cf. applyRectangleStyle), jamais interactif (le clic doit
+   traverser jusqu'à l'élément, comme le reste de sa boîte). */
+.rectangle-diamond-shape { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
 /* Un textarea ne centre pas nativement son contenu verticalement : le cadre (en flex) centre la
    boîte de texte, qui elle-même grandit à la hauteur exacte de son contenu (cf.
    autoGrowRectangleTextarea/autoGrowNoteOnInput dans board.js) — partagé avec le post-it, cf. plus

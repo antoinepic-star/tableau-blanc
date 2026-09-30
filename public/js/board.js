@@ -556,6 +556,7 @@
         { type: 'rectangle', label: 'Rectangle', icon: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="14" rx="2"/></svg>' },
         { type: 'line', label: 'Trait', icon: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="5" y1="19" x2="19" y2="5"/></svg>' },
         { type: 'rectangle', variant: 'ellipse', label: 'Rond', icon: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="8"/></svg>' },
+        { type: 'rectangle', variant: 'diamond', label: 'Losange', icon: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><polygon points="12,3 21,12 12,21 3,12"/></svg>' },
       ],
     },
     webpages: {
@@ -896,6 +897,18 @@
       createElementTracked({
         type: 'rectangle', x, y, width: size, height: size,
         color: c, strokeWidth: 0, strokeColor: '#1c1c28', radius: 999,
+        textAlign: 'center', textValign: 'center',
+      }).catch(err => alert(err.message));
+    } else if (type === 'rectangle' && variant === 'diamond') {
+      // Losange : dessiné en SVG plutôt qu'en CSS (cf. renderElement/applyRectangleStyle) — `tag:
+      // 'diamond'` marque juste la forme, pas un vrai tag affiché (même réutilisation du champ que le
+      // type de page du bloc "page web").
+      const c = ELEMENT_COLORS[creationCount % ELEMENT_COLORS.length];
+      const w = 200, h = 140;
+      const { x, y } = snapPoint(wx - w / 2, wy - h / 2);
+      createElementTracked({
+        type: 'rectangle', x, y, width: w, height: h,
+        color: c, strokeWidth: 0, strokeColor: '#1c1c28', tag: 'diamond',
         textAlign: 'center', textValign: 'center',
       }).catch(err => alert(err.message));
     } else if (type === 'rectangle') {
@@ -1640,7 +1653,7 @@
       ${linkDropdownHtml(data)}
       <span class="element-toolbar-sep"></span>
       ${colorDropdownHtml('color', data.color, false, 'Couleur de fond')}
-      ${borderDropdownHtml(data)}
+      ${borderDropdownHtml(data, { withRadius: data.tag !== 'diamond' })}
       <span class="element-toolbar-sep"></span>
       <button type="button" class="element-icon-btn element-vote-btn${voted ? ' is-active' : ''}" title="${voted ? 'Retirer mon vote' : 'Voter'}">${iconVote()}</button>
       <button type="button" class="element-icon-btn element-comment-btn" title="Commenter">${iconComment()}</button>
@@ -2229,7 +2242,14 @@
         ${anchorsHtml}
       `;
     } else if (data.type === 'rectangle') {
+      // Losange (`tag: 'diamond'`, cf. placeNewElement) : dessiné en SVG (polygon), pas en CSS box/
+      // border classique — un simple clip-path ne dessinerait le contour QUE sur les bords de la boîte
+      // englobante, pas le long des quatre pointes (cf. applyRectangleStyle pour le remplissage/contour).
+      const diamondShapeHtml = data.tag === 'diamond'
+        ? '<svg class="rectangle-diamond-shape" viewBox="0 0 100 100" preserveAspectRatio="none"><polygon points="50,0 100,50 50,100 0,50" vector-effect="non-scaling-stroke"/></svg>'
+        : '';
       el.innerHTML = `
+        ${diamondShapeHtml}
         <div class="element-text-frame">
           <textarea class="element-text element-text-rect" placeholder="" maxlength="4000"></textarea>
         </div>
@@ -2388,8 +2408,23 @@
   // pas de contrôle de style de trait dans son toolbar, donc son contour reste continu.
   function applyRectangleStyle(entry) {
     if (entry.data.type !== 'rectangle' && entry.data.type !== 'frame') return;
-    entry.el.style.background = entry.data.color;
     const style = entry.data.lineStyle === 'dashed' ? 'dashed' : 'solid';
+    if (entry.data.type === 'rectangle' && entry.data.tag === 'diamond') {
+      // Le fond/contour se posent sur le <svg> (cf. renderElement), pas sur la boîte englobante elle-
+      // même : elle reste invisible, seul le polygone est visible.
+      entry.el.style.background = 'none';
+      entry.el.style.border = 'none';
+      entry.el.style.borderRadius = '0';
+      const shape = entry.el.querySelector('.rectangle-diamond-shape polygon');
+      if (shape) {
+        shape.style.fill = entry.data.color;
+        shape.style.stroke = entry.data.strokeWidth ? (entry.data.strokeColor || '#1c1c28') : 'none';
+        shape.style.strokeWidth = entry.data.strokeWidth || 0;
+        shape.style.strokeDasharray = entry.data.lineStyle === 'dashed' ? '6 4' : 'none';
+      }
+      return;
+    }
+    entry.el.style.background = entry.data.color;
     entry.el.style.border = entry.data.strokeWidth ? `${entry.data.strokeWidth}px ${style} ${entry.data.strokeColor || '#1c1c28'}` : 'none';
     const r = entry.data.radius || 0;
     entry.el.style.borderRadius = r >= 999 ? '999px' : `${r}px`;
@@ -3231,7 +3266,7 @@
       wireFormatDropdown(entry); // conscient du type rectangle (cf. plus haut) : applyRectangleTextStyle, pas applyTextStyle
       wireAlignDropdown(entry, applyRectangleTextStyle);
       wireLinkDropdown(entry, applyRectangleTextStyle);
-      wireBorderDropdown(entry, { withRadius: true });
+      wireBorderDropdown(entry, { withRadius: entry.data.tag !== 'diamond' });
 
       const rectFontSizeSelect = toolbarEl.querySelector('[data-role="rect-fontsize"]');
       if (rectFontSizeSelect) {
