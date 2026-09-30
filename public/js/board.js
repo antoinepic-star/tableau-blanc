@@ -1,18 +1,30 @@
 (() => {
   const ELEMENT_COLORS = ['#FFF176', '#FFCC80', '#F8BBD0', '#EF9A9A', '#A5D6A7', '#80CBC4', '#90CAF9', '#CE93D8', '#FFFFFF', '#989898', '#232323'];
-  // Rendu de la pastille "aléatoire" d'une pile de post-its (cf. colorDropdownHtml/applyStackStyle) :
-  // un dégradé plutôt qu'une couleur unique, puisque justement il n'y en a pas une seule.
-  const STACK_RANDOM_GRADIENT = 'linear-gradient(135deg, #FFF176, #F8BBD0, #90CAF9, #CE93D8)';
-  // Tire une couleur pour le prochain post-it détaché d'une pile en mode "aléatoire", jamais identique
-  // à la précédente distribuée par CETTE pile (ni donc à la suivante, par la même règle appliquée au
-  // tour suivant) — cf. wireStackDrag. `entry._lastRandomColor` n'est qu'un état d'affichage local,
-  // pas persisté : un simple confort visuel, pas une garantie inter-participants.
+  // Pile de post-its en mode "aléatoire" (cf. iconShuffle/applyStackStyle) : plutôt qu'une couleur
+  // unique, on garde une PAIRE [dessus, dessous] toujours différentes — le dessous, entraperçu au
+  // survol (cf. .stack-visual:hover dans board.css), est la surprise qu'on découvre une fois le
+  // dessus pris. `entry._stackColors` n'est qu'un état d'affichage local (ni persisté, ni synchronisé
+  // entre participants) : un simple confort visuel, pas une garantie inter-participants.
+  function pickColorDifferentFrom(color) {
+    const candidates = ELEMENT_COLORS.filter(c => c !== color);
+    return candidates[Math.floor(Math.random() * candidates.length)];
+  }
+  function ensureStackRandomPreview(entry) {
+    if (!entry._stackColors) {
+      const top = ELEMENT_COLORS[Math.floor(Math.random() * ELEMENT_COLORS.length)];
+      entry._stackColors = [top, pickColorDifferentFrom(top)];
+    }
+    return entry._stackColors;
+  }
+  // Le dessus de la pile est distribué (donc jamais revu) et le dessous prend sa place — qui devient
+  // à son tour le prochain dessus la fois suivante : deux dessus consécutifs sont donc toujours
+  // différents, par construction (dessus(n+1) = dessous(n) ≠ dessus(n)).
   function pickStackNoteColor(entry) {
     if (entry.data.color !== 'random') return entry.data.color;
-    const candidates = ELEMENT_COLORS.filter(c => c !== entry._lastRandomColor);
-    const color = candidates[Math.floor(Math.random() * candidates.length)];
-    entry._lastRandomColor = color;
-    return color;
+    const [top, under] = ensureStackRandomPreview(entry);
+    entry._stackColors = [under, pickColorDifferentFrom(under)];
+    applyStackStyle(entry);
+    return top;
   }
   // Échelle nommée plutôt qu'un choix de tailles en pixels — mêmes valeurs que les tailles fixes du
   // bloc "consigne" pour "Sous-titre"/"Texte" (cf. .instruction-title/.instruction-desc dans board.css),
@@ -1511,21 +1523,21 @@
 
   // dotStyle 'ring' : rond blanc cerclé de la couleur (pour un contour/stroke) plutôt qu'un rond
   // plein (pour un fond) — sinon les deux se ressemblent trop et on ne sait plus lequel est lequel.
-  // `allowRandom` ajoute une pastille "aléatoire" (sentinel `'random'`, cf. ELEMENT_DEFAULTS.stack côté
-  // serveur) en plus des couleurs fixes — seule la pile de post-its s'en sert pour l'instant.
-  function colorDropdownHtml(role, currentColor, allowNone, title, dotStyle = 'fill', allowRandom = false) {
+  function colorDropdownHtml(role, currentColor, allowNone, title, dotStyle = 'fill') {
     const colors = allowNone ? [null, ...ELEMENT_COLORS] : ELEMENT_COLORS;
     const isRing = dotStyle === 'ring';
-    const isRandom = allowRandom && currentColor === 'random';
-    const dotStyleAttr = isRandom ? '' : (isRing ? `border-color:${currentColor || '#ccc'}` : (currentColor ? `background:${currentColor}` : ''));
+    // Le sentinel `'random'` (pile de post-its en mode aléatoire, cf. iconShuffle) n'est pas une
+    // couleur affichable : traité comme "aucune couleur" pour la pastille, plutôt que d'écrire un
+    // `background:random` invalide.
+    const hasColor = currentColor && currentColor !== 'random';
+    const dotStyleAttr = isRing ? `border-color:${hasColor ? currentColor : '#ccc'}` : (hasColor ? `background:${currentColor}` : '');
     return `
       <div class="toolbar-dropdown" data-role="${role}-wrap">
         <button type="button" class="toolbar-dropdown-trigger" data-role="${role}-trigger" title="${title}">
-          <span class="toolbar-color-dot${isRing ? ' toolbar-color-dot-ring' : ''}${!isRing && !currentColor ? ' toolbar-color-dot-none' : ''}${isRandom ? ' toolbar-color-dot-random' : ''}" style="${dotStyleAttr}"></span>
+          <span class="toolbar-color-dot${isRing ? ' toolbar-color-dot-ring' : ''}${!isRing && !hasColor ? ' toolbar-color-dot-none' : ''}" style="${dotStyleAttr}"></span>
         </button>
         <div class="toolbar-popover toolbar-color-popover" data-role="${role}-popover">
           ${colors.map(c => `<button type="button" class="toolbar-color-swatch${c ? '' : ' is-none'}${(c || null) === (currentColor || null) ? ' is-active' : ''}" data-color="${c || ''}" style="${c ? `background:${c}` : ''}"></button>`).join('')}
-          ${allowRandom ? `<button type="button" class="toolbar-color-swatch toolbar-color-swatch-random${isRandom ? ' is-active' : ''}" data-color="random" title="Aléatoire"></button>` : ''}
         </div>
       </div>
     `;
@@ -1762,7 +1774,8 @@
       controls = `<select class="element-fontsize-select webpage-pagetype-select" data-role="pagetype" title="Type de page">${webpageTypeOptionsHtml(data.tag)}</select>`
         + colorDropdownHtml('color', data.color, false, 'Couleur de fond');
     } else if (data.type === 'stack') {
-      controls = colorDropdownHtml('color', data.color, false, 'Couleur des post-its', 'fill', true)
+      controls = colorDropdownHtml('color', data.color, false, 'Couleur des post-its')
+        + `<button type="button" class="element-icon-btn element-randomcolor-btn${data.color === 'random' ? ' is-active' : ''}" title="Couleurs aléatoires">${iconShuffle()}</button>`
         + `<button type="button" class="element-icon-btn element-showauthor-btn${data.grayscale ? ' is-active' : ''}" title="Afficher l'auteur">${iconAuthor()}</button>`;
     }
     const sep = controls ? '<span class="element-toolbar-sep"></span>' : '';
@@ -1816,6 +1829,9 @@
   function iconUngroup() { return '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="2" width="8" height="8" rx="1.5"/><rect x="14" y="14" width="8" height="8" rx="1.5"/><line x1="9.5" y1="9.5" x2="14.5" y2="14.5" stroke-dasharray="2 2"/></svg>'; }
   function iconLock() { return '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>'; }
   function iconAuthor() { return '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4.4 3.6-7 8-7s8 2.6 8 7"/></svg>'; }
+  // Bascule "couleurs aléatoires" d'une pile de post-its (icône façon lecture aléatoire, cf. iconVote
+  // pour le même style de trait).
+  function iconShuffle() { return '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 3h5v5"/><path d="M4 20 21 3"/><path d="M21 16v5h-5"/><path d="M15 15l6 6"/><path d="M4 4l5 5"/></svg>'; }
   function iconComment() { return '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H8l-5 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>'; }
   // "Vote" simple (façon +1) : un simple "+", même style trait que les autres icônes pour rester
   // cohérent au zoom (contrairement aux glyphes émoji, qui redimensionnent moins proprement).
@@ -2501,11 +2517,15 @@
     if (entry.data.type !== 'stack') return;
     const visual = entry.el.querySelector('.stack-postit-visual');
     const mid = entry.el.querySelector('.stack-postit-mid');
-    // "Aléatoire" (cf. colorDropdownHtml) : pas de couleur unique à montrer, le dégradé de la pastille
-    // du sélecteur (.toolbar-color-swatch-random) sert aussi ici.
-    const bg = entry.data.color === 'random' ? STACK_RANDOM_GRADIENT : entry.data.color;
-    if (visual) visual.style.background = bg;
-    if (mid) mid.style.background = bg;
+    if (entry.data.color === 'random') {
+      const [top, under] = ensureStackRandomPreview(entry);
+      if (visual) visual.style.background = top;
+      if (mid) mid.style.background = under;
+    } else {
+      entry._stackColors = null;
+      if (visual) visual.style.background = entry.data.color;
+      if (mid) mid.style.background = entry.data.color;
+    }
   }
 
   function applyFrameTitleStyle(entry) {
@@ -3044,12 +3064,10 @@
         popover.querySelectorAll('.toolbar-color-swatch').forEach(s => s.classList.remove('is-active'));
         sw.classList.add('is-active');
         const dot = trigger.querySelector('.toolbar-color-dot');
-        const isRandom = color === 'random';
-        dot.classList.toggle('toolbar-color-dot-random', isRandom);
         if (dot.classList.contains('toolbar-color-dot-ring')) {
-          dot.style.borderColor = isRandom ? '' : (color || '#ccc');
+          dot.style.borderColor = color || '#ccc';
         } else {
-          dot.style.background = isRandom ? '' : (color || '');
+          dot.style.background = color || '';
           dot.classList.toggle('toolbar-color-dot-none', !color);
         }
         popover.classList.remove('is-open');
@@ -3290,6 +3308,9 @@
         entry.data.color = color;
         applyElementColor(entry);
         if (type === 'connector') applyConnectorCaps(entry);
+        // Choisir une couleur fixe ici quitte implicitement le mode "aléatoire" (cf. iconShuffle) :
+        // son bouton doit se désactiver visuellement, d'où ce rebuild plutôt qu'un patch DOM manuel.
+        if (type === 'stack') refreshToolbarIfSelected(entry);
         Api.updateElement(id, { color }).catch(err => alert(err.message));
       });
     }
@@ -3302,6 +3323,22 @@
           entry.data.grayscale = !entry.data.grayscale;
           authorBtn.classList.toggle('is-active', entry.data.grayscale);
           Api.updateElement(id, { grayscale: entry.data.grayscale }).catch(() => {});
+        });
+      }
+      const randomBtn = toolbarEl.querySelector('.element-randomcolor-btn');
+      if (randomBtn) {
+        randomBtn.addEventListener('pointerdown', e => e.stopPropagation());
+        randomBtn.addEventListener('click', () => {
+          if (entry.data.color === 'random') {
+            // En sortant du mode aléatoire, on garde la couleur du dessus actuellement affichée
+            // plutôt que de revenir à une couleur arbitraire — rien ne "saute" visuellement.
+            entry.data.color = (entry._stackColors && entry._stackColors[0]) || ELEMENT_COLORS[0];
+          } else {
+            entry.data.color = 'random';
+          }
+          applyStackStyle(entry);
+          refreshToolbarIfSelected(entry);
+          Api.updateElement(id, { color: entry.data.color }).catch(() => {});
         });
       }
     }
