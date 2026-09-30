@@ -98,6 +98,14 @@ const ELEMENT_DEFAULTS = {
   // page (accueil/connexion/…, cf. WEBPAGE_TYPES dans board.js), qui choisit quel wireframe fixe
   // afficher — pas un vrai tag affiché comme pour "tips".
   webpage: { width: 380, height: 180, color: '#FFFFFF', tag: 'accueil', title: '' },
+  // Pile de post-its (raccourci pour en détacher un d'un coup de glisser, cf. board.js) : `text` porte
+  // son titre (comme une frame — posé explicitement par le client à la création, cf. placeNewElement,
+  // "defaults.text" n'existant pas ici, contrairement aux autres champs ci-dessous), `color` la couleur
+  // des post-its qu'elle distribue, `grayscale` réutilisé comme bascule "afficher l'auteur" (booléen
+  // générique déjà là pour l'image, pas de lien avec une image ici). Chaque post-it distribué avec
+  // cette bascule active pose à son tour `title` (lui aussi générique) au nom de l'auteur — jamais
+  // utilisé par un post-it créé normalement.
+  stack: { width: 220, height: 260, color: ELEMENT_COLORS[0] },
 };
 const ELEMENT_TYPES = Object.keys(ELEMENT_DEFAULTS);
 
@@ -628,7 +636,7 @@ app.post('/api/whiteboards/:whiteboardId/cursor', whiteboardAuth, (req, res) => 
 // TABLEAU : ÉLÉMENTS (post-it, trait, texte, image)
 // =====================
 
-const ELEMENT_LABELS = { note: 'post-it', line: 'trait', text: 'bloc de texte', image: 'image', rectangle: 'rectangle', connector: 'connecteur', frame: 'frame', instruction: 'bloc consigne', tip: 'bloc tips', webpage: 'bloc page web' };
+const ELEMENT_LABELS = { note: 'post-it', line: 'trait', text: 'bloc de texte', image: 'image', rectangle: 'rectangle', connector: 'connecteur', frame: 'frame', instruction: 'bloc consigne', tip: 'bloc tips', webpage: 'bloc page web', stack: 'pile de post-its' };
 // Types dont le champ "text" est du HTML riche (contenteditable) et doit donc être assaini avant
 // stockage — pas juste "tip" (cf. sanitizeRichText).
 const RICH_TEXT_TYPES = ['tip', 'webpage'];

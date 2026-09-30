@@ -581,6 +581,10 @@
   const ICON_TEMPLATE_GENERIC = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg>';
   // Indique que "Autres templates" ouvre un sous-menu plutôt que de poser directement quelque chose.
   const ICON_CHEVRON_RIGHT = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>';
+  // Pile de post-its (bouton du sous-menu "Post-it" + pastille suivant le curseur pendant sa pose,
+  // cf. armPlacement) : deux carrés décalés façon post-its empilés.
+  const ICON_STACK = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><rect x="3" y="7" width="14" height="14" rx="1.5"/><rect x="7" y="3" width="14" height="14" rx="1.5" fill="#fff"/></svg>';
+  const ICON_STACK_GHOST = '<svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"><rect x="3" y="7" width="14" height="14" rx="1.5" fill="#e6c667"/><rect x="7" y="3" width="14" height="14" rx="1.5" fill="#fdf1b8"/></svg>';
 
   function viewportCenterWorld() {
     const rect = viewportEl.getBoundingClientRect();
@@ -688,12 +692,20 @@
         });
       });
     } else if (cfg.kind === 'colors') {
-      addFlyout.innerHTML = `<div class="add-flyout-colors">${ELEMENT_COLORS.map(c => `<button type="button" class="toolbar-color-swatch" data-color="${c}" style="background:${c}"></button>`).join('')}</div>`;
+      addFlyout.innerHTML = `
+        <div class="add-flyout-colors">${ELEMENT_COLORS.map(c => `<button type="button" class="toolbar-color-swatch" data-color="${c}" style="background:${c}"></button>`).join('')}</div>
+        <button type="button" class="add-flyout-stack-btn" id="addStackBtn">${ICON_STACK}Ajouter une pile</button>
+      `;
       addFlyout.querySelectorAll('.toolbar-color-swatch').forEach((sw) => {
         sw.addEventListener('click', (e) => {
           const color = sw.dataset.color;
           armPlacement('note', `<div class="placement-ghost-note" style="background:${color}"></div>`, { options: { color }, sourceBtn, x: e.clientX, y: e.clientY });
         });
+      });
+      // Pas de choix de couleur avant la pose (contrairement au post-it seul) : la pile part avec une
+      // couleur par défaut, modifiable ensuite comme n'importe quel autre réglage de son toolbar.
+      addFlyout.querySelector('#addStackBtn').addEventListener('click', (e) => {
+        armPlacement('stack', ICON_STACK_GHOST, { sourceBtn, x: e.clientX, y: e.clientY });
       });
     } else if (cfg.kind === 'textstyles') {
       addFlyout.innerHTML = FONT_SIZE_PRESETS.map(([label], i) => `
@@ -943,6 +955,13 @@
       const { x, y } = snapPoint(wx - 190, wy - 90);
       createElementTracked({ type: 'webpage', x, y, width: 380, height: 180, tag: variant || 'accueil' })
         .then((data) => { const entry = ensureRendered(data); entry.enterField?.('title'); })
+        .catch(err => alert(err.message));
+    } else if (type === 'stack') {
+      // Couleur par défaut (modifiable ensuite dans son toolbar, cf. wireToolbarControls) — pas de
+      // choix à la pose, contrairement au post-it seul.
+      const w = 220, h = 260;
+      const { x, y } = snapPoint(wx - w / 2, wy - h / 2);
+      createElementTracked({ type: 'stack', x, y, width: w, height: h, color: ELEMENT_COLORS[0], text: 'Pile de post-its' })
         .catch(err => alert(err.message));
     }
   }
@@ -1724,12 +1743,16 @@
       // barre de sélection (cf. richTextToolbarHtml), pas depuis cette barre-ci.
       controls = `<select class="element-fontsize-select webpage-pagetype-select" data-role="pagetype" title="Type de page">${webpageTypeOptionsHtml(data.tag)}</select>`
         + colorDropdownHtml('color', data.color, false, 'Couleur de fond');
+    } else if (data.type === 'stack') {
+      controls = colorDropdownHtml('color', data.color, false, 'Couleur des post-its')
+        + `<button type="button" class="element-icon-btn element-showauthor-btn${data.grayscale ? ' is-active' : ''}" title="Afficher l'auteur">${iconAuthor()}</button>`;
     }
     const sep = controls ? '<span class="element-toolbar-sep"></span>' : '';
     const voted = (data.votes || []).includes(myName);
     // Un trait/connecteur n'a pas de contenu sur lequel voter ou commenter : ces deux boutons ne
-    // s'affichent pas pour ces deux types.
-    const hasVoteComment = data.type !== 'line' && data.type !== 'connector';
+    // s'affichent pas pour ces deux types — une pile de post-its non plus, c'est un outil, pas un
+    // contenu du board.
+    const hasVoteComment = data.type !== 'line' && data.type !== 'connector' && data.type !== 'stack';
     const voteCommentHtml = hasVoteComment ? `
       <button type="button" class="element-icon-btn element-vote-btn${voted ? ' is-active' : ''}" title="${voted ? 'Retirer mon vote' : 'Voter'}">${iconVote()}</button>
       <button type="button" class="element-icon-btn element-comment-btn" title="Commenter">${iconComment()}</button>
@@ -1774,6 +1797,7 @@
   function iconGroup() { return '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="9" height="9" rx="1.5"/><rect x="12" y="12" width="9" height="9" rx="1.5"/></svg>'; }
   function iconUngroup() { return '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="2" width="8" height="8" rx="1.5"/><rect x="14" y="14" width="8" height="8" rx="1.5"/><line x1="9.5" y1="9.5" x2="14.5" y2="14.5" stroke-dasharray="2 2"/></svg>'; }
   function iconLock() { return '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>'; }
+  function iconAuthor() { return '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4.4 3.6-7 8-7s8 2.6 8 7"/></svg>'; }
   function iconComment() { return '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H8l-5 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>'; }
   // "Vote" simple (façon +1) : un simple "+", même style trait que les autres icônes pour rester
   // cohérent au zoom (contrairement aux glyphes émoji, qui redimensionnent moins proprement).
@@ -2212,11 +2236,16 @@
       : '';
 
     if (data.type === 'note') {
+      // `title` réutilisé pour le nom de l'auteur (cf. ELEMENT_DEFAULTS.stack côté serveur) — jamais
+      // posé par un post-it créé normalement, seulement par un post-it détaché d'une pile dont
+      // "Afficher l'auteur" est actif ; jamais modifiable après coup, pas besoin de le suivre dans
+      // applyRemoteUpdate.
       el.style.background = data.color;
       el.innerHTML = `
         <div class="element-text-frame">
           <textarea class="element-text" placeholder="Écris ici…" maxlength="4000"></textarea>
         </div>
+        ${data.title ? `<div class="note-author">${escapeHtml(data.title)}</div>` : ''}
         <div class="element-resize-handle"></div>
         ${anchorsHtml}
       `;
@@ -2311,6 +2340,21 @@
       `;
       el.querySelector('.webpage-title').value = data.title || '';
       el.querySelector('.webpage-desc').innerHTML = data.text || '';
+    } else if (data.type === 'stack') {
+      // Le visuel (pile de post-its) est purement décoratif, jamais édité — seul le titre l'est,
+      // comme celui d'une frame (cf. wireTextEditing, pas wireMultiFieldEditing : un seul champ).
+      el.innerHTML = `
+        <textarea class="stack-title" placeholder="Titre…" maxlength="200" rows="1"></textarea>
+        <div class="stack-visual">
+          <div class="stack-postit-back"></div>
+          <div class="stack-postit-mid"></div>
+          <div class="stack-postit-visual"><div class="stack-postit-fold"></div></div>
+        </div>
+        <div class="element-resize-handle"></div>
+        ${anchorsHtml}
+      `;
+      textEl = el.querySelector('.stack-title');
+      textEl.value = data.text || '';
     }
 
     layerEl.appendChild(el);
@@ -2342,6 +2386,7 @@
       entry.richEl = el.querySelector('.webpage-desc');
       autoGrowWebpageBlock(entry);
     }
+    if (data.type === 'stack') applyStackStyle(entry);
     applyLockedState(entry);
     updateElementBadges(entry);
 
@@ -2374,6 +2419,7 @@
     if (entry.data.type === 'text') applyTextStyle(entry);
     else if (entry.data.type === 'line' || entry.data.type === 'connector') applyLineStyle(entry);
     else if (entry.data.type === 'rectangle' || entry.data.type === 'frame') applyRectangleStyle(entry);
+    else if (entry.data.type === 'stack') applyStackStyle(entry);
     else entry.el.style.background = entry.data.color;
   }
 
@@ -2428,6 +2474,17 @@
     entry.el.style.border = entry.data.strokeWidth ? `${entry.data.strokeWidth}px ${style} ${entry.data.strokeColor || '#1c1c28'}` : 'none';
     const r = entry.data.radius || 0;
     entry.el.style.borderRadius = r >= 999 ? '999px' : `${r}px`;
+  }
+
+  // Seuls les deux post-its du dessus (visible + celui juste dessous) portent la couleur choisie —
+  // le plus bas reste une simple ombre neutre (cf. .stack-postit-back dans board.css), comme dans
+  // l'original Miro.
+  function applyStackStyle(entry) {
+    if (entry.data.type !== 'stack') return;
+    const visual = entry.el.querySelector('.stack-postit-visual');
+    const mid = entry.el.querySelector('.stack-postit-mid');
+    if (visual) visual.style.background = entry.data.color;
+    if (mid) mid.style.background = entry.data.color;
   }
 
   function applyFrameTitleStyle(entry) {
@@ -2727,6 +2784,9 @@
       if (document.activeElement !== entry.titleEl) entry.titleEl.value = data.title || '';
       if (document.activeElement !== entry.richEl) entry.richEl.innerHTML = data.text || '';
       autoGrowWebpageBlock(entry);
+    } else if (data.type === 'stack') {
+      if (document.activeElement !== entry.textEl) entry.textEl.value = data.text || '';
+      applyStackStyle(entry);
     }
 
     updateConnectorsFor(data.id);
@@ -3202,13 +3262,25 @@
     const id = entry.data.id;
     const type = entry.data.type;
 
-    if (type === 'note' || type === 'text' || type === 'rectangle' || type === 'frame' || type === 'line' || type === 'connector' || type === 'instruction' || type === 'tip' || type === 'webpage') {
+    if (type === 'note' || type === 'text' || type === 'rectangle' || type === 'frame' || type === 'line' || type === 'connector' || type === 'instruction' || type === 'tip' || type === 'webpage' || type === 'stack') {
       wireColorDropdown(entry, 'color', (color) => {
         entry.data.color = color;
         applyElementColor(entry);
         if (type === 'connector') applyConnectorCaps(entry);
         Api.updateElement(id, { color }).catch(err => alert(err.message));
       });
+    }
+
+    if (type === 'stack') {
+      const authorBtn = toolbarEl.querySelector('.element-showauthor-btn');
+      if (authorBtn) {
+        authorBtn.addEventListener('pointerdown', e => e.stopPropagation());
+        authorBtn.addEventListener('click', () => {
+          entry.data.grayscale = !entry.data.grayscale;
+          authorBtn.classList.toggle('is-active', entry.data.grayscale);
+          Api.updateElement(id, { grayscale: entry.data.grayscale }).catch(() => {});
+        });
+      }
     }
 
     if (type === 'webpage') {
@@ -3975,6 +4047,61 @@
     return Math.max(FRAME_MIN_HEIGHT, cursorY + rowHeight + padding);
   }
 
+  // Pile de post-its : glisser DEPUIS le visuel (pas depuis le titre/le reste de la carte, qui bougent
+  // la pile comme n'importe quel élément via wireBodyDrag) détache un post-it tout neuf sous le
+  // curseur, posé où on relâche — la pile elle-même ne bouge jamais et n'est jamais "consommée". Un
+  // simple clic (sans dépasser le seuil de déplacement) ne fait rien de plus que sélectionner la pile,
+  // rien à détacher.
+  function wireStackDrag(entry) {
+    const visual = entry.el.querySelector('.stack-postit-visual');
+    if (!visual) return;
+    let dragState = null;
+
+    visual.addEventListener('pointerdown', (e) => {
+      if (entry.data.locked) return;
+      e.stopPropagation();
+      selectElement(entry.data.id);
+      closeConfirmPopover();
+      dragState = { startScreen: { x: e.clientX, y: e.clientY }, moved: false, pointerId: e.pointerId };
+      visual.setPointerCapture(e.pointerId);
+    });
+
+    visual.addEventListener('pointermove', (e) => {
+      if (!dragState) return;
+      if (!dragState.moved) {
+        if (Math.hypot(e.clientX - dragState.startScreen.x, e.clientY - dragState.startScreen.y) < 6) return;
+        dragState.moved = true;
+        dragState.ghost = document.createElement('div');
+        dragState.ghost.className = 'stack-pull-ghost';
+        dragState.ghost.style.width = `${NOTE_DEFAULT_SIZE}px`;
+        dragState.ghost.style.height = `${NOTE_DEFAULT_SIZE}px`;
+        dragState.ghost.style.background = entry.data.color;
+        document.body.appendChild(dragState.ghost);
+      }
+      dragState.ghost.style.left = `${e.clientX - NOTE_DEFAULT_SIZE / 2}px`;
+      dragState.ghost.style.top = `${e.clientY - NOTE_DEFAULT_SIZE / 2}px`;
+      viewportEl.classList.toggle('is-drop-target', isPointOverCanvas(e.clientX, e.clientY));
+    });
+
+    visual.addEventListener('pointerup', (e) => {
+      if (!dragState) return;
+      visual.releasePointerCapture(dragState.pointerId);
+      const wasMoved = dragState.moved;
+      if (dragState.ghost) dragState.ghost.remove();
+      viewportEl.classList.remove('is-drop-target');
+      dragState = null;
+      if (!wasMoved || !isPointOverCanvas(e.clientX, e.clientY)) return;
+      const r = viewportEl.getBoundingClientRect();
+      const { x: wx, y: wy } = screenToWorld(e.clientX - r.left, e.clientY - r.top);
+      const { x, y } = snapPoint(wx - NOTE_DEFAULT_SIZE / 2, wy - NOTE_DEFAULT_SIZE / 2);
+      const payload = { type: 'note', x, y, width: NOTE_DEFAULT_SIZE, height: NOTE_DEFAULT_SIZE, color: entry.data.color };
+      // `title` réutilisé pour le nom de l'auteur (cf. ELEMENT_DEFAULTS.stack côté serveur) — seulement
+      // si "Afficher l'auteur" est actif sur CETTE pile (entry.data.grayscale).
+      if (entry.data.grayscale && myName) payload.title = myName;
+      createElementTracked(payload).catch(err => alert(err.message));
+    });
+  }
+
   function wireCornerResize(entry) {
     const handle = entry.el.querySelector('.element-resize-handle');
     if (!handle) return;
@@ -4141,7 +4268,7 @@
 
   function wireElementInteractions(entry) {
     if (entry.data.type === 'connector') { wireConnectorSelect(entry); return; }
-    if (entry.data.type === 'note' || entry.data.type === 'text' || entry.data.type === 'rectangle' || entry.data.type === 'frame') wireTextEditing(entry);
+    if (entry.data.type === 'note' || entry.data.type === 'text' || entry.data.type === 'rectangle' || entry.data.type === 'frame' || entry.data.type === 'stack') wireTextEditing(entry);
     if (entry.data.type === 'instruction') {
       wireMultiFieldEditing(entry, [
         { key: 'number', el: entry.numberEl, column: 'number', dataKey: 'number' },
@@ -4168,6 +4295,7 @@
         { key: 'desc', el: entry.richEl, column: 'text', dataKey: 'text', rich: true, autoGrow: autoGrowWebpageBlock },
       ], 'title');
     }
+    if (entry.data.type === 'stack') wireStackDrag(entry);
     wireConnectorAnchors(entry);
     wireBodyDrag(entry);
     if (entry.data.type === 'line') wireLineHandle(entry);
