@@ -4058,10 +4058,14 @@
     let dragState = null;
 
     visual.addEventListener('pointerdown', (e) => {
-      if (entry.data.locked) return;
+      // Le verrouillage protège la pile (position/taille), pas la prise d'un post-it :
+      // on stoppe toujours la propagation pour ne pas retomber sur le "appui long pour
+      // déverrouiller" de wireBodyDrag, mais on ne sélectionne/affiche sa toolbar que si déverrouillée.
       e.stopPropagation();
-      selectElement(entry.data.id);
-      closeConfirmPopover();
+      if (!entry.data.locked) {
+        selectElement(entry.data.id);
+        closeConfirmPopover();
+      }
       dragState = { startScreen: { x: e.clientX, y: e.clientY }, moved: false, pointerId: e.pointerId };
       visual.setPointerCapture(e.pointerId);
     });
