@@ -75,6 +75,7 @@
   const addToolbarCollapseBtn = document.getElementById('addToolbarCollapseBtn');
   const addToolbarRevealBtn = document.getElementById('addToolbarRevealBtn');
   const addFlyout = document.getElementById('addFlyout');
+  const addSubFlyout = document.getElementById('addSubFlyout');
   const imageFileInput = document.getElementById('imageFileInput');
   const pdfFileInput = document.getElementById('pdfFileInput');
   const toolbarEl = document.getElementById('elementToolbar');
@@ -496,6 +497,8 @@
   ];
   // Icône générique pour un template enregistré par un utilisateur (pas de vignette par template).
   const ICON_TEMPLATE_GENERIC = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg>';
+  // Indique que "Autres templates" ouvre un sous-menu plutôt que de poser directement quelque chose.
+  const ICON_CHEVRON_RIGHT = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>';
 
   function viewportCenterWorld() {
     const rect = viewportEl.getBoundingClientRect();
@@ -507,7 +510,9 @@
     return clientX >= r.left && clientX <= r.right && clientY >= r.top && clientY <= r.bottom;
   }
 
-  function closeAddFlyout() { addFlyout.classList.remove('is-open'); }
+  // Ferme aussi le sous-menu "Autres templates" (cf. openOtherTemplatesFlyout) : un élément DOM à
+  // part, pas nichée dans #addFlyout, donc jamais fermée toute seule par le classList de celui-ci.
+  function closeAddFlyout() { addFlyout.classList.remove('is-open'); addSubFlyout.classList.remove('is-open'); }
 
   // ---- Armement d'un outil de pose ----
   // Une seule pose à la fois : armer un nouvel outil (ou Échap, ou cliquer hors du canvas) désarme le
@@ -645,61 +650,92 @@
         startPdfImport(wx, wy);
       });
     } else if (cfg.kind === 'templates') {
-      // Consigne/Tips (codés en dur, posés comme un simple élément — cf. BUILTIN_TEMPLATE_ITEMS) sont
-      // toujours affichés en premier, avant même la fin du chargement des VRAIS templates.
+      // Deux familles bien distinctes (demandé par Antoine) : les templates "officiels" (codés en dur
+      // ici même, chacun sa propre icône — cf. BUILTIN_TEMPLATE_ITEMS, Consigne/Tips posés comme un
+      // simple élément) toujours listés directement ; les templates créés par un·e participant·e depuis
+      // n'importe quel board (tous la même icône générique 4 carrés) rangés derrière une seule entrée
+      // "Autres templates", qui ouvre un second sous-menu (cf. openOtherTemplatesFlyout) plutôt que
+      // d'allonger cette liste-ci au fil des enregistrements.
       addFlyout.innerHTML = BUILTIN_TEMPLATE_ITEMS.map((it, i) => `
         <button type="button" class="add-flyout-item" data-builtin="${i}">
           <span class="add-flyout-item-icon">${it.icon}</span>
           <span class="add-flyout-item-label">${it.label}</span>
         </button>
-      `).join('') + '<div class="add-flyout-loading">Chargement…</div>';
+      `).join('') + `
+        <span class="toolbar-menu-sep"></span>
+        <button type="button" class="add-flyout-item" id="otherTemplatesBtn">
+          <span class="add-flyout-item-icon">${ICON_TEMPLATE_GENERIC}</span>
+          <span class="add-flyout-item-label">Autres templates</span>
+          <span class="add-flyout-item-chevron">${ICON_CHEVRON_RIGHT}</span>
+        </button>
+      `;
       addFlyout.querySelectorAll('[data-builtin]').forEach((btn, i) => {
         btn.addEventListener('click', (e) => {
           const it = BUILTIN_TEMPLATE_ITEMS[i];
           armPlacement(it.type, it.icon, { sourceBtn, x: e.clientX, y: e.clientY });
         });
       });
-      Api.listTemplates().then((templates) => {
-        addFlyout.querySelector('.add-flyout-loading')?.remove();
-        if (!templates.length) {
-          addFlyout.insertAdjacentHTML('beforeend', '<div class="add-flyout-empty">Aucun template enregistré pour l’instant</div>');
-        } else {
-          templates.forEach((t) => {
-            const row = document.createElement('button');
-            row.type = 'button';
-            row.className = 'add-flyout-item';
-            row.innerHTML = `
-              <span class="add-flyout-item-icon">${ICON_TEMPLATE_GENERIC}</span>
-              <span class="add-flyout-item-template-text">
-                <span class="add-flyout-item-label">${escapeHtml(t.name)}</span>
-                ${t.tags.length ? `<span class="add-flyout-item-tags">${t.tags.map(escapeHtml).join(' · ')}</span>` : ''}
-              </span>
-            `;
-            // Le contenu complet (les snapshots) n'est récupéré qu'au clic sur CE template précis, pas
-            // pour toute la liste à l'ouverture du menu (cf. GET .../templates/:id côté serveur).
-            row.addEventListener('click', (e) => {
-              const cx = e.clientX, cy = e.clientY;
-              row.disabled = true;
-              Api.getTemplate(t.id)
-                .then((full) => armPlacement('template', ICON_TEMPLATE_GENERIC, { options: { snapshots: full.data }, sourceBtn, x: cx, y: cy }))
-                .catch(err => alert(err.message))
-                .finally(() => { row.disabled = false; });
-            });
-            addFlyout.appendChild(row);
-          });
-        }
-        // Le menu a grandi après son premier positionnement (cf. openAddFlyout, calculé avant la fin de
-        // ce chargement) : on le recale s'il est toujours ouvert, pour ne pas déborder de l'écran.
-        if (addFlyout.dataset.for === 'templates' && addFlyout.classList.contains('is-open')) {
-          const r = sourceBtn.getBoundingClientRect();
-          const fRect = addFlyout.getBoundingClientRect();
-          addFlyout.style.top = `${clamp(r.top + r.height / 2 - fRect.height / 2, 8, window.innerHeight - fRect.height - 8)}px`;
-        }
-      }).catch(() => {
-        const loading = addFlyout.querySelector('.add-flyout-loading');
-        if (loading) loading.textContent = 'Erreur de chargement.';
+      // Chargée dès l'ouverture de CE menu (pas seulement au clic sur "Autres templates") pour que le
+      // sous-menu s'affiche sans latence supplémentaire — reste juste un nom+tags par template, léger
+      // même chargé "pour rien" si personne ne clique dessus.
+      const otherTemplatesPromise = Api.listTemplates().catch(() => []);
+      document.getElementById('otherTemplatesBtn').addEventListener('click', (e) => {
+        e.stopPropagation();
+        if (addSubFlyout.classList.contains('is-open')) { addSubFlyout.classList.remove('is-open'); return; }
+        openOtherTemplatesFlyout(e.currentTarget, otherTemplatesPromise, sourceBtn);
       });
     }
+  }
+
+  // Sous-menu "Autres templates" (cf. cfg.kind === 'templates' ci-dessus) : les templates enregistrés
+  // par n'importe quel·le participant·e, nom + tags, positionné à droite de la ligne "Autres templates"
+  // — même mécanique de pose (armPlacement) que les templates officiels, `sourceBtn` reste le bouton de
+  // la barre "ajouter" (pas cette ligne) pour que ce soit LUI qui s'allume pendant la pose.
+  function openOtherTemplatesFlyout(anchorBtn, templatesPromise, sourceBtn) {
+    function position() {
+      const r = anchorBtn.getBoundingClientRect();
+      const fRect = addSubFlyout.getBoundingClientRect();
+      addSubFlyout.style.left = `${r.right + 10}px`;
+      addSubFlyout.style.top = `${clamp(r.top + r.height / 2 - fRect.height / 2, 8, window.innerHeight - fRect.height - 8)}px`;
+    }
+    addSubFlyout.innerHTML = '<div class="add-flyout-loading">Chargement…</div>';
+    addSubFlyout.classList.add('is-open');
+    position();
+    templatesPromise.then((templates) => {
+      if (!templates.length) {
+        addSubFlyout.innerHTML = '<div class="add-flyout-empty">Aucun autre template enregistré</div>';
+      } else {
+        addSubFlyout.innerHTML = '';
+        templates.forEach((t) => {
+          const row = document.createElement('button');
+          row.type = 'button';
+          row.className = 'add-flyout-item';
+          row.innerHTML = `
+            <span class="add-flyout-item-icon">${ICON_TEMPLATE_GENERIC}</span>
+            <span class="add-flyout-item-template-text">
+              <span class="add-flyout-item-label">${escapeHtml(t.name)}</span>
+              ${t.tags.length ? `<span class="add-flyout-item-tags">${t.tags.map(escapeHtml).join(' · ')}</span>` : ''}
+            </span>
+          `;
+          // Le contenu complet (les snapshots) n'est récupéré qu'au clic sur CE template précis, pas
+          // pour toute la liste à l'ouverture du sous-menu (cf. GET .../templates/:id côté serveur).
+          row.addEventListener('click', (e) => {
+            const cx = e.clientX, cy = e.clientY;
+            row.disabled = true;
+            Api.getTemplate(t.id)
+              .then((full) => armPlacement('template', ICON_TEMPLATE_GENERIC, { options: { snapshots: full.data }, sourceBtn, x: cx, y: cy }))
+              .catch(err => alert(err.message))
+              .finally(() => { row.disabled = false; });
+          });
+          addSubFlyout.appendChild(row);
+        });
+      }
+      // Le sous-menu a grandi après son premier positionnement (calculé avant la fin de ce chargement) :
+      // on le recale s'il est toujours ouvert, pour ne pas déborder de l'écran.
+      if (addSubFlyout.classList.contains('is-open')) position();
+    }).catch(() => {
+      addSubFlyout.innerHTML = '<div class="add-flyout-empty">Erreur de chargement.</div>';
+    });
   }
 
   function openAddFlyout(btn, key) {
@@ -724,7 +760,7 @@
   });
 
   document.addEventListener('pointerdown', (e) => {
-    if (!addFlyout.contains(e.target) && !e.target.closest('[data-flyout]')) closeAddFlyout();
+    if (!addFlyout.contains(e.target) && !addSubFlyout.contains(e.target) && !e.target.closest('[data-flyout]')) closeAddFlyout();
   });
 
   // Repliée/dépliée : mémorisé d'une session à l'autre (même principe que le quadrillage, cf.

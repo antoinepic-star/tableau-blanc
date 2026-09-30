@@ -130,11 +130,16 @@ body.board-page { overflow: hidden; height: 100vh; }
 /* Sous-menu "Templates" (kind: 'templates') : Consigne/Tips toujours en premier (mêmes lignes que les
    autres familles), puis les templates enregistrés — nom + tags empilés plutôt qu'une seule ligne, et
    une hauteur bornée avec défilement si la liste s'allonge. */
-.add-flyout[data-for="templates"] { max-height: 340px; overflow-y: auto; }
+/* La liste peut s'allonger avec le nombre de templates enregistrés — bornée avec défilement plutôt que
+   de pouvoir déborder de l'écran. #addSubFlyout : cf. openOtherTemplatesFlyout. */
+#addSubFlyout { max-height: 340px; overflow-y: auto; }
 .add-flyout-item-template-text { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
 .add-flyout-item-template-text .add-flyout-item-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .add-flyout-item-tags { font-size: 11px; color: var(--text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .add-flyout-loading, .add-flyout-empty { padding: 10px; font-size: 12.5px; color: var(--text-muted); text-align: center; }
+
+/* Ligne "Autres templates" (cf. openOtherTemplatesFlyout) : le chevron se pousse à droite. */
+.add-flyout-item-chevron { display: flex; align-items: center; flex-shrink: 0; color: var(--text-muted); margin-left: auto; }
 
 /* Fermeture d'un panneau latéral (drawer commentaires) — nom hérité de l'ancien drawer "ajouter". */
 .add-drawer-close {
