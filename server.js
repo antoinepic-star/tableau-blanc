@@ -101,11 +101,13 @@ const ELEMENT_DEFAULTS = {
   // Pile de post-its (raccourci pour en détacher un d'un coup de glisser, cf. board.js) : `text` porte
   // son titre (comme une frame — posé explicitement par le client à la création, cf. placeNewElement,
   // "defaults.text" n'existant pas ici, contrairement aux autres champs ci-dessous), `color` la couleur
-  // des post-its qu'elle distribue, `grayscale` réutilisé comme bascule "afficher l'auteur" (booléen
+  // des post-its qu'elle distribue (ou le sentinel `'random'` pour une couleur tirée au sort à chaque
+  // post-it détaché, cf. wireStackDrag), `grayscale` réutilisé comme bascule "afficher l'auteur" (booléen
   // générique déjà là pour l'image, pas de lien avec une image ici). Chaque post-it distribué avec
   // cette bascule active pose à son tour `title` (lui aussi générique) au nom de l'auteur — jamais
-  // utilisé par un post-it créé normalement.
-  stack: { width: 220, height: 260, color: ELEMENT_COLORS[0] },
+  // utilisé par un post-it créé normalement. Largeur alignée sur les blocs consigne/tips (280) — le
+  // post-it visuel garde lui sa taille d'origine, cf. .stack-visual dans board.css.
+  stack: { width: 280, height: 260, color: ELEMENT_COLORS[0] },
 };
 const ELEMENT_TYPES = Object.keys(ELEMENT_DEFAULTS);
 

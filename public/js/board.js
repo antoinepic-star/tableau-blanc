@@ -1,5 +1,19 @@
 (() => {
   const ELEMENT_COLORS = ['#FFF176', '#FFCC80', '#F8BBD0', '#EF9A9A', '#A5D6A7', '#80CBC4', '#90CAF9', '#CE93D8', '#FFFFFF', '#989898', '#232323'];
+  // Rendu de la pastille "aléatoire" d'une pile de post-its (cf. colorDropdownHtml/applyStackStyle) :
+  // un dégradé plutôt qu'une couleur unique, puisque justement il n'y en a pas une seule.
+  const STACK_RANDOM_GRADIENT = 'linear-gradient(135deg, #FFF176, #F8BBD0, #90CAF9, #CE93D8)';
+  // Tire une couleur pour le prochain post-it détaché d'une pile en mode "aléatoire", jamais identique
+  // à la précédente distribuée par CETTE pile (ni donc à la suivante, par la même règle appliquée au
+  // tour suivant) — cf. wireStackDrag. `entry._lastRandomColor` n'est qu'un état d'affichage local,
+  // pas persisté : un simple confort visuel, pas une garantie inter-participants.
+  function pickStackNoteColor(entry) {
+    if (entry.data.color !== 'random') return entry.data.color;
+    const candidates = ELEMENT_COLORS.filter(c => c !== entry._lastRandomColor);
+    const color = candidates[Math.floor(Math.random() * candidates.length)];
+    entry._lastRandomColor = color;
+    return color;
+  }
   // Échelle nommée plutôt qu'un choix de tailles en pixels — mêmes valeurs que les tailles fixes du
   // bloc "consigne" pour "Sous-titre"/"Texte" (cf. .instruction-title/.instruction-desc dans board.css),
   // pour rester visuellement cohérent d'un bloc à l'autre.
@@ -959,7 +973,7 @@
     } else if (type === 'stack') {
       // Couleur par défaut (modifiable ensuite dans son toolbar, cf. wireToolbarControls) — pas de
       // choix à la pose, contrairement au post-it seul.
-      const w = 220, h = 260;
+      const w = 280, h = 260;
       const { x, y } = snapPoint(wx - w / 2, wy - h / 2);
       createElementTracked({ type: 'stack', x, y, width: w, height: h, color: ELEMENT_COLORS[0], text: 'Pile de post-its' })
         .catch(err => alert(err.message));
@@ -1497,17 +1511,21 @@
 
   // dotStyle 'ring' : rond blanc cerclé de la couleur (pour un contour/stroke) plutôt qu'un rond
   // plein (pour un fond) — sinon les deux se ressemblent trop et on ne sait plus lequel est lequel.
-  function colorDropdownHtml(role, currentColor, allowNone, title, dotStyle = 'fill') {
+  // `allowRandom` ajoute une pastille "aléatoire" (sentinel `'random'`, cf. ELEMENT_DEFAULTS.stack côté
+  // serveur) en plus des couleurs fixes — seule la pile de post-its s'en sert pour l'instant.
+  function colorDropdownHtml(role, currentColor, allowNone, title, dotStyle = 'fill', allowRandom = false) {
     const colors = allowNone ? [null, ...ELEMENT_COLORS] : ELEMENT_COLORS;
     const isRing = dotStyle === 'ring';
-    const dotStyleAttr = isRing ? `border-color:${currentColor || '#ccc'}` : (currentColor ? `background:${currentColor}` : '');
+    const isRandom = allowRandom && currentColor === 'random';
+    const dotStyleAttr = isRandom ? '' : (isRing ? `border-color:${currentColor || '#ccc'}` : (currentColor ? `background:${currentColor}` : ''));
     return `
       <div class="toolbar-dropdown" data-role="${role}-wrap">
         <button type="button" class="toolbar-dropdown-trigger" data-role="${role}-trigger" title="${title}">
-          <span class="toolbar-color-dot${isRing ? ' toolbar-color-dot-ring' : ''}${!isRing && !currentColor ? ' toolbar-color-dot-none' : ''}" style="${dotStyleAttr}"></span>
+          <span class="toolbar-color-dot${isRing ? ' toolbar-color-dot-ring' : ''}${!isRing && !currentColor ? ' toolbar-color-dot-none' : ''}${isRandom ? ' toolbar-color-dot-random' : ''}" style="${dotStyleAttr}"></span>
         </button>
         <div class="toolbar-popover toolbar-color-popover" data-role="${role}-popover">
           ${colors.map(c => `<button type="button" class="toolbar-color-swatch${c ? '' : ' is-none'}${(c || null) === (currentColor || null) ? ' is-active' : ''}" data-color="${c || ''}" style="${c ? `background:${c}` : ''}"></button>`).join('')}
+          ${allowRandom ? `<button type="button" class="toolbar-color-swatch toolbar-color-swatch-random${isRandom ? ' is-active' : ''}" data-color="random" title="Aléatoire"></button>` : ''}
         </div>
       </div>
     `;
@@ -1744,7 +1762,7 @@
       controls = `<select class="element-fontsize-select webpage-pagetype-select" data-role="pagetype" title="Type de page">${webpageTypeOptionsHtml(data.tag)}</select>`
         + colorDropdownHtml('color', data.color, false, 'Couleur de fond');
     } else if (data.type === 'stack') {
-      controls = colorDropdownHtml('color', data.color, false, 'Couleur des post-its')
+      controls = colorDropdownHtml('color', data.color, false, 'Couleur des post-its', 'fill', true)
         + `<button type="button" class="element-icon-btn element-showauthor-btn${data.grayscale ? ' is-active' : ''}" title="Afficher l'auteur">${iconAuthor()}</button>`;
     }
     const sep = controls ? '<span class="element-toolbar-sep"></span>' : '';
@@ -2483,8 +2501,11 @@
     if (entry.data.type !== 'stack') return;
     const visual = entry.el.querySelector('.stack-postit-visual');
     const mid = entry.el.querySelector('.stack-postit-mid');
-    if (visual) visual.style.background = entry.data.color;
-    if (mid) mid.style.background = entry.data.color;
+    // "Aléatoire" (cf. colorDropdownHtml) : pas de couleur unique à montrer, le dégradé de la pastille
+    // du sélecteur (.toolbar-color-swatch-random) sert aussi ici.
+    const bg = entry.data.color === 'random' ? STACK_RANDOM_GRADIENT : entry.data.color;
+    if (visual) visual.style.background = bg;
+    if (mid) mid.style.background = bg;
   }
 
   function applyFrameTitleStyle(entry) {
@@ -3023,10 +3044,12 @@
         popover.querySelectorAll('.toolbar-color-swatch').forEach(s => s.classList.remove('is-active'));
         sw.classList.add('is-active');
         const dot = trigger.querySelector('.toolbar-color-dot');
+        const isRandom = color === 'random';
+        dot.classList.toggle('toolbar-color-dot-random', isRandom);
         if (dot.classList.contains('toolbar-color-dot-ring')) {
-          dot.style.borderColor = color || '#ccc';
+          dot.style.borderColor = isRandom ? '' : (color || '#ccc');
         } else {
-          dot.style.background = color || '';
+          dot.style.background = isRandom ? '' : (color || '');
           dot.classList.toggle('toolbar-color-dot-none', !color);
         }
         popover.classList.remove('is-open');
@@ -4075,11 +4098,14 @@
       if (!dragState.moved) {
         if (Math.hypot(e.clientX - dragState.startScreen.x, e.clientY - dragState.startScreen.y) < 6) return;
         dragState.moved = true;
+        // Choisie une seule fois par glisser (pas à chaque pointermove ni recalculée au dépôt), pour
+        // que le post-it montré pendant le geste soit bien celui effectivement déposé.
+        dragState.color = pickStackNoteColor(entry);
         dragState.ghost = document.createElement('div');
         dragState.ghost.className = 'stack-pull-ghost';
         dragState.ghost.style.width = `${NOTE_DEFAULT_SIZE}px`;
         dragState.ghost.style.height = `${NOTE_DEFAULT_SIZE}px`;
-        dragState.ghost.style.background = entry.data.color;
+        dragState.ghost.style.background = dragState.color;
         document.body.appendChild(dragState.ghost);
       }
       dragState.ghost.style.left = `${e.clientX - NOTE_DEFAULT_SIZE / 2}px`;
@@ -4091,6 +4117,7 @@
       if (!dragState) return;
       visual.releasePointerCapture(dragState.pointerId);
       const wasMoved = dragState.moved;
+      const color = dragState.color;
       if (dragState.ghost) dragState.ghost.remove();
       viewportEl.classList.remove('is-drop-target');
       dragState = null;
@@ -4098,7 +4125,7 @@
       const r = viewportEl.getBoundingClientRect();
       const { x: wx, y: wy } = screenToWorld(e.clientX - r.left, e.clientY - r.top);
       const { x, y } = snapPoint(wx - NOTE_DEFAULT_SIZE / 2, wy - NOTE_DEFAULT_SIZE / 2);
-      const payload = { type: 'note', x, y, width: NOTE_DEFAULT_SIZE, height: NOTE_DEFAULT_SIZE, color: entry.data.color };
+      const payload = { type: 'note', x, y, width: NOTE_DEFAULT_SIZE, height: NOTE_DEFAULT_SIZE, color };
       // `title` réutilisé pour le nom de l'auteur (cf. ELEMENT_DEFAULTS.stack côté serveur) — seulement
       // si "Afficher l'auteur" est actif sur CETTE pile (entry.data.grayscale).
       if (entry.data.grayscale && myName) payload.title = myName;

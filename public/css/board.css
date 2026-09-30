@@ -548,7 +548,10 @@ body.is-linking .element:not(.is-locked) .connector-anchor { display: block; }
 }
 .element[data-type="stack"]:not(.is-editing) .stack-title { cursor: grab; pointer-events: none; }
 
-.stack-visual { position: relative; flex: 1; min-height: 60px; }
+/* Largeur fixe (celle de la carte d'origine, avant l'alignement sur consigne/tips) et non
+   étirée sur tout l'axe transversal (align-self plutôt que le stretch par défaut du flex column) :
+   la carte peut s'élargir sans que le post-it visuel ne s'agrandisse avec elle. */
+.stack-visual { position: relative; flex: 1; align-self: flex-start; width: 188px; min-height: 60px; }
 .stack-postit-back, .stack-postit-mid, .stack-postit-visual {
   position: absolute; inset: 12px; border-radius: 3px; box-shadow: 0 2px 5px rgba(20,20,30,0.18);
 }
@@ -686,6 +689,11 @@ body.is-linking .element:not(.is-locked) .connector-anchor { display: block; }
 }
 .toolbar-color-swatch.is-active { border-color: var(--text); }
 .toolbar-color-swatch.is-none { background: repeating-conic-gradient(#ddd 0% 25%, #fff 0% 50%) 0 0/8px 8px; }
+/* Pastille "aléatoire" (cf. colorDropdownHtml/applyStackStyle, pile de post-its uniquement) : un
+   dégradé conique façon roue de couleurs plutôt qu'une teinte unique. */
+.toolbar-color-swatch-random, .toolbar-color-dot-random {
+  background: conic-gradient(#FFF176, #F8BBD0, #90CAF9, #CE93D8, #A5D6A7, #FFF176) !important;
+}
 
 .toolbar-format-popover.is-open { display: flex; gap: 2px; }
 .element-format-btn {
