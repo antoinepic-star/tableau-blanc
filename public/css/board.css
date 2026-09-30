@@ -689,6 +689,12 @@ body.is-linking .element:not(.is-locked) .connector-anchor { display: block; }
 }
 .toolbar-color-swatch.is-active { border-color: var(--text); }
 .toolbar-color-swatch.is-none { background: repeating-conic-gradient(#ddd 0% 25%, #fff 0% 50%) 0 0/8px 8px; }
+/* Pastille "aléatoire", dernière de la liste (cf. colorDropdownHtml, pile de post-its uniquement) :
+   un fond neutre avec l'icône (cf. iconShuffle) plutôt qu'une couleur, puisque justement il n'y en a
+   pas une seule. */
+.toolbar-color-swatch-random, .toolbar-color-dot-random {
+  background: #ececf0; display: flex; align-items: center; justify-content: center; color: var(--text);
+}
 
 .toolbar-format-popover.is-open { display: flex; gap: 2px; }
 .element-format-btn {
