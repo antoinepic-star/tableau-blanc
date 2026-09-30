@@ -88,7 +88,7 @@ const ELEMENT_DEFAULTS = {
   image: { width: 240, height: 240, color: null },
   rectangle: { width: 220, height: 140, color: ELEMENT_COLORS[0], fontSize: 15, textAlign: 'left', textValign: 'center' },
   connector: { width: 0, height: 0, color: '#1c1c28' },
-  frame: { width: 480, height: 360, color: '#EDEAE3', strokeWidth: 1, strokeColor: '#c9c4b8', fontSize: 15, titleColor: '#4a463c' },
+  frame: { width: 480, height: 360, color: '#FFFFFF', strokeWidth: 1, strokeColor: '#c9c4b8', fontSize: 15, titleColor: '#4a463c' },
   // Bloc "consigne" (numéro + titre + description) et bloc "tips" (tag + titre + texte riche) : voir
   // board.js pour le détail de leurs champs multiples (title/number/tag, en plus de "text" et "color").
   instruction: { width: 280, height: 170, color: '#FFFFFF', number: '1', title: '' },
