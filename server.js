@@ -55,8 +55,10 @@ const turso = createClient({
   authToken: process.env.TURSO_AUTH_TOKEN,
 });
 
-// Limite relevée (défaut Express : 100kb) pour accepter les images encodées en base64 (élément image).
-app.use(express.json({ limit: '8mb' }));
+// Limite relevée (défaut Express : 100kb) pour accepter les images encodées en base64 (élément image),
+// et le lot de pages d'un PDF importé (cf. /elements/batch et PDF_BATCH_CHUNK côté client, qui borne
+// chaque lot à une taille raisonnable plutôt que de compter sur une limite serveur très haute).
+app.use(express.json({ limit: '16mb' }));
 app.use(express.static('public', { index: false }));
 
 // --- Turso helpers ---
@@ -692,6 +694,9 @@ function findContainingFrame(x, y, width, height, frameRows, excludeId) {
 // large que la frame reste seul sur sa ligne plutôt que de forcer un débordement infini). La frame
 // grandit/rétrécit en hauteur pour accueillir tout le monde sans jamais changer sa largeur.
 const FRAME_ARRANGE_PADDING = 16; // même valeur que le padding des blocs consigne/tips (cf. board.css)
+// Une frame "mosaïque PDF" (cf. import PDF côté client, qui pose tag: 'pdf-mosaic' à la création) veut
+// 20px de marge entre chaque page plutôt que les 16px par défaut — cf. applyFrameArrangement.
+const PDF_MOSAIC_PADDING = 20;
 const FRAME_TITLE_HEIGHT = 40; // espace réservé au titre (cf. applyFrameTitleStyle, taille 15px par défaut)
 const FRAME_MIN_HEIGHT = 100;
 
@@ -713,19 +718,20 @@ async function applyFrameArrangement(whiteboardId, frameId) {
       await tursoRun('UPDATE whiteboard_elements SET height = ?, updated_at = unixepoch() WHERE id = ?', [FRAME_MIN_HEIGHT, frameId]);
     }
   } else {
+    const padding = frame.tag === 'pdf-mosaic' ? PDF_MOSAIC_PADDING : FRAME_ARRANGE_PADDING;
     // Bord droit du contenu (pas juste sa largeur totale) : l'ancien calcul ne réservait de marge qu'à
     // gauche, laissant les éléments toucher le bord droit du cadre au lieu de garder eux aussi
-    // FRAME_ARRANGE_PADDING de marge.
-    const maxX = Math.max(frame.width - FRAME_ARRANGE_PADDING, FRAME_ARRANGE_PADDING + 40);
-    let cursorX = FRAME_ARRANGE_PADDING;
-    let cursorY = FRAME_TITLE_HEIGHT + FRAME_ARRANGE_PADDING;
+    // `padding` de marge.
+    const maxX = Math.max(frame.width - padding, padding + 40);
+    let cursorX = padding;
+    let cursorY = FRAME_TITLE_HEIGHT + padding;
     let rowHeight = 0;
     let placedInRow = 0;
 
     for (const c of children) {
       if (placedInRow > 0 && (cursorX + c.width) > maxX) {
-        cursorY += rowHeight + FRAME_ARRANGE_PADDING;
-        cursorX = FRAME_ARRANGE_PADDING;
+        cursorY += rowHeight + padding;
+        cursorX = padding;
         rowHeight = 0;
         placedInRow = 0;
       }
@@ -733,11 +739,11 @@ async function applyFrameArrangement(whiteboardId, frameId) {
       const y = frame.y + cursorY;
       await tursoRun('UPDATE whiteboard_elements SET x = ?, y = ?, updated_at = unixepoch() WHERE id = ?', [x, y, c.id]);
       touchedIds.push(c.id);
-      cursorX += c.width + FRAME_ARRANGE_PADDING;
+      cursorX += c.width + padding;
       rowHeight = Math.max(rowHeight, c.height);
       placedInRow++;
     }
-    const newHeight = Math.max(FRAME_MIN_HEIGHT, cursorY + rowHeight + FRAME_ARRANGE_PADDING);
+    const newHeight = Math.max(FRAME_MIN_HEIGHT, cursorY + rowHeight + padding);
     await tursoRun('UPDATE whiteboard_elements SET height = ?, updated_at = unixepoch() WHERE id = ?', [newHeight, frameId]);
   }
 
@@ -1047,6 +1053,17 @@ app.patch('/api/whiteboards/:whiteboardId/elements/:id', whiteboardAuth, ah(asyn
   const element = parseElement(row, { withImageData: imageData !== undefined });
   await touchWhiteboard(req.params.whiteboardId);
   broadcast('element:updated', element, req.params.whiteboardId);
+
+  // Une frame "mosaïque PDF" (cf. import PDF côté client) se réordonne automatiquement dès qu'on la
+  // redimensionne — pas besoin de rappuyer sur "Ordonner" à chaque fois — pour passer d'elle-même sur
+  // moins/plus de colonnes selon la nouvelle largeur. Une frame normale n'a PAS ce comportement : la
+  // redimensionner ne doit jamais déplacer son contenu tout seul (cf. le principe déjà établi pour le
+  // reste de l'app : une position ne change que si l'utilisateur la change lui-même).
+  if (existing.type === 'frame' && existing.tag === 'pdf-mosaic' && (width !== undefined || height !== undefined)) {
+    const arranged = await applyFrameArrangement(req.params.whiteboardId, req.params.id);
+    broadcast('elements:updated', { elements: arranged }, req.params.whiteboardId);
+  }
+
   res.json(element);
 }));
 

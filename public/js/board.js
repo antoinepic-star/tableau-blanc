@@ -18,6 +18,22 @@
   const MIN_CROP_SIZE = 24;
   const MAX_IMAGE_DIM = 320;
   const MAX_IMAGE_BYTES = 4 * 1024 * 1024;
+  // ---- Import PDF (une page = une image, posées en mosaïque dans une frame, cf. plus bas) ----
+  const MAX_PDF_BYTES = 40 * 1024 * 1024;
+  const MAX_PDF_PAGES = 150;
+  // Résolution de rendu de chaque page (qualité de la source) : découplée de sa taille d'AFFICHAGE
+  // dans la mosaïque (PDF_MOSAIC_CELL_WIDTH) — on peut zoomer sur une page sans qu'elle devienne floue
+  // plus vite qu'une image classique, sans pour autant peser le poids d'un rendu plein écran par page.
+  const PDF_PAGE_RENDER_WIDTH = 1000;
+  const PDF_PAGE_JPEG_QUALITY = 0.82; // JPEG plutôt que PNG : les pages (texte/diagrammes) compressent
+                                      // beaucoup mieux ainsi, pour un rendu visuellement équivalent ici
+  const PDF_MOSAIC_CELL_WIDTH = 240; // largeur d'affichage d'une page dans la mosaïque, hauteur au prorata
+  const PDF_MOSAIC_COLUMNS = 3;
+  const PDF_MOSAIC_PADDING = 20; // même valeur que côté serveur (cf. PDF_MOSAIC_PADDING dans server.js)
+  // Nombre de pages envoyées par requête /elements/batch : borne la taille de chaque requête (indépen-
+  // damment de la limite du serveur) plutôt que de compter sur une seule requête géante pour tout le
+  // PDF, qui grossirait sans limite avec le nombre de pages.
+  const PDF_BATCH_CHUNK = 25;
   const ZOOM_MIN = 0.2;
   const ZOOM_MAX = 2.5;
   const TEXT_PAD_X_RATIO = 0.55;
@@ -44,6 +60,7 @@
   const addToolbarRevealBtn = document.getElementById('addToolbarRevealBtn');
   const addFlyout = document.getElementById('addFlyout');
   const imageFileInput = document.getElementById('imageFileInput');
+  const pdfFileInput = document.getElementById('pdfFileInput');
   const toolbarEl = document.getElementById('elementToolbar');
   const richTextToolbarEl = document.getElementById('richTextToolbar');
   const commentDrawer = document.getElementById('commentDrawer');
@@ -404,6 +421,7 @@
     },
     notecolors: { kind: 'colors' },
     textstyles: { kind: 'textstyles' },
+    uploads: { kind: 'uploads' },
   };
 
   function viewportCenterWorld() {
@@ -481,15 +499,7 @@
   }
 
   const textFlyoutBtn = addToolbar.querySelector('[data-flyout="textstyles"]');
-  const imageBtn = addToolbar.querySelector('[data-type="image"]');
   const frameBtn = addToolbar.querySelector('[data-type="frame"]');
-
-  imageBtn.addEventListener('click', () => {
-    disarmPlacement();
-    closeAddFlyout();
-    const { x: wx, y: wy } = viewportCenterWorld();
-    placeNewElement('image', wx, wy);
-  });
 
   frameBtn.addEventListener('click', (e) => {
     if (armedPlacement && armedPlacement.type === 'frame') { disarmPlacement(); return; }
@@ -536,6 +546,29 @@
           const fontSize = FONT_SIZE_PRESETS[i][1];
           armPlacement('text', textFlyoutBtn.querySelector('svg').outerHTML, { options: { fontSize }, sourceBtn, x: e.clientX, y: e.clientY });
         });
+      });
+    } else if (cfg.kind === 'uploads') {
+      // Ni l'un ni l'autre ne passe par armPlacement : un import (image ou PDF) ouvre tout de suite le
+      // sélecteur de fichier, pas un mode "pose au clic" — comme l'image l'a toujours fait.
+      addFlyout.innerHTML = `
+        <button type="button" class="add-flyout-item" data-upload="image">
+          <span class="add-flyout-item-icon"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg></span>
+          <span class="add-flyout-item-label">Image</span>
+        </button>
+        <button type="button" class="add-flyout-item" data-upload="pdf">
+          <span class="add-flyout-item-icon"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/><path d="M9.5 17v-4h1.2a1.3 1.3 0 0 1 0 2.6H9.5"/><path d="M13 17v-4h1.6c.9 0 1.4.7 1.4 2s-.5 2-1.4 2H13z"/></svg></span>
+          <span class="add-flyout-item-label">PDF</span>
+        </button>
+      `;
+      addFlyout.querySelector('[data-upload="image"]').addEventListener('click', () => {
+        closeAddFlyout();
+        const { x: wx, y: wy } = viewportCenterWorld();
+        placeNewElement('image', wx, wy);
+      });
+      addFlyout.querySelector('[data-upload="pdf"]').addEventListener('click', () => {
+        closeAddFlyout();
+        const { x: wx, y: wy } = viewportCenterWorld();
+        startPdfImport(wx, wy);
       });
     }
   }
@@ -666,6 +699,113 @@
       img.src = reader.result;
     };
     reader.readAsDataURL(file);
+  });
+
+  // ---------- Import PDF (une frame "mosaïque", une image par page) ----------
+  // Chaque page est rendue en image (canvas → JPEG) entièrement côté client via pdf.js, puis postée
+  // comme un lot d'éléments "image" classiques rattachés à une frame taguée tag: 'pdf-mosaic' — ce tag
+  // est ce qui permet à applyFrameArrangement (server.js) de la reconnaître et de la réordonner toute
+  // seule au redimensionnement (cf. PATCH .../elements/:id côté serveur), sans toucher aux frames
+  // normales. pdf.js lui-même n'est chargé (dynamic import) qu'au moment où l'utilisateur choisit
+  // "PDF" — pas de coût pour qui ne s'en sert jamais.
+
+  let pendingPdfPlacement = null;
+  let pdfjsLoadPromise = null;
+
+  function loadPdfJs() {
+    if (!pdfjsLoadPromise) {
+      pdfjsLoadPromise = import('/vendor/pdfjs/pdf.min.mjs').then((mod) => {
+        mod.GlobalWorkerOptions.workerSrc = '/vendor/pdfjs/pdf.worker.min.mjs';
+        return mod;
+      });
+    }
+    return pdfjsLoadPromise;
+  }
+
+  function startPdfImport(wx, wy) {
+    pendingPdfPlacement = { wx, wy };
+    pdfFileInput.value = '';
+    pdfFileInput.click();
+  }
+
+  // Rendu de chaque page à PDF_PAGE_RENDER_WIDTH (résolution/qualité de la source), avec sa taille
+  // d'AFFICHAGE dans la mosaïque calculée à part (largeur fixe PDF_MOSAIC_CELL_WIDTH, hauteur au
+  // prorata) : on peut zoomer sur une page sans qu'elle devienne floue plus vite qu'une image classique,
+  // sans pour autant peser le poids d'un rendu pleine résolution à la taille d'affichage seulement.
+  async function renderPdfPages(file) {
+    const pdfjsLib = await loadPdfJs();
+    const buf = await file.arrayBuffer();
+    const pdf = await pdfjsLib.getDocument({ data: buf }).promise;
+    if (pdf.numPages > MAX_PDF_PAGES) throw new Error(`PDF trop long (max ${MAX_PDF_PAGES} pages).`);
+    const pages = [];
+    for (let i = 1; i <= pdf.numPages; i++) {
+      const page = await pdf.getPage(i);
+      const baseViewport = page.getViewport({ scale: 1 });
+      const viewport = page.getViewport({ scale: PDF_PAGE_RENDER_WIDTH / baseViewport.width });
+      const canvas = document.createElement('canvas');
+      canvas.width = Math.round(viewport.width);
+      canvas.height = Math.round(viewport.height);
+      await page.render({ canvasContext: canvas.getContext('2d'), viewport }).promise;
+      const displayHeight = Math.round(PDF_MOSAIC_CELL_WIDTH * (canvas.height / canvas.width));
+      pages.push({
+        imageData: canvas.toDataURL('image/jpeg', PDF_PAGE_JPEG_QUALITY),
+        width: PDF_MOSAIC_CELL_WIDTH, height: displayHeight,
+      });
+      // Libère chaque canvas tout de suite plutôt qu'à la fin de la boucle : un PDF de 100+ pages
+      // accumulerait sinon autant de canvas pleine résolution en mémoire en même temps.
+      canvas.width = 0; canvas.height = 0;
+    }
+    return pages;
+  }
+
+  async function importPdfFile(file, wx, wy) {
+    const pages = await renderPdfPages(file);
+    if (!pages.length) throw new Error('PDF vide (aucune page).');
+
+    // Largeur de frame calée pour exactement PDF_MOSAIC_COLUMNS colonnes de PDF_MOSAIC_CELL_WIDTH avec
+    // PDF_MOSAIC_PADDING de marge partout (même calcul que le calage en grille d'applyFrameArrangement
+    // côté serveur, qui pose ensuite les positions réelles une fois la frame créée, cf. plus bas) :
+    // une marge à gauche du premier + N cellules + une marge après chacune.
+    const frameWidth = PDF_MOSAIC_COLUMNS * PDF_MOSAIC_CELL_WIDTH + (PDF_MOSAIC_COLUMNS + 1) * PDF_MOSAIC_PADDING;
+    const initialHeight = 400; // provisoire : applyFrameArrangement (appelé juste après) la recalcule
+    const title = file.name.replace(/\.pdf$/i, '');
+    const { x: fx, y: fy } = snapPoint(wx - frameWidth / 2, wy - initialHeight / 2);
+
+    let frameId = null;
+    let allCreated = [];
+    for (let i = 0; i < pages.length; i += PDF_BATCH_CHUNK) {
+      const chunk = pages.slice(i, i + PDF_BATCH_CHUNK);
+      // Position provisoire (x croissant, y=0), juste pour que l'ORDER BY y, x d'applyFrameArrangement
+      // retrouve l'ordre des pages avant son propre calcul de grille — la position réelle vient de cet
+      // appel, pas de celle-ci.
+      const imageItems = chunk.map((p, j) => ({
+        type: 'image', frameId: frameId || 'c0', x: i + j, y: 0, width: p.width, height: p.height, imageData: p.imageData,
+      }));
+      const items = i === 0
+        ? [{ type: 'frame', clientId: 'c0', x: fx, y: fy, width: frameWidth, height: initialHeight, text: title, tag: 'pdf-mosaic' }, ...imageItems]
+        : imageItems;
+      const { elements: created } = await Api.createElementsBatch(items);
+      allCreated = allCreated.concat(created);
+      if (!frameId) frameId = created.find(el => el.type === 'frame').id;
+    }
+
+    allCreated.forEach(data => ensureRendered(data));
+    const { elements: arranged } = await Api.arrangeFrame(frameId);
+    arranged.forEach(applyRemoteUpdate);
+
+    const createdIds = allCreated.map(el => el.id);
+    recordUndo(() => {
+      createdIds.forEach(id => removeElementLocal(id));
+      return Api.deleteElement(frameId, { deleteContents: true }).catch(() => {});
+    });
+  }
+
+  pdfFileInput.addEventListener('change', (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    if (file.size > MAX_PDF_BYTES) { alert('PDF trop lourd (max 40 Mo).'); return; }
+    const { wx, wy } = pendingPdfPlacement || { wx: 0, wy: 0 };
+    withBusy(importPdfFile(file, wx, wy)).catch(err => alert("Impossible d'importer ce PDF : " + err.message));
   });
 
   // ---------- Sélection simple ----------
