@@ -1690,6 +1690,15 @@
     `;
   }
 
+  // Le clic sur "Verrouiller" porte toujours sur le groupe entier d'un élément groupé (jamais
+  // élément par élément au sein d'un groupe, cf. wireToolbarControls) : ce libellé le précise avant
+  // même de cliquer plutôt que de le découvrir seulement après. Une frame seule (pas groupée) ne
+  // verrouille qu'elle-même, donc pas de mention spéciale dans ce cas.
+  function lockButtonTitle(data) {
+    const members = data.groupId ? groupMembers(data.groupId) : [];
+    return members.length > 1 ? `Verrouiller le groupe de ${members.length} éléments` : 'Verrouiller';
+  }
+
   // Barre d'action d'un rectangle (façon Miro, cf. maquette fournie) : assez différente du gabarit
   // partagé ci-dessous (ordre des contrôles, séparateurs, dupliquer/premier plan/arrière-plan/
   // supprimer regroupés dans un menu "⋮" plutôt qu'en icônes séparées) pour avoir sa propre mise en
@@ -1709,7 +1718,7 @@
       <button type="button" class="element-icon-btn element-vote-btn${voted ? ' is-active' : ''}" title="${voted ? 'Retirer mon vote' : 'Voter'}">${iconVote()}</button>
       <button type="button" class="element-icon-btn element-comment-btn" title="Commenter">${iconComment()}</button>
       <span class="element-toolbar-sep"></span>
-      <button type="button" class="element-icon-btn element-lock-btn" title="Verrouiller">${iconLock()}</button>
+      <button type="button" class="element-icon-btn element-lock-btn" title="${lockButtonTitle(data)}">${iconLock()}</button>
       <span class="element-toolbar-sep"></span>
       ${moreMenuHtml()}
     `;
@@ -1796,7 +1805,7 @@
     return `
       ${controls}${sep}
       ${voteCommentHtml}
-      <button type="button" class="element-icon-btn element-lock-btn" title="Verrouiller">${iconLock()}</button>
+      <button type="button" class="element-icon-btn element-lock-btn" title="${lockButtonTitle(data)}">${iconLock()}</button>
       <span class="element-toolbar-sep"></span>
       ${moreMenuHtml({ showFront: !isFrame, showBack: !isFrame })}
     `;
@@ -1805,15 +1814,14 @@
   // Barre affichée à la place du toolbar normal quand l'élément sélectionné est verrouillé : un
   // seul bouton "appui long pour déverrouiller", dont le fond se remplit pendant l'appui (façon Miro).
   // Le verrouillage étant toujours appliqué à un groupe entier d'un coup (jamais élément par élément
-  // au sein d'un groupe), le libellé précise le nombre d'éléments quand il s'agit d'un groupe.
+  // au sein d'un groupe), le libellé précise le nombre d'éléments quand il s'agit d'un groupe — une
+  // frame seule (pas groupée) ne verrouille qu'elle-même, pas ce qu'elle contient (cf. le clic du
+  // bouton "Verrouiller" dans wireToolbarControls).
   function buildLockedToolbarHtml(entry) {
-    const members = entry.data.type === 'frame' ? frameChildren(entry.data.id)
-      : entry.data.groupId ? groupMembers(entry.data.groupId) : [];
+    const members = entry.data.groupId ? groupMembers(entry.data.groupId) : [];
     const label = members.length > 1
       ? `Appui long pour déverrouiller le groupe (${members.length} éléments)`
-      : entry.data.type === 'frame' && members.length === 1
-        ? 'Appui long pour déverrouiller la frame (1 élément)'
-        : 'Appui long pour déverrouiller';
+      : 'Appui long pour déverrouiller';
     return `
       <button type="button" class="unlock-hold-btn">
         <span class="unlock-hold-fill"></span>
@@ -2233,8 +2241,8 @@
       if (elapsed >= UNLOCK_HOLD_MS) {
         cleanup();
         // Déverrouille tout le groupe d'un coup (symétrique du verrouillage) — jamais un seul membre.
-        const ids = entry.data.type === 'frame' ? [entry.data.id, ...frameChildren(entry.data.id)]
-          : entry.data.groupId ? groupMembers(entry.data.groupId) : [entry.data.id];
+        // Une frame seule (pas groupée) ne déverrouille qu'elle-même, comme au verrouillage.
+        const ids = entry.data.groupId ? groupMembers(entry.data.groupId) : [entry.data.id];
         ids.forEach((id) => {
           const en = elements.get(id);
           if (!en) return;
@@ -3504,9 +3512,10 @@
       lockBtn.addEventListener('click', () => {
         // Le verrouillage porte toujours sur le groupe entier d'un coup, jamais élément par élément
         // au sein d'un même groupe — sinon un groupe pourrait finir dans un état incohérent
-        // (certains membres verrouillés, d'autres non). Une frame verrouille aussi son contenu.
-        const ids = entry.data.type === 'frame' ? [entry.data.id, ...frameChildren(entry.data.id)]
-          : entry.data.groupId ? groupMembers(entry.data.groupId) : [entry.data.id];
+        // (certains membres verrouillés, d'autres non). Une frame seule (pas groupée) ne verrouille
+        // qu'elle-même : ce qu'elle contient spatialement (frameChildren) n'est concerné que si c'est
+        // aussi explicitement dans le même groupe qu'elle.
+        const ids = entry.data.groupId ? groupMembers(entry.data.groupId) : [entry.data.id];
         ids.forEach((id) => {
           const en = elements.get(id);
           if (!en) return;
