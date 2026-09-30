@@ -1,5 +1,5 @@
 (() => {
-  const ELEMENT_COLORS = ['#FEEEBB', '#C2EBF7', '#A9F3D5', '#FDD5E7', '#FFD7B8', '#DECCFA', '#131114', '#D8D8D8', '#F8F8F8'];
+  const ELEMENT_COLORS = ['#FFF083', '#FEEEBB', '#C2EBF7', '#A9F3D5', '#FDD5E7', '#FFD7B8', '#DECCFA', '#131114', '#D8D8D8', '#F8F8F8'];
   // Pile de post-its en mode "aléatoire" (cf. iconShuffle/applyStackStyle) : plutôt qu'une couleur
   // unique, on garde une PAIRE [dessus, dessous] toujours différentes — le dessous, entraperçu au
   // survol (cf. .stack-visual:hover dans board.css), est la surprise qu'on découvre une fois le
