@@ -39,6 +39,9 @@
   const adminApp = document.getElementById('adminApp');
   const whiteboardListView = document.getElementById('whiteboardListView');
   const whiteboardDetailView = document.getElementById('whiteboardDetailView');
+  const templateListView = document.getElementById('templateListView');
+  const navWhiteboardsBtn = document.getElementById('navWhiteboardsBtn');
+  const navTemplatesBtn = document.getElementById('navTemplatesBtn');
 
   function initials(name) {
     return (name || '').trim().split(/\s+/).slice(0, 2).map(w => w[0]).join('').toUpperCase();
@@ -150,10 +153,25 @@
   }
 
   function showWhiteboardList() {
+    templateListView.style.display = 'none';
     whiteboardDetailView.style.display = 'none';
     whiteboardListView.style.display = '';
+    navWhiteboardsBtn.classList.add('is-active');
+    navTemplatesBtn.classList.remove('is-active');
     loadWhiteboards().catch(err => alert(err.message));
   }
+
+  function showTemplateList() {
+    whiteboardDetailView.style.display = 'none';
+    whiteboardListView.style.display = 'none';
+    templateListView.style.display = '';
+    navTemplatesBtn.classList.add('is-active');
+    navWhiteboardsBtn.classList.remove('is-active');
+    loadTemplates().catch(err => alert(err.message));
+  }
+
+  navWhiteboardsBtn.addEventListener('click', showWhiteboardList);
+  navTemplatesBtn.addEventListener('click', showTemplateList);
 
   document.getElementById('loginForm').addEventListener('submit', async (e) => {
     e.preventDefault();
@@ -282,6 +300,89 @@
 
   document.getElementById('newWhiteboardBtn').addEventListener('click', () => openWhiteboardForm(null));
   document.getElementById('backToListBtn').addEventListener('click', showWhiteboardList);
+
+  // ---------- Liste des templates ----------
+  // Pas de création ici (cf. templateListView dans admin.html) : un template ne se crée que depuis un
+  // tableau. Le back-office se contente de renommer/changer les tags/supprimer.
+
+  async function loadTemplates() {
+    const templates = await api('GET', '/api/admin/templates');
+    renderTemplateList(templates);
+  }
+
+  function renderTemplateList(templates) {
+    const listEl = document.getElementById('templateList');
+    listEl.innerHTML = '';
+    if (!templates.length) {
+      listEl.innerHTML = '<div class="sh-empty-state">Aucun template enregistré pour l’instant — depuis un tableau, le bouton "…" en haut à droite permet d’en créer un.</div>';
+      return;
+    }
+    templates.forEach((t) => {
+      const row = document.createElement('div');
+      row.className = 'sh-list-row';
+      row.innerHTML = `
+        <div class="sh-list-row-main">
+          <span class="sh-list-row-title"></span>
+          <span class="sh-list-row-subtitle"></span>
+        </div>
+        <div class="sh-list-row-right">
+          <button type="button" class="tb-row-icon-btn" data-action="edit" title="Modifier">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"/></svg>
+          </button>
+          <button type="button" class="tb-row-icon-btn" data-action="delete" title="Supprimer">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>
+          </button>
+        </div>
+      `;
+      row.querySelector('.sh-list-row-title').textContent = t.name;
+      row.querySelector('.sh-list-row-subtitle').textContent = t.tags.length
+        ? `${t.tags.join(' · ')} — ${t.elementCount} élément${t.elementCount > 1 ? 's' : ''}`
+        : `${t.elementCount} élément${t.elementCount > 1 ? 's' : ''}`;
+      row.querySelector('[data-action="edit"]').addEventListener('click', (e) => { e.stopPropagation(); openTemplateForm(t); });
+      row.querySelector('[data-action="delete"]').addEventListener('click', (e) => {
+        e.stopPropagation();
+        deletingTemplateId = t.id;
+        shOpenModal('deleteTemplateModal');
+      });
+      listEl.appendChild(row);
+    });
+  }
+
+  let editingTemplateId = null;
+  function openTemplateForm(template) {
+    editingTemplateId = template.id;
+    document.getElementById('tfName').value = template.name;
+    document.getElementById('tfTags').value = template.tags.join(', ');
+    shOpenDrawer('templateFormDrawer', 'templateFormOverlay');
+  }
+
+  document.getElementById('templateFormSaveBtn').addEventListener('click', async () => {
+    const name = document.getElementById('tfName').value.trim();
+    if (!name) { alert('Merci de donner un titre au template.'); return; }
+    const tags = document.getElementById('tfTags').value.split(',').map(s => s.trim()).filter(Boolean);
+    const btn = document.getElementById('templateFormSaveBtn');
+    btn.disabled = true;
+    try {
+      await api('PUT', `/api/admin/templates/${editingTemplateId}`, { name, tags });
+      shCloseDrawer('templateFormDrawer', 'templateFormOverlay');
+      await loadTemplates();
+    } catch (err) {
+      alert(err.message);
+    } finally {
+      btn.disabled = false;
+    }
+  });
+
+  let deletingTemplateId = null;
+  document.getElementById('confirmDeleteTemplateBtn').addEventListener('click', async () => {
+    try {
+      await api('DELETE', `/api/admin/templates/${deletingTemplateId}`);
+      shCloseModal('deleteTemplateModal');
+      await loadTemplates();
+    } catch (err) {
+      alert(err.message);
+    }
+  });
 
   // ---------- Clients / projets ----------
 

@@ -168,6 +168,15 @@ async function initDb() {
       actor_name TEXT NOT NULL, actor_color TEXT, text TEXT NOT NULL,
       created_at INTEGER DEFAULT (unixepoch())
     )`,
+    // Pas de whiteboard_id : un template est enregistré depuis un tableau mais commun à TOUS les
+    // tableaux ensuite (cf. la barre "ajouter" du board, qui les propose à côté de Consigne/Tips).
+    // `data` est le même tableau de snapshots que produit board.js pour coller/dupliquer (cf.
+    // snapshotForCreate/recreateElements) — pas de re-sérialisation dédiée, juste stocké tel quel et
+    // repassé à recreateElements à la pose.
+    `CREATE TABLE IF NOT EXISTS templates (
+      id TEXT PRIMARY KEY, name TEXT NOT NULL, tags TEXT, data TEXT NOT NULL,
+      created_by TEXT, created_at INTEGER DEFAULT (unixepoch()), updated_at INTEGER DEFAULT (unixepoch())
+    )`,
   ], 'write');
 
   // Ajout des colonnes trait/texte/image (ignore l'erreur si la colonne existe déjà — même
@@ -460,6 +469,43 @@ app.post('/api/admin/favorites/toggle', adminAuth, ah(async (req, res) => {
     body: JSON.stringify({ userId: req.admin.sub, toolKey: 'tableau-blanc', itemType: 'whiteboard', itemId, itemLabel, itemUrl }),
   });
   res.json(result);
+}));
+
+// ---------- Templates (communs à tous les tableaux, créés depuis un board — cf. plus bas) ----------
+
+function publicTemplate(t, { withData = false } = {}) {
+  return {
+    id: t.id,
+    name: t.name,
+    tags: t.tags ? JSON.parse(t.tags) : [],
+    ...(withData ? { data: JSON.parse(t.data) } : { elementCount: JSON.parse(t.data).length }),
+    createdBy: t.created_by || null,
+    createdAt: t.created_at,
+    updatedAt: t.updated_at,
+  };
+}
+
+app.get('/api/admin/templates', adminAuth, ah(async (req, res) => {
+  const templates = await tursoAll('SELECT * FROM templates ORDER BY created_at DESC');
+  res.json(templates.map(t => publicTemplate(t)));
+}));
+
+app.put('/api/admin/templates/:id', adminAuth, ah(async (req, res) => {
+  const existing = await tursoGet('SELECT * FROM templates WHERE id = ?', [req.params.id]);
+  if (!existing) return res.status(404).json({ error: 'Introuvable' });
+  const name = req.body?.name?.trim();
+  if (!name) return res.status(400).json({ error: 'Titre requis' });
+  const tags = Array.isArray(req.body?.tags) ? req.body.tags.map(t => String(t).trim()).filter(Boolean) : [];
+  await tursoRun('UPDATE templates SET name = ?, tags = ?, updated_at = unixepoch() WHERE id = ?', [name, JSON.stringify(tags), req.params.id]);
+  const row = await tursoGet('SELECT * FROM templates WHERE id = ?', [req.params.id]);
+  res.json(publicTemplate(row));
+}));
+
+app.delete('/api/admin/templates/:id', adminAuth, ah(async (req, res) => {
+  const existing = await tursoGet('SELECT * FROM templates WHERE id = ?', [req.params.id]);
+  if (!existing) return res.status(404).json({ error: 'Introuvable' });
+  await tursoRun('DELETE FROM templates WHERE id = ?', [req.params.id]);
+  res.json({ ok: true });
 }));
 
 // ---------- Activité (consommée directement par l'UX Dashboard) ----------
@@ -785,6 +831,36 @@ app.get('/api/whiteboards/:whiteboardId', whiteboardAuth, ah(async (req, res) =>
     }),
     me: req.user,
   });
+}));
+
+// ---------- Templates (cf. section admin plus haut pour le schéma/gestion) ----------
+// Le listing renvoyé ici n'inclut jamais `data` (potentiellement gros pour un template à beaucoup
+// d'éléments) : la pose (cf. GET /:templateId) va le chercher seulement au moment où l'utilisateur
+// choisit CE template précis, pas pour tous les templates de la liste à chaque ouverture du menu.
+app.get('/api/whiteboards/:whiteboardId/templates', whiteboardAuth, ah(async (req, res) => {
+  const templates = await tursoAll('SELECT * FROM templates ORDER BY created_at DESC');
+  res.json(templates.map(t => publicTemplate(t)));
+}));
+
+app.get('/api/whiteboards/:whiteboardId/templates/:templateId', whiteboardAuth, ah(async (req, res) => {
+  const row = await tursoGet('SELECT * FROM templates WHERE id = ?', [req.params.templateId]);
+  if (!row) return res.status(404).json({ error: 'Introuvable' });
+  res.json(publicTemplate(row, { withData: true }));
+}));
+
+app.post('/api/whiteboards/:whiteboardId/templates', whiteboardAuth, ah(async (req, res) => {
+  const name = req.body?.name?.trim();
+  if (!name) return res.status(400).json({ error: 'Titre requis' });
+  const data = Array.isArray(req.body?.data) ? req.body.data : [];
+  if (!data.length) return res.status(400).json({ error: 'Le tableau est vide' });
+  const tags = Array.isArray(req.body?.tags) ? req.body.tags.map(t => String(t).trim()).filter(Boolean) : [];
+  const id = uuidv4();
+  await tursoRun(
+    'INSERT INTO templates (id, name, tags, data, created_by) VALUES (?, ?, ?, ?, ?)',
+    [id, name, JSON.stringify(tags), JSON.stringify(data), req.user.name]
+  );
+  const row = await tursoGet('SELECT * FROM templates WHERE id = ?', [id]);
+  res.json(publicTemplate(row));
 }));
 
 app.post('/api/whiteboards/:whiteboardId/elements', whiteboardAuth, ah(async (req, res) => {

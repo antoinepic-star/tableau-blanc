@@ -201,5 +201,10 @@ const Api = (() => {
     getComments: (elementId) => request('GET', `${base}/elements/${elementId}/comments`),
     createComment: (elementId, text) => request('POST', `${base}/elements/${elementId}/comments`, { text }),
     deleteComment: (elementId, commentId) => request('DELETE', `${base}/elements/${elementId}/comments/${commentId}`),
+    // Templates : communs à tous les tableaux (cf. server.js) — la liste ne renvoie jamais `data`
+    // (potentiellement gros), récupéré à part seulement pour LE template qu'on pose vraiment.
+    listTemplates: () => request('GET', `${base}/templates`),
+    getTemplate: (templateId) => request('GET', `${base}/templates/${templateId}`),
+    createTemplate: (payload) => request('POST', `${base}/templates`, payload),
   };
 })();

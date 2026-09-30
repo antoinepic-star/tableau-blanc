@@ -53,6 +53,11 @@
       </div>
     </header>
 
+    <nav class="tb-section-nav">
+      <button type="button" class="tb-section-nav-btn is-active" id="navWhiteboardsBtn">Tableaux blancs</button>
+      <button type="button" class="tb-section-nav-btn" id="navTemplatesBtn">Templates</button>
+    </nav>
+
     <div class="sh-overlay" id="shToolsOverlay" onclick="shCloseDrawer('shToolsDrawer','shToolsOverlay')"></div>
     <aside class="sh-drawer sh-drawer-wide" id="shToolsDrawer">
       <button type="button" class="sh-icon-trigger sh-tools-close" onclick="shCloseDrawer('shToolsDrawer','shToolsOverlay')" aria-label="Fermer">
@@ -195,6 +200,14 @@
 
       <div id="readOnlyNote" class="sh-field-hint" style="display:none; margin-bottom:20px;">Seul(e) le créateur ou le superadmin peut modifier ce tableau.</div>
     </main>
+
+    <main id="templateListView" class="sh-page-container" style="display:none">
+      <div class="sh-page-header-row">
+        <h1>Liste des templates</h1>
+      </div>
+      <div class="sh-field-hint" style="margin-bottom:16px;">Un template ne se crée que depuis un tableau (bouton "…" en haut à droite) — ici, tu peux le renommer, changer ses tags, ou le supprimer. Communs à tous les tableaux.</div>
+      <div id="templateList" class="sh-entity-list"></div>
+    </main>
   </div>
 
   <!-- Drawer : créer / modifier un tableau -->
@@ -251,6 +264,42 @@
       <div class="sh-modal-actions">
         <button type="button" class="sh-btn sh-btn-secondary" onclick="shCloseModal('deleteWhiteboardModal')">Annuler</button>
         <button type="button" class="sh-btn sh-btn-danger" id="confirmDeleteWhiteboardBtn">Supprimer</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Drawer : modifier un template (titre / tags) -->
+  <div class="sh-overlay" id="templateFormOverlay" onclick="shCloseDrawer('templateFormDrawer','templateFormOverlay')"></div>
+  <aside class="sh-drawer" id="templateFormDrawer">
+    <div class="sh-drawer-header">
+      <h2>Modifier le template</h2>
+      <button type="button" class="sh-icon-trigger" onclick="shCloseDrawer('templateFormDrawer','templateFormOverlay')" aria-label="Fermer">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+      </button>
+    </div>
+    <div class="sh-drawer-body">
+      <div class="sh-field">
+        <label for="tfName">Titre</label>
+        <input type="text" id="tfName">
+      </div>
+      <div class="sh-field">
+        <label for="tfTags">Tags</label>
+        <input type="text" id="tfTags" placeholder="Séparés par une virgule">
+      </div>
+    </div>
+    <div class="sh-drawer-footer">
+      <button type="button" class="sh-btn sh-btn-primary sh-btn-block" id="templateFormSaveBtn">Enregistrer</button>
+    </div>
+  </aside>
+
+  <!-- Modale de suppression -->
+  <div class="sh-modal-overlay" id="deleteTemplateModal">
+    <div class="sh-modal">
+      <h3>Supprimer ce template ?</h3>
+      <p>Cette action est irréversible.</p>
+      <div class="sh-modal-actions">
+        <button type="button" class="sh-btn sh-btn-secondary" onclick="shCloseModal('deleteTemplateModal')">Annuler</button>
+        <button type="button" class="sh-btn sh-btn-danger" id="confirmDeleteTemplateBtn">Supprimer</button>
       </div>
     </div>
   </div>

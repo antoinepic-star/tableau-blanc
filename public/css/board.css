@@ -127,6 +127,15 @@ body.board-page { overflow: hidden; height: 100vh; }
    couleur choisie plutôt que l'icône générique du bouton, pour rappeler quelle couleur va être posée. */
 .placement-ghost-note { width: 26px; height: 26px; border-radius: 4px; box-shadow: 0 1px 4px rgba(0,0,0,0.35); }
 
+/* Sous-menu "Templates" (kind: 'templates') : Consigne/Tips toujours en premier (mêmes lignes que les
+   autres familles), puis les templates enregistrés — nom + tags empilés plutôt qu'une seule ligne, et
+   une hauteur bornée avec défilement si la liste s'allonge. */
+.add-flyout[data-for="templates"] { max-height: 340px; overflow-y: auto; }
+.add-flyout-item-template-text { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.add-flyout-item-template-text .add-flyout-item-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.add-flyout-item-tags { font-size: 11px; color: var(--text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.add-flyout-loading, .add-flyout-empty { padding: 10px; font-size: 12.5px; color: var(--text-muted); text-align: center; }
+
 /* Fermeture d'un panneau latéral (drawer commentaires) — nom hérité de l'ancien drawer "ajouter". */
 .add-drawer-close {
   width: 34px; height: 34px; border: none; background: transparent; border-radius: 8px;
@@ -189,6 +198,17 @@ body.board-page { overflow: hidden; height: 100vh; }
 }
 .comment-drawer-footer textarea:focus { border-color: var(--purple); }
 .comment-drawer-footer .primary-btn { align-self: flex-end; padding: 8px 18px; font-size: 13px; }
+
+/* Drawer "Enregistrer en tant que template" : même conteneur que celui des commentaires
+   (.comment-drawer), juste un formulaire à la place d'un fil de discussion. */
+.template-field { display: flex; flex-direction: column; gap: 6px; }
+.template-field label { font-size: 12.5px; font-weight: 600; color: var(--text); }
+.template-field input {
+  border: 1px solid var(--border); border-radius: 10px; padding: 9px 12px;
+  font-family: inherit; font-size: 13.5px; color: var(--text); outline: none;
+}
+.template-field input:focus { border-color: var(--purple); }
+.template-field-hint { font-size: 11.5px; color: var(--text-muted); }
 
 /* ---------- Canvas ---------- */
 

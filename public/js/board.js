@@ -60,7 +60,17 @@
   const zoomPctEl = document.getElementById('zoomPct');
   const hintPill = document.getElementById('hintPill');
   const busyPill = document.getElementById('busyPill');
-  const gridToggleBtn = document.getElementById('gridToggleBtn');
+  const topbarMoreBtn = document.getElementById('topbarMoreBtn');
+  const topbarMoreMenu = document.getElementById('topbarMoreMenu');
+  const gridToggleMenuBtn = document.getElementById('gridToggleMenuBtn');
+  const gridToggleMenuLabel = document.getElementById('gridToggleMenuLabel');
+  const saveTemplateMenuBtn = document.getElementById('saveTemplateMenuBtn');
+  const templateDrawer = document.getElementById('templateDrawer');
+  const templateDrawerOverlay = document.getElementById('templateDrawerOverlay');
+  const templateDrawerCloseBtn = document.getElementById('templateDrawerCloseBtn');
+  const templateNameInput = document.getElementById('templateNameInput');
+  const templateTagsInput = document.getElementById('templateTagsInput');
+  const templateSaveBtn = document.getElementById('templateSaveBtn');
   const addToolbar = document.getElementById('addToolbar');
   const addToolbarCollapseBtn = document.getElementById('addToolbarCollapseBtn');
   const addToolbarRevealBtn = document.getElementById('addToolbarRevealBtn');
@@ -135,14 +145,66 @@
   let gridVisible = localStorage.getItem(GRID_VISIBLE_KEY) !== '0';
   function applyGridVisibility() {
     viewportEl.classList.toggle('grid-hidden', !gridVisible);
-    gridToggleBtn.classList.toggle('is-active', gridVisible);
+    gridToggleMenuLabel.textContent = gridVisible ? 'Masquer la grille' : 'Afficher la grille';
   }
-  gridToggleBtn.addEventListener('click', () => {
+  applyGridVisibility();
+
+  // ---------- Menu "…" de la barre du haut (grille, enregistrer en tant que template) ----------
+  function closeTopbarMoreMenu() { topbarMoreMenu.classList.remove('is-open'); }
+  topbarMoreBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    const wasOpen = topbarMoreMenu.classList.contains('is-open');
+    closeTopbarMoreMenu();
+    if (wasOpen) return;
+    topbarMoreMenu.classList.add('is-open');
+    const r = topbarMoreBtn.getBoundingClientRect();
+    const mRect = topbarMoreMenu.getBoundingClientRect();
+    topbarMoreMenu.style.left = `${clamp(r.right - mRect.width, 8, window.innerWidth - mRect.width - 8)}px`;
+    topbarMoreMenu.style.top = `${r.bottom + 8}px`;
+  });
+  document.addEventListener('pointerdown', (e) => {
+    if (!topbarMoreMenu.contains(e.target) && e.target !== topbarMoreBtn && !topbarMoreBtn.contains(e.target)) closeTopbarMoreMenu();
+  });
+
+  gridToggleMenuBtn.addEventListener('click', () => {
     gridVisible = !gridVisible;
     try { localStorage.setItem(GRID_VISIBLE_KEY, gridVisible ? '1' : '0'); } catch (_) {}
     applyGridVisibility();
+    closeTopbarMoreMenu();
   });
-  applyGridVisibility();
+
+  function openTemplateDrawer() {
+    templateNameInput.value = '';
+    templateTagsInput.value = '';
+    templateDrawer.classList.add('is-open');
+    templateDrawerOverlay.classList.add('is-open');
+    setTimeout(() => templateNameInput.focus(), 50);
+  }
+  function closeTemplateDrawer() {
+    templateDrawer.classList.remove('is-open');
+    templateDrawerOverlay.classList.remove('is-open');
+  }
+  saveTemplateMenuBtn.addEventListener('click', () => { closeTopbarMoreMenu(); openTemplateDrawer(); });
+  templateDrawerCloseBtn.addEventListener('click', closeTemplateDrawer);
+  templateDrawerOverlay.addEventListener('click', closeTemplateDrawer);
+
+  // Capture TOUT le contenu actuel du tableau (cf. snapshotForCreate, même forme que pour copier/
+  // coller) — verrouillage et votes/commentaires ne sont jamais repris (snapshotForCreate ne les
+  // transporte déjà pas) : un template est un point de départ propre, pas un clone exact de l'activité.
+  templateSaveBtn.addEventListener('click', () => {
+    const name = templateNameInput.value.trim();
+    if (!name) { alert('Merci de donner un titre au template.'); return; }
+    const data = [...elements.values()].map(en => snapshotForCreate(en.data));
+    if (!data.length) { alert('Le tableau est vide.'); return; }
+    const tags = templateTagsInput.value.split(',').map(t => t.trim()).filter(Boolean);
+    withBusy(Api.createTemplate({ name, tags, data }))
+      .then(() => {
+        const original = templateSaveBtn.textContent;
+        templateSaveBtn.textContent = 'Enregistré !';
+        setTimeout(() => { templateSaveBtn.textContent = original; closeTemplateDrawer(); }, 900);
+      })
+      .catch(err => alert(err.message));
+  });
 
   // ---------- Indicateur "en cours" ----------
   // Une action groupée (annuler la suppression de nombreux éléments, coller une grosse sélection)
@@ -418,17 +480,22 @@
         { type: 'rectangle', variant: 'ellipse', label: 'Rond', icon: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="8"/></svg>' },
       ],
     },
-    blocks: {
-      kind: 'items',
-      items: [
-        { type: 'instruction', label: 'Consigne', icon: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="7" cy="7" r="4"/><path d="M6 5.5h2v3"/><line x1="4" y1="16" x2="20" y2="16"/><line x1="4" y1="20" x2="15" y2="20"/></svg>' },
-        { type: 'tip', label: 'Tips', icon: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18h6"/><path d="M10 21h4"/><path d="M12 3a6 6 0 0 0-3.6 10.8c.5.4.8 1 .8 1.7v.5h5.6v-.5c0-.7.3-1.3.8-1.7A6 6 0 0 0 12 3z"/></svg>' },
-      ],
-    },
     notecolors: { kind: 'colors' },
     textstyles: { kind: 'textstyles' },
     uploads: { kind: 'uploads' },
+    templates: { kind: 'templates' },
   };
+
+  // Consigne/Tips sont désormais considérés comme des "templates" (les deux premiers de la liste,
+  // toujours présents) — mais restent posés comme AVANT (un seul élément 'instruction'/'tip' créé
+  // directement, cf. placeNewElement), pas via le mécanisme de snapshots des VRAIS templates
+  // enregistrés (qui eux viennent du serveur, cf. kind:'templates' dans renderFlyoutContent).
+  const BUILTIN_TEMPLATE_ITEMS = [
+    { type: 'instruction', label: 'Consigne', icon: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="7" cy="7" r="4"/><path d="M6 5.5h2v3"/><line x1="4" y1="16" x2="20" y2="16"/><line x1="4" y1="20" x2="15" y2="20"/></svg>' },
+    { type: 'tip', label: 'Tips', icon: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18h6"/><path d="M10 21h4"/><path d="M12 3a6 6 0 0 0-3.6 10.8c.5.4.8 1 .8 1.7v.5h5.6v-.5c0-.7.3-1.3.8-1.7A6 6 0 0 0 12 3z"/></svg>' },
+  ];
+  // Icône générique pour un template enregistré par un utilisateur (pas de vignette par template).
+  const ICON_TEMPLATE_GENERIC = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg>';
 
   function viewportCenterWorld() {
     const rect = viewportEl.getBoundingClientRect();
@@ -482,7 +549,8 @@
     const r = viewportEl.getBoundingClientRect();
     const { x: wx, y: wy } = screenToWorld(ev.clientX - r.left, ev.clientY - r.top);
     disarmPlacement();
-    placeNewElement(type, wx, wy, { ...options, variant });
+    if (type === 'template') placeTemplateSnapshots(options.snapshots, wx, wy);
+    else placeNewElement(type, wx, wy, { ...options, variant });
   }
 
   function armPlacement(type, iconHtml, { variant = null, options = {}, sourceBtn = null, x = null, y = null } = {}) {
@@ -575,6 +643,61 @@
         closeAddFlyout();
         const { x: wx, y: wy } = viewportCenterWorld();
         startPdfImport(wx, wy);
+      });
+    } else if (cfg.kind === 'templates') {
+      // Consigne/Tips (codés en dur, posés comme un simple élément — cf. BUILTIN_TEMPLATE_ITEMS) sont
+      // toujours affichés en premier, avant même la fin du chargement des VRAIS templates.
+      addFlyout.innerHTML = BUILTIN_TEMPLATE_ITEMS.map((it, i) => `
+        <button type="button" class="add-flyout-item" data-builtin="${i}">
+          <span class="add-flyout-item-icon">${it.icon}</span>
+          <span class="add-flyout-item-label">${it.label}</span>
+        </button>
+      `).join('') + '<div class="add-flyout-loading">Chargement…</div>';
+      addFlyout.querySelectorAll('[data-builtin]').forEach((btn, i) => {
+        btn.addEventListener('click', (e) => {
+          const it = BUILTIN_TEMPLATE_ITEMS[i];
+          armPlacement(it.type, it.icon, { sourceBtn, x: e.clientX, y: e.clientY });
+        });
+      });
+      Api.listTemplates().then((templates) => {
+        addFlyout.querySelector('.add-flyout-loading')?.remove();
+        if (!templates.length) {
+          addFlyout.insertAdjacentHTML('beforeend', '<div class="add-flyout-empty">Aucun template enregistré pour l’instant</div>');
+        } else {
+          templates.forEach((t) => {
+            const row = document.createElement('button');
+            row.type = 'button';
+            row.className = 'add-flyout-item';
+            row.innerHTML = `
+              <span class="add-flyout-item-icon">${ICON_TEMPLATE_GENERIC}</span>
+              <span class="add-flyout-item-template-text">
+                <span class="add-flyout-item-label">${escapeHtml(t.name)}</span>
+                ${t.tags.length ? `<span class="add-flyout-item-tags">${t.tags.map(escapeHtml).join(' · ')}</span>` : ''}
+              </span>
+            `;
+            // Le contenu complet (les snapshots) n'est récupéré qu'au clic sur CE template précis, pas
+            // pour toute la liste à l'ouverture du menu (cf. GET .../templates/:id côté serveur).
+            row.addEventListener('click', (e) => {
+              const cx = e.clientX, cy = e.clientY;
+              row.disabled = true;
+              Api.getTemplate(t.id)
+                .then((full) => armPlacement('template', ICON_TEMPLATE_GENERIC, { options: { snapshots: full.data }, sourceBtn, x: cx, y: cy }))
+                .catch(err => alert(err.message))
+                .finally(() => { row.disabled = false; });
+            });
+            addFlyout.appendChild(row);
+          });
+        }
+        // Le menu a grandi après son premier positionnement (cf. openAddFlyout, calculé avant la fin de
+        // ce chargement) : on le recale s'il est toujours ouvert, pour ne pas déborder de l'écran.
+        if (addFlyout.dataset.for === 'templates' && addFlyout.classList.contains('is-open')) {
+          const r = sourceBtn.getBoundingClientRect();
+          const fRect = addFlyout.getBoundingClientRect();
+          addFlyout.style.top = `${clamp(r.top + r.height / 2 - fRect.height / 2, 8, window.innerHeight - fRect.height - 8)}px`;
+        }
+      }).catch(() => {
+        const loading = addFlyout.querySelector('.add-flyout-loading');
+        if (loading) loading.textContent = 'Erreur de chargement.';
       });
     }
   }
@@ -943,6 +1066,29 @@
     const offset = clipboard.map(s => ({ ...s, x: s.x + delta, y: s.y + delta }));
     withBusy(recreateElements(offset)).then((created) => {
       clearMultiSelection();
+      if (created.length > 1) setMultiSelection(created.map(d => d.id));
+      else if (created.length === 1) selectElement(created[0].id);
+      recordUndo(() => Promise.all(created.map((data) => {
+        removeElementLocal(data.id);
+        return Api.deleteElement(data.id).catch(() => {});
+      })));
+    }).catch(err => alert(err.message));
+  }
+
+  // Pose d'un template (cf. barre "ajouter" → Templates) : même mécanique que coller (recreateElements
+  // sur des snapshots), mais le décalage vise à centrer la boîte englobante de TOUT le lot sur le point
+  // cliqué plutôt que d'ajouter un delta cumulatif — un template se pose là où on clique, pas "à côté
+  // d'où il était", contrairement à un copier-coller classique.
+  function placeTemplateSnapshots(snapshots, wx, wy) {
+    if (!snapshots || !snapshots.length) return;
+    const minX = Math.min(...snapshots.map(s => s.x));
+    const minY = Math.min(...snapshots.map(s => s.y));
+    const maxX = Math.max(...snapshots.map(s => s.x + s.width));
+    const maxY = Math.max(...snapshots.map(s => s.y + s.height));
+    const { x: snapX, y: snapY } = snapPoint(wx - (maxX - minX) / 2, wy - (maxY - minY) / 2);
+    const dx = snapX - minX, dy = snapY - minY;
+    const offset = snapshots.map(s => ({ ...s, x: s.x + dx, y: s.y + dy }));
+    withBusy(recreateElements(offset)).then((created) => {
       if (created.length > 1) setMultiSelection(created.map(d => d.id));
       else if (created.length === 1) selectElement(created[0].id);
       recordUndo(() => Promise.all(created.map((data) => {
