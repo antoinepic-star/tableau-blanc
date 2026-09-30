@@ -77,7 +77,7 @@ async function tursoBatch(stmts, mode) {
   return turso.batch(stmts, mode);
 }
 
-const ELEMENT_COLORS = ['#FFF176', '#F8BBD0', '#90CAF9', '#A5D6A7', '#FFCC80', '#CE93D8'];
+const ELEMENT_COLORS = ['#FEEEBB', '#C2EBF7', '#A9F3D5', '#FDD5E7', '#FFD7B8', '#DECCFA', '#131114', '#D8D8D8', '#F8F8F8'];
 
 // Valeurs par défaut à la création, selon le type d'élément — voir ELEMENT_TYPES côté client
 // (public/js/board.js) pour le détail des interactions propres à chaque type.
