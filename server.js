@@ -728,6 +728,10 @@ async function applyFrameArrangement(whiteboardId, frameId) {
     let rowHeight = 0;
     let placedInRow = 0;
 
+    // Un UPDATE par enfant, mais tous dans UN SEUL aller-retour (turso.batch) plutôt qu'attendu un par
+    // un en séquence : c'est ce qui rendait le réordonnancement d'une mosaïque PDF (60+ pages) visible-
+    // ment lent (chaque awaited tursoRun payait sa propre latence réseau, l'une après l'autre).
+    const stmts = [];
     for (const c of children) {
       if (placedInRow > 0 && (cursorX + c.width) > maxX) {
         cursorY += rowHeight + padding;
@@ -737,14 +741,15 @@ async function applyFrameArrangement(whiteboardId, frameId) {
       }
       const x = frame.x + cursorX;
       const y = frame.y + cursorY;
-      await tursoRun('UPDATE whiteboard_elements SET x = ?, y = ?, updated_at = unixepoch() WHERE id = ?', [x, y, c.id]);
+      stmts.push({ sql: 'UPDATE whiteboard_elements SET x = ?, y = ?, updated_at = unixepoch() WHERE id = ?', args: [x, y, c.id] });
       touchedIds.push(c.id);
       cursorX += c.width + padding;
       rowHeight = Math.max(rowHeight, c.height);
       placedInRow++;
     }
     const newHeight = Math.max(FRAME_MIN_HEIGHT, cursorY + rowHeight + padding);
-    await tursoRun('UPDATE whiteboard_elements SET height = ?, updated_at = unixepoch() WHERE id = ?', [newHeight, frameId]);
+    stmts.push({ sql: 'UPDATE whiteboard_elements SET height = ?, updated_at = unixepoch() WHERE id = ?', args: [newHeight, frameId] });
+    await tursoBatch(stmts, 'write');
   }
 
   const placeholders = touchedIds.map(() => '?').join(',');

@@ -34,6 +34,12 @@
   // damment de la limite du serveur) plutôt que de compter sur une seule requête géante pour tout le
   // PDF, qui grossirait sans limite avec le nombre de pages.
   const PDF_BATCH_CHUNK = 25;
+  // Reflète le même calcul que côté serveur (cf. FRAME_TITLE_HEIGHT/FRAME_MIN_HEIGHT dans server.js) —
+  // utilisé uniquement pour l'aperçu live pendant le redimensionnement d'une mosaïque (cf.
+  // liveReflowMosaic), jamais persisté directement : le serveur reste la seule source de vérité, ce
+  // calcul ne fait qu'éviter d'attendre sa réponse pour voir les colonnes bouger.
+  const FRAME_TITLE_HEIGHT = 40;
+  const FRAME_MIN_HEIGHT = 100;
   const ZOOM_MIN = 0.2;
   const ZOOM_MAX = 2.5;
   const TEXT_PAD_X_RATIO = 0.55;
@@ -3570,6 +3576,38 @@
     }
   }
 
+  // Reflow visuel immédiat (DOM seulement, rien envoyé au serveur) d'une frame "mosaïque PDF" pendant
+  // qu'on la redimensionne, pour voir les colonnes s'ajouter/se supprimer en direct plutôt que d'attendre
+  // la réponse du serveur au relâchement (cf. wireCornerResize). Même algorithme que applyFrameArrange
+  // ment côté serveur (padding, ordre de lecture, retour à la ligne) : au relâchement, sa réponse
+  // authentique ne devrait donc produire aucun saut visible, juste confirmer ce qui est déjà affiché.
+  // `children` doit être dans l'ordre de lecture, figé une fois pour toutes au début du geste (cf.
+  // resizeState.mosaicChildren) — le recalculer à chaque frame d'après une position qu'on vient tout
+  // juste de réécrire ferait flotter l'ordre au lieu de le garder stable.
+  function liveReflowMosaic(frameEntry, children, newWidth) {
+    const padding = PDF_MOSAIC_PADDING;
+    const maxX = Math.max(newWidth - padding, padding + 40);
+    let cursorX = padding, cursorY = FRAME_TITLE_HEIGHT + padding, rowHeight = 0, placedInRow = 0;
+    children.forEach((child) => {
+      if (placedInRow > 0 && (cursorX + child.data.width) > maxX) {
+        cursorY += rowHeight + padding;
+        cursorX = padding;
+        rowHeight = 0;
+        placedInRow = 0;
+      }
+      const x = frameEntry.data.x + cursorX;
+      const y = frameEntry.data.y + cursorY;
+      child.data.x = x;
+      child.data.y = y;
+      child.el.style.left = `${x}px`;
+      child.el.style.top = `${y}px`;
+      cursorX += child.data.width + padding;
+      rowHeight = Math.max(rowHeight, child.data.height);
+      placedInRow++;
+    });
+    return Math.max(FRAME_MIN_HEIGHT, cursorY + rowHeight + padding);
+  }
+
   function wireCornerResize(entry) {
     const handle = entry.el.querySelector('.element-resize-handle');
     if (!handle) return;
@@ -3580,10 +3618,18 @@
       if (entry.cropping || entry.data.locked) return;
       e.stopPropagation();
       selectElement(entry.data.id);
+      const isMosaic = entry.data.type === 'frame' && entry.data.tag === 'pdf-mosaic';
       resizeState = {
         startScreen: { x: e.clientX, y: e.clientY },
         startSize: { w: entry.data.width, h: entry.data.height },
         pointerId: e.pointerId,
+        isMosaic,
+        // Ordre de lecture figé une fois pour toutes au début du geste (cf. liveReflowMosaic) — le
+        // recalculer à chaque frame d'après une position qu'on vient tout juste de réécrire ferait
+        // flotter l'ordre au lieu de le garder stable.
+        mosaicChildren: isMosaic
+          ? frameChildren(entry.data.id).map(id => elements.get(id)).filter(Boolean).sort((a, b) => a.data.y - b.data.y || a.data.x - b.data.x)
+          : null,
       };
       handle.setPointerCapture(e.pointerId);
     });
@@ -3600,6 +3646,12 @@
         const ratio = resizeState.startSize.w / resizeState.startSize.h;
         newH = newW / ratio;
         if (newH < MIN_H) { newH = MIN_H; newW = newH * ratio; }
+      } else if (resizeState.isMosaic) {
+        // La largeur seule pilote le geste ; la hauteur est toujours DÉRIVÉE du contenu (jamais du
+        // glisser vertical, cf. liveReflowMosaic plus bas) — le serveur l'écrase de toute façon au
+        // relâchement (applyFrameArrangement), autant éviter que la frame tiraille entre la hauteur
+        // glissée et celle que la mosaïque impose réellement.
+        if (!e.altKey) newW = Math.max(MIN_W, snapToGrid(entry.data.x + newW) - entry.data.x);
       } else {
         newH = Math.max(MIN_H, resizeState.startSize.h + dyScreen / zoom);
         // Accroche à la grille aussi en taille (pas seulement en position) — pas pour une image
@@ -3614,12 +3666,17 @@
         }
       }
       entry.data.width = newW;
-      entry.data.height = newH;
       entry.el.style.width = `${newW}px`;
+      // Reflow visuel immédiat des pages (cf. liveReflowMosaic) : la hauteur de la frame vient de là,
+      // pas du glisser vertical (cf. ci-dessus) — colonnes qui s'ajoutent/se suppriment en direct,
+      // plutôt que de découvrir la disposition finale seulement à la réponse du serveur.
+      if (resizeState.isMosaic) newH = liveReflowMosaic(entry, resizeState.mosaicChildren, newW);
+      entry.data.height = newH;
       entry.el.style.height = `${newH}px`;
       syncNoteTextareaHeight(entry);
       repositionToolbar(entry);
       updateConnectorsFor(entry.data.id);
+      if (resizeState.isMosaic) resizeState.mosaicChildren.forEach(c => updateConnectorsFor(c.data.id));
       const now = Date.now();
       if (now - (entry._lastLive || 0) > 40) {
         entry._lastLive = now;
@@ -3631,10 +3688,11 @@
       if (!resizeState) return;
       handle.releasePointerCapture(resizeState.pointerId);
       const before = resizeState.startSize;
+      const isMosaic = resizeState.isMosaic;
       resizeState = null;
       entry.el.classList.remove('is-resizing');
       Api.cancelLiveElement(entry.data.id);
-      Api.updateElement(entry.data.id, { width: entry.data.width, height: entry.data.height, bringToFront: true })
+      const patched = Api.updateElement(entry.data.id, { width: entry.data.width, height: entry.data.height, bringToFront: true })
         .then((data) => {
           entry.resizing = false;
           applyRemoteUpdate(data);
@@ -3642,6 +3700,11 @@
           recordUndo(() => Api.updateElement(id, { width: before.w, height: before.h }).then(applyRemoteUpdate).catch(() => {}));
         })
         .catch(() => { entry.resizing = false; });
+      // Filet de sécurité pour une mosaïque PDF : l'aperçu live montre déjà la bonne disposition
+      // pendant le geste, mais la confirmation du serveur (qui redistribue aussi le contenu, cf.
+      // applyFrameArrangement) peut prendre un instant sur une connexion lente — l'indicateur "en
+      // cours" existant (cf. withBusy) couvre ce cas sans qu'il faille un indicateur dédié.
+      if (isMosaic) withBusy(patched);
     });
   }
 
