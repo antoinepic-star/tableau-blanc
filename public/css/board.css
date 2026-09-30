@@ -507,6 +507,29 @@ body.is-linking .element:not(.is-locked) .connector-anchor { display: block; }
 .tip-rich:empty::before { content: attr(data-placeholder); color: var(--text-muted); }
 .tip-rich a { color: #1a56db; text-decoration: underline; }
 
+/* ---- Bloc "page web" (wireframe fixe + titre + description, cf. wireMultiFieldEditing) : ligne
+   plutôt que colonne (consigne/tips) — wireframe à gauche, contenu à droite. ---- */
+.element[data-type="webpage"] {
+  display: flex; flex-direction: row; gap: 16px; padding: 16px;
+  border-radius: 10px; box-shadow: 0 1px 3px rgba(20,20,30,0.12);
+  cursor: grab;
+}
+.element[data-type="webpage"].is-dragging, .element[data-type="webpage"].is-resizing { cursor: grabbing; }
+.webpage-wireframe {
+  flex: none; width: 150px; height: 100px; border-radius: 6px; overflow: hidden;
+  border: 1px solid #c9c4b8; background: #fff;
+}
+.webpage-content { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 6px; }
+.webpage-title { font-weight: 700; font-size: 15px; line-height: 1.35; padding: 0; overflow: hidden; }
+.webpage-desc {
+  font-size: 13px; line-height: 1.5; color: var(--text-muted); overflow-wrap: break-word; min-height: 1.5em;
+}
+.webpage-desc:empty::before { content: attr(data-placeholder); color: var(--text-muted); }
+.webpage-desc a { color: #1a56db; text-decoration: underline; }
+/* Libellés plus longs ("Fiche produit", "Landing Page") que les tailles de police (cf.
+   .element-fontsize-select) — même contrôle, juste plus large pour ce cas précis. */
+.webpage-pagetype-select { width: 120px; }
+
 /* ---- Mini barre de mise en forme sur sélection de texte (bloc "tips", cf. board.js) ---- */
 .rich-text-toolbar { gap: 2px; }
 

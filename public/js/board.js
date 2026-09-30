@@ -7,6 +7,9 @@
   function fontSizeOptionsHtml(current) {
     return FONT_SIZE_PRESETS.map(([label, s]) => `<option value="${s}"${Number(current) === s ? ' selected' : ''}>${label}</option>`).join('');
   }
+  function webpageTypeOptionsHtml(current) {
+    return WEBPAGE_TYPES.map(t => `<option value="${t.key}"${current === t.key ? ' selected' : ''}>${t.label}</option>`).join('');
+  }
   const LINE_THICKNESSES = [2, 4, 6, 10];
   const LINE_STYLES = [['solid', 'Continu'], ['dashed', 'Pointillés']];
   const STROKE_WIDTHS = [0, 1, 2, 4, 6];
@@ -46,7 +49,7 @@
   const TEXT_PAD_Y_RATIO = 0.35;
   const TEXT_LINE_HEIGHT_RATIO = 1.35;
   const TEXT_MIN_CONTENT_WIDTH = 30;
-  const BOX_TYPES = ['note', 'text', 'image', 'rectangle', 'frame', 'instruction', 'tip']; // types "boîte" (points d'ancrage pour les connecteurs)
+  const BOX_TYPES = ['note', 'text', 'image', 'rectangle', 'frame', 'instruction', 'tip', 'webpage']; // types "boîte" (points d'ancrage pour les connecteurs)
   const NOTE_DEFAULT_SIZE = 130; // post-it par défaut : carré, plus petit qu'avant (grandit ensuite avec le texte)
   const DRAG_Z_BOOST = 100000; // cf. startGroupDrag : conserve l'ordre relatif du groupe pendant le geste
   const GRID_SIZE = 10; // pas de la grille d'accrochage (glisser + flèches du clavier)
@@ -472,6 +475,80 @@
 
   const ADD_TOOLBAR_COLLAPSED_KEY = 'tb_add_toolbar_collapsed';
 
+  // Bloc "page web" (mini wireframe + titre + description, cf. plus bas dans le fichier pour son
+  // rendu/édition) : chaque type a son wireframe fixe, construit à partir de simples rectangles/traits/
+  // ronds (pas précis, juste illustratif — cf. la demande d'Antoine) — même contenu SVG utilisé en
+  // grand dans l'élément posé et en petit comme icône de son entrée dans le sous-menu (cf. wpSvg).
+  const WEBPAGE_TYPES = [
+    { key: 'accueil', label: 'Accueil' },
+    { key: 'connexion', label: 'Connexion' },
+    { key: 'liste', label: 'Liste' },
+    { key: 'fiche-produit', label: 'Fiche produit' },
+    { key: 'formulaire', label: 'Formulaire' },
+    { key: 'paiement', label: 'Paiement' },
+    { key: 'landing', label: 'Landing Page' },
+  ];
+  const WEBPAGE_INNER = {
+    accueil: `
+      <rect x="10" y="20" width="20" height="6" rx="1" fill="#d5d5dc"/>
+      <rect x="94" y="21" width="12" height="4" fill="#e6e6ea"/><rect x="110" y="21" width="12" height="4" fill="#e6e6ea"/><rect x="126" y="21" width="14" height="4" fill="#e6e6ea"/>
+      <rect x="10" y="32" width="130" height="26" rx="3" fill="#f0e4bd"/>
+      <rect x="10" y="66" width="36" height="22" rx="3" fill="#f2f2f5"/><rect x="52" y="66" width="36" height="22" rx="3" fill="#f2f2f5"/><rect x="94" y="66" width="36" height="22" rx="3" fill="#f2f2f5"/>
+      <circle cx="28" cy="74" r="4" fill="#E0A62B"/><circle cx="70" cy="74" r="4" fill="#E0A62B"/><circle cx="112" cy="74" r="4" fill="#E0A62B"/>
+    `,
+    connexion: `
+      <rect x="45" y="22" width="60" height="64" rx="4" fill="#f7f7f9" stroke="#e4e4ec"/>
+      <rect x="60" y="30" width="30" height="6" rx="1" fill="#d5d5dc"/>
+      <rect x="53" y="44" width="44" height="10" rx="2" fill="#fff" stroke="#ddd"/>
+      <rect x="53" y="58" width="44" height="10" rx="2" fill="#fff" stroke="#ddd"/>
+      <rect x="53" y="74" width="44" height="9" rx="3" fill="#E0A62B"/>
+    `,
+    liste: `
+      <rect x="10" y="20" width="14" height="14" rx="2" fill="#e6e6ea"/><rect x="30" y="21" width="80" height="5" fill="#d5d5dc"/><rect x="30" y="28" width="50" height="4" fill="#e6e6ea"/>
+      <rect x="10" y="38" width="14" height="14" rx="2" fill="#e6e6ea"/><rect x="30" y="39" width="80" height="5" fill="#d5d5dc"/><rect x="30" y="46" width="50" height="4" fill="#e6e6ea"/>
+      <rect x="10" y="56" width="14" height="14" rx="2" fill="#e6e6ea"/><rect x="30" y="57" width="80" height="5" fill="#d5d5dc"/><rect x="30" y="64" width="50" height="4" fill="#e6e6ea"/>
+      <rect x="10" y="74" width="14" height="14" rx="2" fill="#e6e6ea"/><rect x="30" y="75" width="80" height="5" fill="#d5d5dc"/><rect x="30" y="82" width="50" height="4" fill="#e6e6ea"/>
+    `,
+    'fiche-produit': `
+      <rect x="10" y="20" width="58" height="66" rx="3" fill="#e6e6ea"/>
+      <rect x="78" y="24" width="60" height="7" fill="#d5d5dc"/>
+      <rect x="78" y="38" width="30" height="6" fill="#E0A62B"/>
+      <rect x="78" y="52" width="60" height="4" fill="#e6e6ea"/><rect x="78" y="60" width="55" height="4" fill="#e6e6ea"/><rect x="78" y="68" width="40" height="4" fill="#e6e6ea"/>
+      <rect x="78" y="78" width="45" height="9" rx="3" fill="#E0A62B"/>
+    `,
+    formulaire: `
+      <rect x="10" y="20" width="30" height="4" fill="#d5d5dc"/><rect x="10" y="26" width="130" height="9" rx="2" fill="#fff" stroke="#ddd"/>
+      <rect x="10" y="40" width="30" height="4" fill="#d5d5dc"/><rect x="10" y="46" width="130" height="9" rx="2" fill="#fff" stroke="#ddd"/>
+      <rect x="10" y="60" width="25" height="4" fill="#d5d5dc"/><rect x="10" y="66" width="60" height="9" rx="2" fill="#fff" stroke="#ddd"/>
+      <rect x="80" y="60" width="25" height="4" fill="#d5d5dc"/><rect x="80" y="66" width="60" height="9" rx="2" fill="#fff" stroke="#ddd"/>
+      <rect x="10" y="82" width="40" height="9" rx="3" fill="#E0A62B"/>
+    `,
+    paiement: `
+      <rect x="10" y="20" width="60" height="14" rx="2" fill="#f2f2f5"/><rect x="18" y="24" width="30" height="4" fill="#d5d5dc"/>
+      <rect x="10" y="38" width="60" height="14" rx="2" fill="#f2f2f5"/><rect x="18" y="42" width="30" height="4" fill="#d5d5dc"/>
+      <rect x="10" y="56" width="60" height="14" rx="2" fill="#f2f2f5"/><rect x="18" y="60" width="30" height="4" fill="#d5d5dc"/>
+      <rect x="85" y="20" width="55" height="56" rx="3" fill="#f7f7f9" stroke="#e4e4ec"/>
+      <rect x="92" y="28" width="40" height="5" fill="#d5d5dc"/><rect x="92" y="40" width="40" height="4" fill="#e6e6ea"/><rect x="92" y="48" width="25" height="4" fill="#e6e6ea"/>
+      <rect x="92" y="62" width="40" height="9" rx="3" fill="#E0A62B"/>
+    `,
+    landing: `
+      <rect x="10" y="20" width="20" height="5" fill="#d5d5dc"/><rect x="110" y="20" width="12" height="5" fill="#e6e6ea"/><rect x="126" y="20" width="14" height="5" fill="#e6e6ea"/>
+      <rect x="35" y="34" width="80" height="8" fill="#d5d5dc"/>
+      <rect x="45" y="46" width="60" height="6" fill="#e6e6ea"/>
+      <rect x="60" y="58" width="30" height="10" rx="5" fill="#E0A62B"/>
+      <circle cx="55" cy="80" r="5" fill="#E0A62B" opacity="0.5"/><circle cx="75" cy="80" r="5" fill="#E0A62B"/><circle cx="95" cy="80" r="5" fill="#E0A62B" opacity="0.5"/>
+    `,
+  };
+  // `w`/`h` en nombre (px) ou "100%" — même contenu, juste une taille de rendu différente (icône du
+  // sous-menu vs illustration réelle dans l'élément posé, cf. .webpage-wireframe).
+  function wpSvg(key, w, h) {
+    return `<svg width="${w}" height="${h}" viewBox="0 0 150 100" xmlns="http://www.w3.org/2000/svg">
+      <rect width="150" height="14" fill="#eee"/>
+      <circle cx="9" cy="7" r="2" fill="#c9c4b8"/><circle cx="17" cy="7" r="2" fill="#c9c4b8"/><circle cx="25" cy="7" r="2" fill="#c9c4b8"/>
+      ${WEBPAGE_INNER[key] || ''}
+    </svg>`;
+  }
+
   const ADD_FLYOUTS = {
     shapes: {
       kind: 'items',
@@ -480,6 +557,10 @@
         { type: 'line', label: 'Trait', icon: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="5" y1="19" x2="19" y2="5"/></svg>' },
         { type: 'rectangle', variant: 'ellipse', label: 'Rond', icon: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="8"/></svg>' },
       ],
+    },
+    webpages: {
+      kind: 'items',
+      items: WEBPAGE_TYPES.map(t => ({ type: 'webpage', variant: t.key, label: t.label, icon: wpSvg(t.key, 22, 15) })),
     },
     notecolors: { kind: 'colors' },
     textstyles: { kind: 'textstyles' },
@@ -840,6 +921,14 @@
       // tips, cf. ELEMENT_DEFAULTS) — prête à taper le titre tout de suite, comme le texte libre.
       const { x, y } = snapPoint(wx - 140, wy - 85);
       createElementTracked({ type, x, y, width: 280, height: 170 })
+        .then((data) => { const entry = ensureRendered(data); entry.enterField?.('title'); })
+        .catch(err => alert(err.message));
+    } else if (type === 'webpage') {
+      // `variant` porte le type de page choisi dans le sous-menu (cf. ADD_FLYOUTS.webpages) — réutilise
+      // le champ `tag` (cf. ELEMENT_DEFAULTS.webpage côté serveur), pas un vrai tag affiché comme pour
+      // "tips", juste lequel des 7 wireframes fixes afficher.
+      const { x, y } = snapPoint(wx - 190, wy - 90);
+      createElementTracked({ type: 'webpage', x, y, width: 380, height: 180, tag: variant || 'accueil' })
         .then((data) => { const entry = ensureRendered(data); entry.enterField?.('title'); })
         .catch(err => alert(err.message));
     }
@@ -1616,6 +1705,12 @@
       // riche du bloc "tips" se met en forme via la mini barre qui apparaît sur sa sélection (cf.
       // richTextToolbarHtml), pas depuis cette barre d'action principale.
       controls = colorDropdownHtml('color', data.color, false, 'Couleur de fond');
+    } else if (data.type === 'webpage') {
+      // Le wireframe n'est pas un texte éditable : on change de type de page via ce sélecteur plutôt
+      // qu'en cliquant dessus (rien n'y est interactif) — la description se met en forme via la mini
+      // barre de sélection (cf. richTextToolbarHtml), pas depuis cette barre-ci.
+      controls = `<select class="element-fontsize-select webpage-pagetype-select" data-role="pagetype" title="Type de page">${webpageTypeOptionsHtml(data.tag)}</select>`
+        + colorDropdownHtml('color', data.color, false, 'Couleur de fond');
     }
     const sep = controls ? '<span class="element-toolbar-sep"></span>' : '';
     const voted = (data.votes || []).includes(myName);
@@ -2181,6 +2276,21 @@
       el.querySelector('.tip-tag').value = data.tag || '';
       el.querySelector('.tip-title').value = data.title || '';
       el.querySelector('.tip-rich').innerHTML = data.text || '';
+    } else if (data.type === 'webpage') {
+      // Wireframe fixe (illustratif, cf. WEBPAGE_INNER) à gauche, jamais édité — seuls titre et
+      // description (texte riche, comme "tips") le sont, à droite.
+      el.style.background = data.color;
+      el.innerHTML = `
+        <div class="webpage-wireframe">${wpSvg(data.tag || 'accueil', '100%', '100%')}</div>
+        <div class="webpage-content">
+          <textarea class="webpage-title block-field" placeholder="Titre…" maxlength="200" rows="1"></textarea>
+          <div class="webpage-desc block-field" contenteditable="true" data-placeholder="Description…"></div>
+        </div>
+        <div class="element-resize-handle"></div>
+        ${anchorsHtml}
+      `;
+      el.querySelector('.webpage-title').value = data.title || '';
+      el.querySelector('.webpage-desc').innerHTML = data.text || '';
     }
 
     layerEl.appendChild(el);
@@ -2206,6 +2316,11 @@
       entry.richEl = el.querySelector('.tip-rich');
       autoWidthTag(entry.tagEl);
       autoGrowTipBlock(entry);
+    }
+    if (data.type === 'webpage') {
+      entry.titleEl = el.querySelector('.webpage-title');
+      entry.richEl = el.querySelector('.webpage-desc');
+      autoGrowWebpageBlock(entry);
     }
     applyLockedState(entry);
     updateElementBadges(entry);
@@ -2418,6 +2533,17 @@
     autoGrowFlexBlock(entry);
   }
 
+  // Le wireframe (à gauche) garde toujours sa taille fixe (cf. .webpage-wireframe) : seule la colonne
+  // titre/description (à droite) grandit avec son contenu, et donc la hauteur globale du bloc avec
+  // elle si elle finit par dépasser la hauteur du wireframe — même mesure générique qu'ailleurs
+  // (autoGrowFlexBlock), la mise en page flex-ROW (au lieu de column pour consigne/tips) ne change
+  // rien à ce calcul : la hauteur naturelle du bloc suit de toute façon son enfant le plus haut.
+  function autoGrowWebpageBlock(entry) {
+    if (entry.data.type !== 'webpage' || !entry.titleEl) return;
+    autoGrowTextareaField(entry.titleEl);
+    autoGrowFlexBlock(entry);
+  }
+
   // Le tag ("Tips" par défaut) épouse la largeur de son texte plutôt que de remplir tout le bloc :
   // même technique de mesure que autoGrowTextareaField, sur l'axe horizontal (border-box, cf. board.css,
   // pour que la largeur posée corresponde exactement au scrollWidth mesuré, padding compris).
@@ -2478,6 +2604,7 @@
     const prevVotes = entry.data.votes;
     const prevCommentCount = entry.data.commentCount;
     const prevImageData = entry.data.imageData;
+    const prevWebpageTag = entry.data.tag;
     const isInteracting = entry.dragging || entry.resizing || entry.cropping;
     // Un écho distant (une réponse ou une diffusion en retard d'un AUTRE glisser encore en vol) ne
     // doit jamais écraser la position/taille/pile qu'un glisser LOCAL est en train de piloter, même
@@ -2556,6 +2683,15 @@
       if (document.activeElement !== entry.titleEl) entry.titleEl.value = data.title || '';
       if (document.activeElement !== entry.richEl) entry.richEl.innerHTML = data.text || '';
       autoGrowTipBlock(entry);
+    } else if (data.type === 'webpage') {
+      entry.el.style.background = data.color;
+      if (data.tag !== prevWebpageTag) {
+        const wireframeEl = entry.el.querySelector('.webpage-wireframe');
+        if (wireframeEl) wireframeEl.innerHTML = wpSvg(data.tag || 'accueil', '100%', '100%');
+      }
+      if (document.activeElement !== entry.titleEl) entry.titleEl.value = data.title || '';
+      if (document.activeElement !== entry.richEl) entry.richEl.innerHTML = data.text || '';
+      autoGrowWebpageBlock(entry);
     }
 
     updateConnectorsFor(data.id);
@@ -3031,13 +3167,27 @@
     const id = entry.data.id;
     const type = entry.data.type;
 
-    if (type === 'note' || type === 'text' || type === 'rectangle' || type === 'frame' || type === 'line' || type === 'connector' || type === 'instruction' || type === 'tip') {
+    if (type === 'note' || type === 'text' || type === 'rectangle' || type === 'frame' || type === 'line' || type === 'connector' || type === 'instruction' || type === 'tip' || type === 'webpage') {
       wireColorDropdown(entry, 'color', (color) => {
         entry.data.color = color;
         applyElementColor(entry);
         if (type === 'connector') applyConnectorCaps(entry);
         Api.updateElement(id, { color }).catch(err => alert(err.message));
       });
+    }
+
+    if (type === 'webpage') {
+      const pageTypeSelect = toolbarEl.querySelector('[data-role="pagetype"]');
+      if (pageTypeSelect) {
+        pageTypeSelect.addEventListener('pointerdown', e => e.stopPropagation());
+        pageTypeSelect.addEventListener('change', () => {
+          const key = pageTypeSelect.value;
+          entry.data.tag = key;
+          const wireframeEl = entry.el.querySelector('.webpage-wireframe');
+          if (wireframeEl) wireframeEl.innerHTML = wpSvg(key, '100%', '100%');
+          Api.updateElement(id, { tag: key }).catch(() => {});
+        });
+      }
     }
 
     if (type === 'line' || type === 'connector') {
@@ -3973,6 +4123,15 @@
       // Purement visuel (jamais persisté, cf. autoWidthTag) : pas un "autoGrow" au sens des autres
       // champs ci-dessus, qui persistent aussi width/height du bloc entier avec eux.
       if (entry.tagEl) entry.tagEl.addEventListener('input', () => autoWidthTag(entry.tagEl));
+    }
+    if (entry.data.type === 'webpage') {
+      // Pas de 3e champ pour le type de page (contrairement au numéro/tag de consigne/tips) : le
+      // wireframe n'est pas un texte éditable, il se change via le sélecteur du toolbar principal
+      // (cf. buildToolbarHtml, data-role="pagetype").
+      wireMultiFieldEditing(entry, [
+        { key: 'title', el: entry.titleEl, column: 'title', dataKey: 'title', autoGrow: autoGrowWebpageBlock },
+        { key: 'desc', el: entry.richEl, column: 'text', dataKey: 'text', rich: true, autoGrow: autoGrowWebpageBlock },
+      ], 'title');
     }
     wireConnectorAnchors(entry);
     wireBodyDrag(entry);

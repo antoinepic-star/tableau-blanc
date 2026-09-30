@@ -94,6 +94,10 @@ const ELEMENT_DEFAULTS = {
   instruction: { width: 280, height: 170, color: '#FFFFFF', number: '1', title: '' },
   // Même gris que le fond du tableau (cf. #canvasViewport dans board.css) par défaut.
   tip: { width: 280, height: 170, color: '#eef0f5', tag: 'Tips', title: '' },
+  // Bloc "page web" (mini wireframe + titre + description) : `tag` réutilisé pour stocker le TYPE de
+  // page (accueil/connexion/…, cf. WEBPAGE_TYPES dans board.js), qui choisit quel wireframe fixe
+  // afficher — pas un vrai tag affiché comme pour "tips".
+  webpage: { width: 380, height: 180, color: '#FFFFFF', tag: 'accueil', title: '' },
 };
 const ELEMENT_TYPES = Object.keys(ELEMENT_DEFAULTS);
 
@@ -624,7 +628,10 @@ app.post('/api/whiteboards/:whiteboardId/cursor', whiteboardAuth, (req, res) => 
 // TABLEAU : ÉLÉMENTS (post-it, trait, texte, image)
 // =====================
 
-const ELEMENT_LABELS = { note: 'post-it', line: 'trait', text: 'bloc de texte', image: 'image', rectangle: 'rectangle', connector: 'connecteur', frame: 'frame', instruction: 'bloc consigne', tip: 'bloc tips' };
+const ELEMENT_LABELS = { note: 'post-it', line: 'trait', text: 'bloc de texte', image: 'image', rectangle: 'rectangle', connector: 'connecteur', frame: 'frame', instruction: 'bloc consigne', tip: 'bloc tips', webpage: 'bloc page web' };
+// Types dont le champ "text" est du HTML riche (contenteditable) et doit donc être assaini avant
+// stockage — pas juste "tip" (cf. sanitizeRichText).
+const RICH_TEXT_TYPES = ['tip', 'webpage'];
 
 // Le corps du bloc "tips" est un texte riche (HTML) saisi via une mini barre flottante sur sélection
 // (cf. board.js) — contrairement à tous les autres types, dont le "text" brut n'est jamais interprété
@@ -896,7 +903,7 @@ app.post('/api/whiteboards/:whiteboardId/elements', whiteboardAuth, ah(async (re
   const values = [
     id, req.params.whiteboardId, type, x ?? 0, y ?? 0,
     width ?? defaults.width, height ?? defaults.height, rotation ?? 0,
-    color ?? defaults.color ?? '#1c1c28', type === 'tip' ? sanitizeRichText(text) : (text || ''), fontSize ?? defaults.fontSize ?? null,
+    color ?? defaults.color ?? '#1c1c28', RICH_TEXT_TYPES.includes(type) ? sanitizeRichText(text) : (text || ''), fontSize ?? defaults.fontSize ?? null,
     bold ? 1 : 0, italic ? 1 : 0, underline ? 1 : 0, strikethrough ? 1 : 0, imageData || null, grayscale ? 1 : 0,
     startCap || 'none', endCap || 'none', lineStyle || 'solid', backgroundColor || null,
     strokeWidth ?? defaults.strokeWidth ?? 0, strokeColor || defaults.strokeColor || null, radius ?? 0, groupId || null, locked ? 1 : 0,
@@ -994,7 +1001,7 @@ app.post('/api/whiteboards/:whiteboardId/elements/batch', whiteboardAuth, ah(asy
     const values = [
       id, req.params.whiteboardId, type, x ?? 0, y ?? 0,
       width ?? defaults.width, height ?? defaults.height, rotation ?? 0,
-      color ?? defaults.color ?? '#1c1c28', type === 'tip' ? sanitizeRichText(text) : (text || ''), fontSize ?? defaults.fontSize ?? null,
+      color ?? defaults.color ?? '#1c1c28', RICH_TEXT_TYPES.includes(type) ? sanitizeRichText(text) : (text || ''), fontSize ?? defaults.fontSize ?? null,
       bold ? 1 : 0, italic ? 1 : 0, underline ? 1 : 0, strikethrough ? 1 : 0, imageData || null, grayscale ? 1 : 0,
       startCap || 'none', endCap || 'none', lineStyle || 'solid', backgroundColor || null,
       strokeWidth ?? defaults.strokeWidth ?? 0, strokeColor || defaults.strokeColor || null, radius ?? 0, groupId || null, locked ? 1 : 0,
@@ -1092,7 +1099,7 @@ app.patch('/api/whiteboards/:whiteboardId/elements/:id', whiteboardAuth, ah(asyn
     height: height ?? existing.height,
     rotation: rotation ?? existing.rotation,
     color: color ?? existing.color,
-    text: text !== undefined ? (existing.type === 'tip' ? sanitizeRichText(text) : text) : existing.text,
+    text: text !== undefined ? (RICH_TEXT_TYPES.includes(existing.type) ? sanitizeRichText(text) : text) : existing.text,
     font_size: fontSize ?? existing.font_size,
     bold: bold != null ? (bold ? 1 : 0) : existing.bold,
     italic: italic != null ? (italic ? 1 : 0) : existing.italic,
