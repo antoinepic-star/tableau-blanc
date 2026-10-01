@@ -327,6 +327,23 @@
     try { await withBusy(fn()); } catch (_) { /* au pire l'annulation échoue silencieusement */ }
   }
 
+  // Pousse un cran d'annulation pour un ou plusieurs champs changés sur UN SEUL élément — le pattern
+  // le plus courant du toolbar (couleur, police, bordure, épaisseur de trait...) : un simple PATCH qui
+  // restaure exactement les valeurs d'avant, confirmé comme les autres (cf. applyRemoteUpdate).
+  function recordFieldUndo(id, beforePatch) {
+    recordUndo(() => Api.updateElement(id, beforePatch).then(applyRemoteUpdate).catch(() => {}));
+  }
+
+  // Même principe mais pour PLUSIEURS éléments à la fois (verrouillage/groupement d'un groupe entier) :
+  // chaque élément restaure SA PROPRE valeur d'avant (elles peuvent différer, ex. grouper des éléments
+  // venant de groupes différents), d'où `items` plutôt qu'une seule valeur appliquée à tous.
+  function recordMultiFieldUndo(items, column) {
+    if (!items.length) return;
+    recordUndo(() => Promise.all(items.map(({ id, before }) =>
+      Api.updateElement(id, { [column]: before }).then(applyRemoteUpdate).catch(() => {})
+    )));
+  }
+
   // ---------- Accrochage (grille + alignement sur les autres éléments) ----------
 
   function snapToGrid(v) { return Math.round(v / GRID_SIZE) * GRID_SIZE; }
@@ -2237,32 +2254,42 @@
     const isAlign = action === 'align-left' || action === 'align-right' || action === 'align-center';
     if (isAlign && !movable.length) return;
 
-    if (action === 'align-left') {
-      const minX = Math.min(...movable.map(en => en.data.x));
-      movable.forEach(en => moveElementTo(en, minX, en.data.y));
+    if (isAlign) {
+      // Positions d'avant capturées AVANT moveElementTo (qui mute en.data.x/y en place) — un seul cran
+      // d'annulation pour tout le lot, comme pour un glisser de groupe (cf. restoreMovedPositions).
+      const before = movable.map(en => ({ id: en.data.id, x: en.data.x, y: en.data.y }));
+      if (action === 'align-left') {
+        const minX = Math.min(...movable.map(en => en.data.x));
+        movable.forEach(en => moveElementTo(en, minX, en.data.y));
+      } else if (action === 'align-right') {
+        const maxRight = Math.max(...movable.map(en => en.data.x + en.data.width));
+        movable.forEach(en => moveElementTo(en, maxRight - en.data.width, en.data.y));
+      } else {
+        const minX = Math.min(...movable.map(en => en.data.x));
+        const maxRight = Math.max(...movable.map(en => en.data.x + en.data.width));
+        const centerX = (minX + maxRight) / 2;
+        movable.forEach(en => moveElementTo(en, centerX - en.data.width / 2, en.data.y));
+      }
       moveElementsBatch(movable);
-    } else if (action === 'align-right') {
-      const maxRight = Math.max(...movable.map(en => en.data.x + en.data.width));
-      movable.forEach(en => moveElementTo(en, maxRight - en.data.width, en.data.y));
-      moveElementsBatch(movable);
-    } else if (action === 'align-center') {
-      const minX = Math.min(...movable.map(en => en.data.x));
-      const maxRight = Math.max(...movable.map(en => en.data.x + en.data.width));
-      const centerX = (minX + maxRight) / 2;
-      movable.forEach(en => moveElementTo(en, centerX - en.data.width / 2, en.data.y));
-      moveElementsBatch(movable);
+      recordUndo(() => restoreMovedPositions(before));
     } else if (action === 'group') {
+      // Chaque élément restaure SON propre groupId d'avant (peut différer d'un élément à l'autre —
+      // ex. grouper un élément déjà dans un autre groupe avec un élément isolé).
+      const before = entries.map(en => ({ id: en.data.id, before: en.data.groupId || null }));
       const gid = randomId();
       entries.forEach((en) => {
         en.data.groupId = gid;
         Api.updateElement(en.data.id, { groupId: gid }).catch(() => {});
       });
+      recordMultiFieldUndo(before, 'groupId');
       showMultiToolbar();
     } else if (action === 'ungroup') {
+      const before = entries.map(en => ({ id: en.data.id, before: en.data.groupId || null }));
       entries.forEach((en) => {
         en.data.groupId = null;
         Api.updateElement(en.data.id, { groupId: null }).catch(() => {});
       });
+      recordMultiFieldUndo(before, 'groupId');
       showMultiToolbar();
     } else if (action === 'lock') {
       // Toujours verrouiller le(s) groupe(s) entier(s), même si la sélection (ex. rectangle de
@@ -2272,6 +2299,7 @@
         if (en.data.groupId) groupMembers(en.data.groupId).forEach(id => idsToLock.add(id));
         else idsToLock.add(en.data.id);
       });
+      const beforeLock = [...idsToLock].map(id => ({ id, before: elements.get(id)?.data.locked || false }));
       idsToLock.forEach((id) => {
         const en = elements.get(id);
         if (!en) return;
@@ -2279,6 +2307,7 @@
         applyLockedState(en);
         Api.updateElement(id, { locked: true }).catch(() => {});
       });
+      recordMultiFieldUndo(beforeLock, 'locked');
       clearMultiSelection();
       return;
     }
@@ -2374,6 +2403,7 @@
         // Déverrouille tout le groupe d'un coup (symétrique du verrouillage) — jamais un seul membre.
         // Une frame seule (pas groupée) ne déverrouille qu'elle-même, comme au verrouillage.
         const ids = entry.data.groupId ? groupMembers(entry.data.groupId) : [entry.data.id];
+        const before = ids.map(id => ({ id, before: elements.get(id)?.data.locked || false }));
         ids.forEach((id) => {
           const en = elements.get(id);
           if (!en) return;
@@ -2381,6 +2411,7 @@
           applyLockedState(en);
           Api.updateElement(id, { locked: false }).catch(() => {});
         });
+        recordMultiFieldUndo(before, 'locked');
         if (selectedElementId === entry.data.id) showToolbarFor(entry);
         return;
       }
@@ -3345,11 +3376,13 @@
       btn.addEventListener('pointerdown', e => e.stopPropagation());
       btn.addEventListener('click', () => {
         const key = btn.dataset.format;
+        const before = entry.data[key];
         entry.data[key] = !entry.data[key];
         btn.classList.toggle('is-active', entry.data[key]);
         applyStyle(entry);
         if (key === 'bold' || key === 'italic') autoGrow(entry);
         Api.updateElement(entry.data.id, { [key]: entry.data[key] }).catch(() => {});
+        recordFieldUndo(entry.data.id, { [key]: before });
       });
     });
   }
@@ -3365,22 +3398,26 @@
     popover.querySelectorAll('[data-align-h]').forEach((btn) => {
       btn.addEventListener('pointerdown', e => e.stopPropagation());
       btn.addEventListener('click', () => {
+        const before = entry.data.textAlign;
         entry.data.textAlign = btn.dataset.alignH;
         applyStyle(entry);
         popover.querySelectorAll('[data-align-h]').forEach(b => b.classList.remove('is-active'));
         btn.classList.add('is-active');
         trigger.innerHTML = hIcons[btn.dataset.alignH]();
         Api.updateElement(id, { textAlign: entry.data.textAlign }).catch(() => {});
+        if (before !== entry.data.textAlign) recordFieldUndo(id, { textAlign: before });
       });
     });
     popover.querySelectorAll('[data-align-v]').forEach((btn) => {
       btn.addEventListener('pointerdown', e => e.stopPropagation());
       btn.addEventListener('click', () => {
+        const before = entry.data.textValign;
         entry.data.textValign = btn.dataset.alignV;
         applyStyle(entry);
         popover.querySelectorAll('[data-align-v]').forEach(b => b.classList.remove('is-active'));
         btn.classList.add('is-active');
         Api.updateElement(id, { textValign: entry.data.textValign }).catch(() => {});
+        if (before !== entry.data.textValign) recordFieldUndo(id, { textValign: before });
       });
     });
   }
@@ -3402,6 +3439,7 @@
     });
     applyBtn.addEventListener('pointerdown', e => e.stopPropagation());
     applyBtn.addEventListener('click', () => {
+      const before = entry.data.link;
       const url = input.value.trim();
       entry.data.link = url || null;
       applyStyle(entry);
@@ -3409,9 +3447,11 @@
       removeBtn.hidden = !entry.data.link;
       popover.classList.remove('is-open');
       Api.updateElement(id, { link: entry.data.link }).catch(() => {});
+      if (before !== entry.data.link) recordFieldUndo(id, { link: before });
     });
     removeBtn.addEventListener('pointerdown', e => e.stopPropagation());
     removeBtn.addEventListener('click', () => {
+      const before = entry.data.link;
       input.value = '';
       entry.data.link = null;
       applyStyle(entry);
@@ -3419,6 +3459,7 @@
       removeBtn.hidden = true;
       popover.classList.remove('is-open');
       Api.updateElement(id, { link: null }).catch(() => {});
+      if (before !== null) recordFieldUndo(id, { link: before });
     });
   }
 
@@ -3433,42 +3474,50 @@
       popover.querySelectorAll('[data-radius]').forEach((btn) => {
         btn.addEventListener('pointerdown', e => e.stopPropagation());
         btn.addEventListener('click', () => {
+          const before = entry.data.radius;
           entry.data.radius = Number(btn.dataset.radius);
           applyRectangleStyle(entry);
           popover.querySelectorAll('[data-radius]').forEach(b => b.classList.remove('is-active'));
           btn.classList.add('is-active');
           Api.updateElement(id, { radius: entry.data.radius }).catch(() => {});
+          if (before !== entry.data.radius) recordFieldUndo(id, { radius: before });
         });
       });
     }
     popover.querySelectorAll('[data-strokewidth]').forEach((btn) => {
       btn.addEventListener('pointerdown', e => e.stopPropagation());
       btn.addEventListener('click', () => {
+        const before = entry.data.strokeWidth;
         entry.data.strokeWidth = Number(btn.dataset.strokewidth);
         applyRectangleStyle(entry);
         popover.querySelectorAll('[data-strokewidth]').forEach(b => b.classList.remove('is-active'));
         btn.classList.add('is-active');
         Api.updateElement(id, { strokeWidth: entry.data.strokeWidth }).catch(() => {});
+        if (before !== entry.data.strokeWidth) recordFieldUndo(id, { strokeWidth: before });
       });
     });
     popover.querySelectorAll('[data-linestyle]').forEach((btn) => {
       btn.addEventListener('pointerdown', e => e.stopPropagation());
       btn.addEventListener('click', () => {
+        const before = entry.data.lineStyle;
         entry.data.lineStyle = btn.dataset.linestyle;
         applyRectangleStyle(entry);
         popover.querySelectorAll('[data-linestyle]').forEach(b => b.classList.remove('is-active'));
         btn.classList.add('is-active');
         Api.updateElement(id, { lineStyle: entry.data.lineStyle }).catch(() => {});
+        if (before !== entry.data.lineStyle) recordFieldUndo(id, { lineStyle: before });
       });
     });
     popover.querySelectorAll('[data-strokecolor]').forEach((btn) => {
       btn.addEventListener('pointerdown', e => e.stopPropagation());
       btn.addEventListener('click', () => {
+        const before = entry.data.strokeColor;
         entry.data.strokeColor = btn.dataset.strokecolor;
         applyRectangleStyle(entry);
         popover.querySelectorAll('[data-strokecolor]').forEach(b => b.classList.remove('is-active'));
         btn.classList.add('is-active');
         Api.updateElement(id, { strokeColor: entry.data.strokeColor }).catch(() => {});
+        if (before !== entry.data.strokeColor) recordFieldUndo(id, { strokeColor: before });
       });
     });
   }
@@ -3483,6 +3532,7 @@
     popover.querySelectorAll('[data-thickness]').forEach((btn) => {
       btn.addEventListener('pointerdown', e => e.stopPropagation());
       btn.addEventListener('click', () => {
+        const beforeH = entry.data.height, beforeStyle = entry.data.lineStyle;
         const h = Number(btn.dataset.thickness);
         const style = btn.dataset.style;
         entry.data.height = h;
@@ -3497,6 +3547,7 @@
         preview.classList.toggle('is-dashed', style === 'dashed');
         Api.updateElement(id, { height: h, lineStyle: style }).catch(() => {});
         repositionToolbar(entry);
+        if (beforeH !== h || beforeStyle !== style) recordFieldUndo(id, { height: beforeH, lineStyle: beforeStyle });
       });
     });
   }
@@ -3544,6 +3595,7 @@
 
     if (type === 'note' || type === 'text' || type === 'rectangle' || type === 'frame' || type === 'line' || type === 'connector' || type === 'instruction' || type === 'tip' || type === 'webpage' || type === 'stack') {
       wireColorDropdown(entry, 'color', (color) => {
+        const before = entry.data.color;
         entry.data.color = color;
         applyElementColor(entry);
         if (type === 'connector') applyConnectorCaps(entry);
@@ -3551,6 +3603,7 @@
         // son bouton doit se désactiver visuellement, d'où ce rebuild plutôt qu'un patch DOM manuel.
         if (type === 'stack') refreshToolbarIfSelected(entry);
         Api.updateElement(id, { color }).catch(err => alert(err.message));
+        if (before !== color) recordFieldUndo(id, { color: before });
       });
     }
 
@@ -3559,9 +3612,11 @@
       if (authorBtn) {
         authorBtn.addEventListener('pointerdown', e => e.stopPropagation());
         authorBtn.addEventListener('click', () => {
+          const before = entry.data.grayscale;
           entry.data.grayscale = !entry.data.grayscale;
           authorBtn.classList.toggle('is-active', entry.data.grayscale);
           Api.updateElement(id, { grayscale: entry.data.grayscale }).catch(() => {});
+          recordFieldUndo(id, { grayscale: before });
         });
       }
     }
@@ -3571,11 +3626,13 @@
       if (pageTypeSelect) {
         pageTypeSelect.addEventListener('pointerdown', e => e.stopPropagation());
         pageTypeSelect.addEventListener('change', () => {
+          const before = entry.data.tag;
           const key = pageTypeSelect.value;
           entry.data.tag = key;
           const wireframeEl = entry.el.querySelector('.webpage-wireframe');
           if (wireframeEl) wireframeEl.innerHTML = wpSvg(key, '100%', '100%');
           Api.updateElement(id, { tag: key }).catch(() => {});
+          if (before !== key) recordFieldUndo(id, { tag: before });
         });
       }
     }
@@ -3589,20 +3646,24 @@
       if (startBtn) {
         startBtn.addEventListener('pointerdown', e => e.stopPropagation());
         startBtn.addEventListener('click', () => {
+          const before = entry.data.startCap;
           entry.data.startCap = entry.data.startCap === 'arrow' ? 'none' : 'arrow';
           startBtn.classList.toggle('is-active', entry.data.startCap === 'arrow');
           applyConnectorCaps(entry);
           Api.updateElement(id, { startCap: entry.data.startCap }).catch(() => {});
+          recordFieldUndo(id, { startCap: before });
         });
       }
       const endBtn = toolbarEl.querySelector('.element-arrow-end-btn');
       if (endBtn) {
         endBtn.addEventListener('pointerdown', e => e.stopPropagation());
         endBtn.addEventListener('click', () => {
+          const before = entry.data.endCap;
           entry.data.endCap = entry.data.endCap === 'arrow' ? 'none' : 'arrow';
           endBtn.classList.toggle('is-active', entry.data.endCap === 'arrow');
           applyConnectorCaps(entry);
           Api.updateElement(id, { endCap: entry.data.endCap }).catch(() => {});
+          recordFieldUndo(id, { endCap: before });
         });
       }
     }
@@ -3614,9 +3675,11 @@
 
     if (type === 'rectangle') {
       wireColorDropdown(entry, 'textcolor', (color) => {
+        const before = entry.data.textColor;
         entry.data.textColor = color;
         applyRectangleTextStyle(entry);
         Api.updateElement(id, { textColor: color }).catch(() => {});
+        if (before !== color) recordFieldUndo(id, { textColor: before });
       });
       wireFormatDropdown(entry); // conscient du type rectangle (cf. plus haut) : applyRectangleTextStyle, pas applyTextStyle
       wireAlignDropdown(entry, applyRectangleTextStyle);
@@ -3627,11 +3690,14 @@
       if (rectFontSizeSelect) {
         rectFontSizeSelect.addEventListener('pointerdown', e => e.stopPropagation());
         rectFontSizeSelect.addEventListener('change', () => {
+          const before = entry.data.fontSize;
+          const beforeW = entry.data.width, beforeH = entry.data.height;
           const size = Number(rectFontSizeSelect.value);
           entry.data.fontSize = size;
           applyRectangleTextStyle(entry);
           autoGrowRectangleTextarea(entry);
           Api.updateElement(id, { fontSize: size }).catch(() => {});
+          if (before !== size) recordFieldUndo(id, { fontSize: before, width: beforeW, height: beforeH });
         });
       }
     }
@@ -3639,18 +3705,22 @@
     if (type === 'frame') {
       wireBorderDropdown(entry, { withRadius: false });
       wireColorDropdown(entry, 'title', (color) => {
+        const before = entry.data.titleColor;
         entry.data.titleColor = color;
         applyFrameTitleStyle(entry);
         Api.updateElement(id, { titleColor: color }).catch(() => {});
+        if (before !== color) recordFieldUndo(id, { titleColor: before });
       });
       const titleFontSizeSelect = toolbarEl.querySelector('[data-role="title-fontsize"]');
       if (titleFontSizeSelect) {
         titleFontSizeSelect.addEventListener('pointerdown', e => e.stopPropagation());
         titleFontSizeSelect.addEventListener('change', () => {
+          const before = entry.data.fontSize;
           const size = Number(titleFontSizeSelect.value);
           entry.data.fontSize = size;
           applyFrameTitleStyle(entry);
           Api.updateElement(id, { fontSize: size }).catch(() => {});
+          if (before !== size) recordFieldUndo(id, { fontSize: before });
         });
       }
       const arrangeBtn = toolbarEl.querySelector('.element-arrange-btn');
@@ -3658,8 +3728,28 @@
         arrangeBtn.addEventListener('pointerdown', e => e.stopPropagation());
         arrangeBtn.addEventListener('click', () => {
           // Action ponctuelle (comme dupliquer) : range le contenu actuel une fois, sans laisser de
-          // mode actif — ajouter/déplacer un élément après coup ne redéclenche rien.
-          Api.arrangeFrame(id).then(({ elements: arranged }) => arranged.forEach(applyRemoteUpdate)).catch(() => {});
+          // mode actif — ajouter/déplacer un élément après coup ne redéclenche rien. Géométrie complète
+          // (pas seulement x/y) capturée avant : ranger peut aussi redimensionner le contenu — ET la
+          // frame elle-même (sa hauteur s'ajuste pour tout contenir, cf. applyFrameArrangement).
+          const childIds = frameChildren(id);
+          const beforeFrame = { x: entry.data.x, y: entry.data.y, width: entry.data.width, height: entry.data.height };
+          const before = childIds.map((cid) => {
+            const en = elements.get(cid);
+            return en ? { id: cid, x: en.data.x, y: en.data.y, width: en.data.width, height: en.data.height } : null;
+          }).filter(Boolean);
+          Api.arrangeFrame(id).then(({ elements: arranged }) => {
+            arranged.forEach(applyRemoteUpdate);
+            recordUndo(async () => {
+              // La frame D'ABORD (attendue), puis les enfants : sinon un enfant restauré à une position
+              // qui ne rentre plus dans la frame ENCORE rétrécie (cf. findContainingFrame côté serveur,
+              // basé sur la taille ACTUELLE) se retrouverait détaché par erreur (frameId recalculé à
+              // null) avant même que la frame n'ait retrouvé sa taille d'origine.
+              await Api.updateElement(id, beforeFrame).then(applyRemoteUpdate).catch(() => {});
+              await Promise.all(before.map(b =>
+                Api.updateElement(b.id, { x: b.x, y: b.y, width: b.width, height: b.height }).then(applyRemoteUpdate).catch(() => {})
+              ));
+            });
+          }).catch(() => {});
         });
       }
     }
@@ -3668,19 +3758,24 @@
       wireFormatDropdown(entry);
       wireLinkDropdown(entry, applyTextStyle);
       wireColorDropdown(entry, 'bg', (color) => {
+        const before = entry.data.backgroundColor;
         entry.data.backgroundColor = color;
         applyElementBackground(entry);
         Api.updateElement(id, { backgroundColor: color }).catch(() => {});
+        if (before !== color) recordFieldUndo(id, { backgroundColor: before });
       });
       const fontSizeSelect = toolbarEl.querySelector('[data-role="fontsize"]');
       if (fontSizeSelect) {
         fontSizeSelect.addEventListener('pointerdown', e => e.stopPropagation());
         fontSizeSelect.addEventListener('change', () => {
+          const before = entry.data.fontSize;
+          const beforeW = entry.data.width, beforeH = entry.data.height;
           const size = Number(fontSizeSelect.value);
           entry.data.fontSize = size;
           applyTextStyle(entry);
           applyTextAutoSize(entry);
           Api.updateElement(id, { fontSize: size, width: entry.data.width, height: entry.data.height }).catch(() => {});
+          if (before !== size) recordFieldUndo(id, { fontSize: before, width: beforeW, height: beforeH });
         });
       }
     }
@@ -3690,10 +3785,12 @@
       if (grayscaleBtn) {
         grayscaleBtn.addEventListener('pointerdown', e => e.stopPropagation());
         grayscaleBtn.addEventListener('click', () => {
+          const before = entry.data.grayscale;
           entry.data.grayscale = !entry.data.grayscale;
           grayscaleBtn.classList.toggle('is-active', entry.data.grayscale);
           applyImageFilters(entry);
           Api.updateElement(id, { grayscale: entry.data.grayscale }).catch(() => {});
+          recordFieldUndo(id, { grayscale: before });
         });
       }
       const cropBtn = toolbarEl.querySelector('.element-crop-btn');
@@ -3720,6 +3817,7 @@
         // qu'elle-même : ce qu'elle contient spatialement (frameChildren) n'est concerné que si c'est
         // aussi explicitement dans le même groupe qu'elle.
         const ids = entry.data.groupId ? groupMembers(entry.data.groupId) : [entry.data.id];
+        const before = ids.map(id => ({ id, before: elements.get(id)?.data.locked || false }));
         ids.forEach((id) => {
           const en = elements.get(id);
           if (!en) return;
@@ -3727,6 +3825,7 @@
           applyLockedState(en);
           Api.updateElement(id, { locked: true }).catch(() => {});
         });
+        recordMultiFieldUndo(before, 'locked');
         showToolbarFor(entry);
       });
     }
@@ -4993,6 +5092,7 @@
 
     const newX = entry.data.x + crop.left;
     const newY = entry.data.y + crop.top;
+    const before = { imageData: entry.data.imageData, width: entry.data.width, height: entry.data.height, x: entry.data.x, y: entry.data.y };
 
     entry.data.imageData = newImageData;
     entry.data.width = cropDisplayW;
@@ -5011,6 +5111,7 @@
     Api.updateElement(entry.data.id, {
       imageData: newImageData, width: cropDisplayW, height: cropDisplayH, x: newX, y: newY, bringToFront: true,
     }).then(applyRemoteUpdate).catch(err => alert(err.message));
+    recordFieldUndo(entry.data.id, before);
   }
 
   // ---------- Commentaires (drawer par élément) ----------
