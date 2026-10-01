@@ -407,16 +407,25 @@ body.is-linking .element:not(.is-locked) .connector-anchor { display: block; }
 }
 .element[data-type="line"].is-selected .element-line-handle { display: block; }
 
-/* ---- Connecteur (trait ancré à deux éléments, géométrie recalculée côté client) ---- */
-.element[data-type="connector"] {
-  cursor: pointer; transform-origin: 0% 50%; border-radius: 3px;
+/* ---- Connecteur (flèche courbe ancrée à deux éléments, rendu SVG, géométrie recalculée côté client) ---- */
+/* La boîte elle-même ne capte plus les clics (sa bbox englobe toute la courbe, avec du vide autour) :
+   seul .connector-hit (trait invisible plus épais que le trait visible) et les poignées les captent. */
+.element[data-type="connector"] { pointer-events: none; }
+.connector-svg { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; pointer-events: none; }
+.connector-hit { fill: none; stroke: transparent; stroke-width: 20; pointer-events: stroke; cursor: pointer; }
+.connector-line { pointer-events: none; }
+.connector-handles { position: absolute; inset: 0; pointer-events: none; }
+.connector-waypoint-handle, .connector-addpoint-handle {
+  position: absolute; width: 12px; height: 12px; margin: -6px 0 0 -6px;
+  border-radius: 50%; display: none; pointer-events: auto; cursor: grab;
 }
-.line-cap {
-  position: absolute; top: 50%; width: 28px; height: 28px; transform: translate(-50%, -50%);
-  display: flex; align-items: center; justify-content: center; pointer-events: none;
-}
-.line-cap-start { left: 0; }
-.line-cap-end { left: 100%; }
+.element.is-selected:not(.is-locked) .connector-waypoint-handle,
+.element.is-selected:not(.is-locked) .connector-addpoint-handle { display: block; }
+.connector-waypoint-handle { background: #fff; border: 2px solid var(--purple); }
+/* Poignée "ajouter" : plus petite/discrète qu'un vrai point de passage — un simple repère de "glisse ici
+   pour créer un point", pas encore une donnée persistée tant qu'on ne l'a pas bougée. */
+.connector-addpoint-handle { width: 9px; height: 9px; margin: -4.5px 0 0 -4.5px; background: var(--purple); opacity: 0.4; }
+.connector-addpoint-handle:hover { opacity: 0.8; }
 
 /* ---- Texte ---- */
 .element[data-type="text"] { cursor: grab; }

@@ -1331,7 +1331,17 @@
     // individuel par élément : ça garde leurs positions relatives exactement intactes (important pour
     // une frame collée avec son contenu) tout en restant sur la grille si l'original y était déjà.
     const delta = GRID_SIZE * 2 * pasteCount;
-    const offset = clipboard.map(s => ({ ...s, x: s.x + delta, y: s.y + delta }));
+    // `text` d'un connecteur porte ses points de passage en coordonnées monde (cf. renderConnectorGeometry) :
+    // à décaler du même delta que x/y, MAIS seulement si ses DEUX extrémités sont elles-mêmes dans ce
+    // copier-coller (donc remappées vers leurs propres copies par recreateElements, et donc décalées
+    // d'autant) — sinon (connecteur copié seul, extrémités d'origine inchangées), décaler le waypoint
+    // produirait une courbe qui ne correspond plus à ses propres ancres.
+    const copiedSourceIds = new Set(clipboard.map(s => s._sourceId).filter(Boolean));
+    const offset = clipboard.map(s => ({
+      ...s, x: s.x + delta, y: s.y + delta,
+      text: (s.type === 'connector' && copiedSourceIds.has(s.fromElementId) && copiedSourceIds.has(s.toElementId))
+        ? offsetConnectorWaypoints(s.text, delta, delta) : s.text,
+    }));
     withBusy(recreateElements(offset)).then((created) => {
       clearMultiSelection();
       if (created.length > 1) setMultiSelection(created.map(d => d.id));
@@ -2467,8 +2477,20 @@
       el.style.transform = `rotate(${data.rotation}deg)`;
       el.innerHTML = `<div class="element-line-handle"></div>`;
     } else if (data.type === 'connector') {
-      el.style.transform = `rotate(${data.rotation}deg)`;
-      el.innerHTML = `<div class="line-cap line-cap-start"></div><div class="line-cap line-cap-end"></div>`;
+      // Rendu en SVG (pas un div tourné comme "line") : seul moyen d'avoir une courbe, une pointe de
+      // flèche posée exactement au bord (marker SVG) et une zone de clic plus large que le trait
+      // visible (cf. renderConnectorGeometry/applyLineStyle/applyConnectorCaps plus bas).
+      el.innerHTML = `
+        <svg class="connector-svg">
+          <defs>
+            <marker class="connector-marker connector-marker-start" id="conn-marker-start-${data.id}" markerUnits="userSpaceOnUse" orient="auto-start-reverse"><polygon points="0,0 0,0 0,0"/></marker>
+            <marker class="connector-marker connector-marker-end" id="conn-marker-end-${data.id}" markerUnits="userSpaceOnUse" orient="auto"><polygon points="0,0 0,0 0,0"/></marker>
+          </defs>
+          <path class="connector-hit"></path>
+          <path class="connector-line" fill="none"></path>
+        </svg>
+        <div class="connector-handles"></div>
+      `;
     } else if (data.type === 'text') {
       el.innerHTML = `
         <textarea class="element-text" placeholder="Texte…" maxlength="4000"></textarea>
@@ -2951,34 +2973,59 @@
     t.style.width = `${t.scrollWidth + rightPad}px`;
   }
 
-  // Trait/connecteur continu = simple aplat de couleur ; pointillés = dégradé répété le long de la
-  // longueur (l'élément est une barre pivotée, donc "vers la droite" correspond toujours à sa longueur).
+  // Trait libre ("line") : continu = simple aplat de couleur ; pointillés = dégradé répété le long de
+  // la longueur (l'élément est une barre pivotée, donc "vers la droite" correspond toujours à sa
+  // longueur). Connecteur : le trait est un <path> SVG (cf. renderConnectorGeometry), pas le fond du
+  // div — on pose couleur/épaisseur/pointillés comme attributs du path plutôt que comme background.
   function applyLineStyle(entry) {
     if (entry.data.type !== 'line' && entry.data.type !== 'connector') return;
     const { color, height } = entry.data;
+    if (entry.data.type === 'line') {
+      if (entry.data.lineStyle === 'dashed') {
+        const dash = Math.max(6, height * 2.2);
+        const gap = Math.max(5, height * 1.6);
+        entry.el.style.background = `repeating-linear-gradient(to right, ${color} 0, ${color} ${dash}px, transparent ${dash}px, transparent ${dash + gap}px)`;
+      } else {
+        entry.el.style.background = color;
+      }
+      return;
+    }
+    const linePath = entry.el.querySelector('.connector-line');
+    if (!linePath) return;
+    linePath.setAttribute('stroke', color);
+    linePath.setAttribute('stroke-width', height);
     if (entry.data.lineStyle === 'dashed') {
       const dash = Math.max(6, height * 2.2);
       const gap = Math.max(5, height * 1.6);
-      entry.el.style.background = `repeating-linear-gradient(to right, ${color} 0, ${color} ${dash}px, transparent ${dash}px, transparent ${dash + gap}px)`;
+      linePath.setAttribute('stroke-dasharray', `${dash} ${gap}`);
     } else {
-      entry.el.style.background = color;
+      linePath.removeAttribute('stroke-dasharray');
     }
   }
 
-  // pointLeft=true pour l'extrémité de départ : la pointe doit rentrer VERS l'élément d'origine (donc
-  // vers la gauche, dans l'espace local du connecteur), pas repartir dans le sens du trait.
-  function capArrowHtml(color, thickness, pointLeft) {
-    const s = clamp(thickness * 2.4, 10, 20);
-    const points = pointLeft ? `${s + 4},0 0,${s / 2} ${s + 4},${s}` : `0,0 ${s + 4},${s / 2} 0,${s}`;
-    return `<svg width="${s + 4}" height="${s}" viewBox="0 0 ${s + 4} ${s}"><polygon points="${points}" fill="${color}"/></svg>`;
-  }
-
+  // Pointes de flèche : des <marker> SVG (pas un positionnement pixel manuel) — leur refX pose la
+  // pointe exactement sur le dernier point du path, donc toujours pile au bord de l'élément visé, sans
+  // jamais déborder dedans ni s'arrêter avant (cf. renderElement pour leur définition initiale, vide).
   function applyConnectorCaps(entry) {
     if (entry.data.type !== 'connector') return;
-    const startEl = entry.el.querySelector('.line-cap-start');
-    const endEl = entry.el.querySelector('.line-cap-end');
-    if (startEl) startEl.innerHTML = entry.data.startCap === 'arrow' ? capArrowHtml(entry.data.color, entry.data.height, true) : '';
-    if (endEl) endEl.innerHTML = entry.data.endCap === 'arrow' ? capArrowHtml(entry.data.color, entry.data.height, false) : '';
+    const linePath = entry.el.querySelector('.connector-line');
+    if (!linePath) return;
+    const s = clamp((entry.data.height || 2) * 2.4, 10, 20);
+    [['start', entry.data.startCap], ['end', entry.data.endCap]].forEach(([which, cap]) => {
+      const marker = entry.el.querySelector(`.connector-marker-${which}`);
+      if (!marker) return;
+      marker.setAttribute('markerWidth', s);
+      marker.setAttribute('markerHeight', s);
+      marker.setAttribute('refX', s);
+      marker.setAttribute('refY', s / 2);
+      const polygon = marker.querySelector('polygon');
+      if (polygon) {
+        polygon.setAttribute('points', `0,0 ${s},${s / 2} 0,${s}`);
+        polygon.setAttribute('fill', entry.data.color);
+      }
+      if (cap === 'arrow') linePath.setAttribute(`marker-${which}`, `url(#conn-marker-${which}-${entry.data.id})`);
+      else linePath.removeAttribute(`marker-${which}`);
+    });
   }
 
   function applyRemoteUpdate(data) {
@@ -3145,21 +3192,141 @@
     return { x: d.x + d.width, y: d.y + d.height / 2 };
   }
 
+  // Points de passage d'un connecteur : stockés en JSON (coordonnées monde) dans `text`, colonne
+  // générique jamais utilisée par ce type — même logique de réutilisation que `tag`/`title` ailleurs
+  // dans ce projet (cf. plan). Absent/invalide → aucun point de passage (comportement d'avant).
+  function parseConnectorWaypoints(text) {
+    if (!text) return [];
+    try {
+      const arr = JSON.parse(text);
+      return Array.isArray(arr) ? arr.filter(p => p && typeof p.x === 'number' && typeof p.y === 'number') : [];
+    } catch (_) { return []; }
+  }
+
+  // Décale tous les points de passage d'un connecteur (duplicata/collage) du même delta que les
+  // éléments reliés — sans ça, la copie garde la courbe "d'origine" alors que ses ancres, elles, ont
+  // bougé : la forme paraît décalée par rapport à ses propres extrémités.
+  function offsetConnectorWaypoints(text, dx, dy) {
+    const wps = parseConnectorWaypoints(text);
+    if (!wps.length) return text;
+    return JSON.stringify(wps.map(p => ({ x: p.x + dx, y: p.y + dy })));
+  }
+
+  function connectorSideDir(side) {
+    if (side === 'top') return { x: 0, y: -1 };
+    if (side === 'bottom') return { x: 0, y: 1 };
+    if (side === 'left') return { x: -1, y: 0 };
+    return { x: 1, y: 0 };
+  }
+
+  // Tangente "de passage" en chaque point de la courbe : aux deux ancres, perpendiculaire au bord visé
+  // (sortante au départ, entrante à l'arrivée — d'où le signe opposé) ; à un point de passage
+  // intermédiaire, direction du point précédent vers le suivant (type Catmull-Rom) — assure une courbe
+  // lisse, sans angle, à travers ce point.
+  function connectorTangents(points, fromSide, toSide) {
+    const n = points.length;
+    return points.map((p, i) => {
+      if (i === 0) return connectorSideDir(fromSide);
+      if (i === n - 1) { const d = connectorSideDir(toSide); return { x: -d.x, y: -d.y }; }
+      const prev = points[i - 1], next = points[i + 1];
+      const dx = next.x - prev.x, dy = next.y - prev.y;
+      const len = Math.hypot(dx, dy) || 1;
+      return { x: dx / len, y: dy / len };
+    });
+  }
+
+  // Un segment de Bézier cubique par paire de points consécutifs, distance des points de contrôle
+  // proportionnelle à la longueur du segment (clampée) : dégénère en ligne quasi droite quand les deux
+  // tangentes sont déjà alignées avec le segment (ancres qui se font face), et produit le S-curve
+  // attendu sinon (cf. captures Miro).
+  function connectorSegments(points, tangents) {
+    const segs = [];
+    for (let i = 0; i < points.length - 1; i++) {
+      const p0 = points[i], p1 = points[i + 1];
+      const off = clamp(Math.hypot(p1.x - p0.x, p1.y - p0.y) * 0.5, 24, 160);
+      segs.push({
+        p0, p1,
+        c1: { x: p0.x + tangents[i].x * off, y: p0.y + tangents[i].y * off },
+        c2: { x: p1.x - tangents[i + 1].x * off, y: p1.y - tangents[i + 1].y * off },
+      });
+    }
+    return segs;
+  }
+
+  function connectorPathD(segs, origin) {
+    if (!segs.length) return '';
+    let d = `M ${segs[0].p0.x - origin.x} ${segs[0].p0.y - origin.y}`;
+    segs.forEach((s) => {
+      d += ` C ${s.c1.x - origin.x} ${s.c1.y - origin.y}, ${s.c2.x - origin.x} ${s.c2.y - origin.y}, ${s.p1.x - origin.x} ${s.p1.y - origin.y}`;
+    });
+    return d;
+  }
+
+  function bezierPointAt(s, t) {
+    const mt = 1 - t;
+    const a = mt * mt * mt, b = 3 * mt * mt * t, c = 3 * mt * t * t, e = t * t * t;
+    return {
+      x: a * s.p0.x + b * s.c1.x + c * s.c2.x + e * s.p1.x,
+      y: a * s.p0.y + b * s.c1.y + c * s.c2.y + e * s.p1.y,
+    };
+  }
+
+  // Reconstruit les poignées de points de passage à chaque recalcul de géométrie (coût négligeable,
+  // quelques divs) : une poignée "sommet" par point de passage EXISTANT (le glisser le repositionne),
+  // une poignée "ajouter" plus discrète au milieu paramétrique de CHAQUE segment (le glisser y insère
+  // un nouveau point, cf. wireConnectorHandles) — visibles seulement si le connecteur est sélectionné
+  // (cf. board.css, même mécanisme que .connector-anchor).
+  function renderConnectorHandles(entry, points, segs, origin) {
+    const container = entry.el.querySelector('.connector-handles');
+    if (!container) return;
+    let html = '';
+    segs.forEach((s, i) => {
+      const mid = bezierPointAt(s, 0.5);
+      html += `<div class="connector-addpoint-handle" data-kind="add" data-index="${i}" style="left:${mid.x - origin.x}px; top:${mid.y - origin.y}px"></div>`;
+    });
+    for (let i = 1; i < points.length - 1; i++) {
+      const p = points[i];
+      html += `<div class="connector-waypoint-handle" data-kind="vertex" data-index="${i - 1}" style="left:${p.x - origin.x}px; top:${p.y - origin.y}px"></div>`;
+    }
+    container.innerHTML = html;
+  }
+
   function renderConnectorGeometry(entry) {
     const from = connectorAnchorWorldPoint(entry.data.fromElementId, entry.data.fromSide);
     const to = connectorAnchorWorldPoint(entry.data.toElementId, entry.data.toSide);
     if (!from || !to) return;
-    const dx = to.x - from.x, dy = to.y - from.y;
-    const width = Math.max(2, Math.hypot(dx, dy));
-    const rotation = Math.atan2(dy, dx) * (180 / Math.PI);
-    entry.data.x = from.x;
-    entry.data.y = from.y;
+    const waypoints = parseConnectorWaypoints(entry.data.text);
+    const points = [from, ...waypoints, to];
+    const tangents = connectorTangents(points, entry.data.fromSide, entry.data.toSide);
+    const segs = connectorSegments(points, tangents);
+
+    const xs = [], ys = [];
+    segs.forEach(s => { [s.p0, s.c1, s.c2, s.p1].forEach(p => { xs.push(p.x); ys.push(p.y); }); });
+    const thickness = entry.data.height || 2;
+    const arrowSize = clamp(thickness * 2.4, 10, 20);
+    const pad = Math.max(20, arrowSize, thickness * 2);
+    const minX = Math.min(...xs) - pad, maxX = Math.max(...xs) + pad;
+    const minY = Math.min(...ys) - pad, maxY = Math.max(...ys) + pad;
+    const origin = { x: minX, y: minY };
+    const width = Math.max(1, maxX - minX), height = Math.max(1, maxY - minY);
+
+    entry.data.x = minX;
+    entry.data.y = minY;
     entry.data.width = width;
-    entry.data.rotation = rotation;
-    entry.el.style.left = `${from.x}px`;
-    entry.el.style.top = `${from.y}px`;
+    // entry.data.height reste l'épaisseur du trait (cf. applyLineStyle) : jamais réutilisé pour la
+    // hauteur de la boîte englobante, posée directement en CSS ci-dessous sans passer par data.
+    entry.el.style.left = `${minX}px`;
+    entry.el.style.top = `${minY}px`;
     entry.el.style.width = `${width}px`;
-    entry.el.style.transform = `rotate(${rotation}deg)`;
+    entry.el.style.height = `${height}px`;
+
+    const d = connectorPathD(segs, origin);
+    const hitPath = entry.el.querySelector('.connector-hit');
+    const linePath = entry.el.querySelector('.connector-line');
+    if (hitPath) hitPath.setAttribute('d', d);
+    if (linePath) linePath.setAttribute('d', d);
+
+    renderConnectorHandles(entry, points, segs, origin);
   }
 
   function anchorScreenPoint(entry, side) {
@@ -3258,6 +3425,10 @@
     const DUP_OFFSET = GRID_SIZE * 2;
     const payload = {
       type: d.type, x: d.x + DUP_OFFSET, y: d.y + DUP_OFFSET, width: d.width, height: d.height, rotation: d.rotation,
+      // Pas de décalage des points de passage ici (contrairement à pasteClipboard) : dupliquer UN
+      // connecteur seul garde ses extrémités SUR LES MÊMES éléments d'origine (fromElementId/toElementId
+      // ci-dessous, non remappés) — la copie doit donc garder la même courbe, pas une courbe décalée
+      // par rapport à des ancres qui, elles, n'ont pas bougé.
       color: d.color, text: d.text, fontSize: d.fontSize, bold: d.bold, italic: d.italic,
       underline: d.underline, strikethrough: d.strikethrough, imageData: d.imageData, grayscale: d.grayscale,
       lineStyle: d.lineStyle, backgroundColor: d.backgroundColor, strokeWidth: d.strokeWidth, strokeColor: d.strokeColor,
@@ -3543,9 +3714,12 @@
         const style = btn.dataset.style;
         entry.data.height = h;
         entry.data.lineStyle = style;
-        entry.el.style.height = `${h}px`;
         applyLineStyle(entry);
-        if (entry.data.type === 'connector') applyConnectorCaps(entry);
+        // "line" : la boîte EST le trait, sa hauteur CSS = l'épaisseur. "connector" : la boîte est la
+        // bbox englobante de la courbe (jamais l'épaisseur) — recalculer sa géométrie plutôt que
+        // d'écraser sa hauteur, puisque l'épaisseur influe aussi sur la marge/la taille des pointes.
+        if (entry.data.type === 'connector') { applyConnectorCaps(entry); renderConnectorGeometry(entry); }
+        else entry.el.style.height = `${h}px`;
         popover.querySelectorAll('[data-thickness]').forEach(b => b.classList.remove('is-active'));
         btn.classList.add('is-active');
         const preview = trigger.querySelector('.toolbar-thickness-preview');
@@ -4939,7 +5113,9 @@
   }
 
   function wireConnectorSelect(entry) {
-    entry.el.addEventListener('pointerdown', (e) => {
+    const hit = entry.el.querySelector('.connector-hit');
+    if (!hit) return;
+    hit.addEventListener('pointerdown', (e) => {
       e.stopPropagation();
       closeConfirmPopover();
       if (e.metaKey || e.ctrlKey) { toggleMultiSelect(entry.data.id); return; }
@@ -4947,8 +5123,64 @@
     });
   }
 
+  // Poignées de points de passage (cf. renderConnectorHandles) : déléguées sur le conteneur stable
+  // `.connector-handles` plutôt que posées sur chaque poignée individuellement, puisque leur DOM est
+  // entièrement reconstruit à chaque renderConnectorGeometry (y compris pendant CE glisser, pour
+  // prévisualiser en direct) — un listener posé sur la poignée elle-même serait perdu dès la première
+  // frame. Écoute `pointermove`/`pointerup` sur `window` pour la même raison (cf. startLinking/
+  // startGroupDrag), pas de setPointerCapture (sans objet, le nœud peut disparaître entre deux frames).
+  function wireConnectorHandles(entry) {
+    const container = entry.el.querySelector('.connector-handles');
+    if (!container) return;
+    container.addEventListener('pointerdown', (e) => {
+      if (entry.data.locked) return;
+      const handle = e.target.closest('.connector-waypoint-handle, .connector-addpoint-handle');
+      if (!handle) return;
+      e.stopPropagation();
+      const kind = handle.dataset.kind;
+      const index = Number(handle.dataset.index);
+      const beforeText = entry.data.text || '';
+      const working = parseConnectorWaypoints(beforeText);
+      let didInsert = false;
+      let moved = false;
+      const startScreen = { x: e.clientX, y: e.clientY };
+      entry.dragging = true;
+
+      function onMove(ev) {
+        const dxScreen = ev.clientX - startScreen.x, dyScreen = ev.clientY - startScreen.y;
+        if (!moved && (Math.abs(dxScreen) > 4 || Math.abs(dyScreen) > 4)) moved = true;
+        if (!moved) return;
+        const { x: sx, y: sy } = getViewportPoint(ev);
+        let { x: wx, y: wy } = screenToWorld(sx, sy);
+        if (!ev.altKey) { const snapped = snapPoint(wx, wy); wx = snapped.x; wy = snapped.y; }
+        if (kind === 'add' && !didInsert) {
+          working.splice(index, 0, { x: wx, y: wy });
+          didInsert = true;
+        } else {
+          working[index] = { x: wx, y: wy };
+        }
+        entry.data.text = JSON.stringify(working);
+        renderConnectorGeometry(entry);
+      }
+
+      function onUp() {
+        window.removeEventListener('pointermove', onMove);
+        window.removeEventListener('pointerup', onUp);
+        entry.dragging = false;
+        if (!moved) return;
+        const id = entry.data.id;
+        const finalText = entry.data.text;
+        Api.updateElement(id, { text: finalText }).then(applyRemoteUpdate).catch(() => {});
+        recordUndo(() => Api.updateElement(id, { text: beforeText }).then(applyRemoteUpdate).catch(() => {}));
+      }
+
+      window.addEventListener('pointermove', onMove);
+      window.addEventListener('pointerup', onUp);
+    });
+  }
+
   function wireElementInteractions(entry) {
-    if (entry.data.type === 'connector') { wireConnectorSelect(entry); return; }
+    if (entry.data.type === 'connector') { wireConnectorSelect(entry); wireConnectorHandles(entry); return; }
     if (entry.data.type === 'note' || entry.data.type === 'text' || entry.data.type === 'rectangle' || entry.data.type === 'frame' || entry.data.type === 'stack') wireTextEditing(entry);
     if (entry.data.type === 'instruction') {
       wireMultiFieldEditing(entry, [
