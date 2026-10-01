@@ -1810,14 +1810,20 @@
     `;
   }
 
+  function iconArrowCapStart() { return '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="19" y1="12" x2="5" y2="12"/><polyline points="11 6 5 12 11 18"/></svg>'; }
+  function iconArrowCapEnd() { return '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="13 6 19 12 13 18"/></svg>'; }
+  function iconTextLabel() { return '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 7 4 4 20 4 20 7"/><line x1="12" y1="4" x2="12" y2="20"/><line x1="9" y1="20" x2="15" y2="20"/></svg>'; }
+
   // Bouton "Style et épaisseur" du trait/connecteur : continu/pointillé + épaisseur, dans UN popover
   // (reste ouvert après un choix) — la couleur, elle, garde son propre bouton séparé (colorDropdownHtml),
-  // comme pour les autres types, plutôt que d'être regroupée ici.
-  function lineDropdownHtml(data) {
+  // comme pour les autres types, plutôt que d'être regroupée ici. Pour un connecteur, les pointes de
+  // flèche (début/fin) rejoignent ce MÊME popover (showCaps) plutôt que deux boutons séparés dans la
+  // barre — un seul bouton d'action pour "tout ce qui concerne le trait", comme demandé.
+  function lineDropdownHtml(data, { showCaps = false } = {}) {
     const currentStyle = data.lineStyle || 'solid';
     return `
       <div class="toolbar-dropdown" data-role="linestyle-wrap">
-        <button type="button" class="toolbar-dropdown-trigger" data-role="linestyle-trigger" title="Style et épaisseur">
+        <button type="button" class="toolbar-dropdown-trigger" data-role="linestyle-trigger" title="Style du trait">
           <span class="toolbar-thickness-preview${currentStyle === 'dashed' ? ' is-dashed' : ''}" style="height:${clamp(data.height, 2, 12)}px"></span>
         </button>
         <div class="toolbar-popover toolbar-thickness-popover" data-role="linestyle-popover">
@@ -1826,6 +1832,13 @@
               ${LINE_THICKNESSES.map(t => `<button type="button" class="toolbar-thickness-option${data.height === t && currentStyle === style ? ' is-active' : ''}" data-thickness="${t}" data-style="${style}" title="${label} ${t}px"><span class="toolbar-thickness-bar${style === 'dashed' ? ' is-dashed' : ''}" style="height:${t}px"></span></button>`).join('')}
             </div>
           `).join('')}
+          ${showCaps ? `
+            <div class="toolbar-popover-label">Pointes de flèche</div>
+            <div class="toolbar-thickness-row">
+              <button type="button" class="toolbar-thickness-option${data.startCap === 'arrow' ? ' is-active' : ''}" data-capside="start" title="Flèche au début">${iconArrowCapStart()}</button>
+              <button type="button" class="toolbar-thickness-option${data.endCap === 'arrow' ? ' is-active' : ''}" data-capside="end" title="Flèche à la fin">${iconArrowCapEnd()}</button>
+            </div>
+          ` : ''}
         </div>
       </div>
     `;
@@ -1896,16 +1909,19 @@
         + `<span class="element-toolbar-sep"></span>`
         + colorDropdownHtml('color', data.color, false, 'Couleur de fond');
     } else if (data.type === 'line' || data.type === 'connector') {
-      controls = colorDropdownHtml('color', data.color, false, 'Couleur') + lineDropdownHtml(data);
+      controls = colorDropdownHtml('color', data.color, false, 'Couleur') + lineDropdownHtml(data, { showCaps: data.type === 'connector' });
       if (data.type === 'connector') {
-        controls += `
-          <button type="button" class="element-icon-btn element-arrow-start-btn${data.startCap === 'arrow' ? ' is-active' : ''}" title="Flèche au début">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="19" y1="12" x2="5" y2="12"/><polyline points="11 6 5 12 11 18"/></svg>
-          </button>
-          <button type="button" class="element-icon-btn element-arrow-end-btn${data.endCap === 'arrow' ? ' is-active' : ''}" title="Flèche à la fin">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="13 6 19 12 13 18"/></svg>
-          </button>
-        `;
+        controls += `<button type="button" class="element-icon-btn element-connector-label-btn" title="${data.title ? 'Modifier le texte' : 'Ajouter du texte'}">${iconTextLabel()}</button>`;
+        // Taille/couleur du libellé : seulement une fois qu'il y en a un (ou qu'on est en train d'en
+        // écrire un, cf. wireConnectorLabel) — inutile tant qu'il n'y a rien à mettre en forme.
+        if (data.title) {
+          // Mêmes valeurs par défaut (15/#1c1c28) que renderConnectorLabel pour l'affichage réel : sans
+          // ce fallback, un libellé créé avant que l'utilisateur n'ait jamais ouvert ces contrôles (donc
+          // sans fontSize/textColor déjà persistés) montrerait une taille sélectionnée différente de
+          // celle réellement affichée sur le trait.
+          controls += `<select class="element-fontsize-select" data-role="connectorlabel-fontsize" title="Taille du texte">${fontSizeOptionsHtml(data.fontSize || 15)}</select>`
+            + colorDropdownHtml('connectorlabel-color', data.textColor || '#1c1c28', false, 'Couleur du texte');
+        }
       }
     } else if (data.type === 'text') {
       // Pas d'alignement ici : sa boîte épouse toujours exactement son contenu (cf.
@@ -2490,6 +2506,9 @@
           <path class="connector-line" fill="none"></path>
         </svg>
         <div class="connector-handles"></div>
+        <div class="connector-label is-hidden">
+          <textarea class="connector-label-text" rows="1" maxlength="200" placeholder="Texte…"></textarea>
+        </div>
       `;
     } else if (data.type === 'text') {
       el.innerHTML = `
@@ -3327,6 +3346,85 @@
     if (linePath) linePath.setAttribute('d', d);
 
     renderConnectorHandles(entry, points, segs, origin);
+    renderConnectorLabel(entry, segs, origin);
+  }
+
+  // Milieu du tracé complet par longueur d'arc (pas juste le milieu d'UN segment) : échantillonne
+  // chaque courbe de Bézier puis cherche le point à la moitié de la longueur cumulée — reste correct
+  // même avec plusieurs points de passage, où "le milieu" au sens visuel n'est pas forcément au
+  // milieu paramétrique d'un segment donné.
+  function connectorArcMidpoint(segs) {
+    const SAMPLES = 12;
+    const pts = [];
+    segs.forEach((s) => { for (let i = 0; i <= SAMPLES; i++) pts.push(bezierPointAt(s, i / SAMPLES)); });
+    const lens = [];
+    let total = 0;
+    for (let i = 1; i < pts.length; i++) {
+      const d = Math.hypot(pts[i].x - pts[i - 1].x, pts[i].y - pts[i - 1].y);
+      lens.push(d);
+      total += d;
+    }
+    const target = total / 2;
+    let acc = 0;
+    for (let i = 0; i < lens.length; i++) {
+      if (acc + lens[i] >= target) {
+        const t = lens[i] ? (target - acc) / lens[i] : 0;
+        return { x: pts[i].x + (pts[i + 1].x - pts[i].x) * t, y: pts[i].y + (pts[i + 1].y - pts[i].y) * t };
+      }
+      acc += lens[i];
+    }
+    return pts[pts.length - 1] || { x: 0, y: 0 };
+  }
+
+  // Libellé au milieu de la flèche (optionnel, cf. wireConnectorLabel) : affiché dès qu'il y a du texte
+  // OU qu'on est en train d'en écrire un (is-field-editing), repositionné à chaque recalcul de
+  // géométrie comme les poignées. Sa valeur n'est resynchronisée que hors édition (document.activeElement),
+  // même principe que les autres champs de ce projet, pour ne jamais écraser une frappe en cours.
+  function renderConnectorLabel(entry, segs, origin) {
+    const wrap = entry.el.querySelector('.connector-label');
+    const textarea = entry.el.querySelector('.connector-label-text');
+    if (!wrap || !textarea) return;
+    const editing = textarea.classList.contains('is-field-editing');
+    const show = !!(entry.data.title || editing);
+    wrap.classList.toggle('is-hidden', !show);
+    if (!show) return;
+    if (document.activeElement !== textarea) {
+      textarea.value = entry.data.title || '';
+      textarea.style.fontSize = `${entry.data.fontSize || 15}px`;
+      textarea.style.color = entry.data.textColor || '#1c1c28';
+      autoWidthTag(textarea);
+    }
+    const mid = connectorArcMidpoint(segs);
+    wrap.style.left = `${mid.x - origin.x}px`;
+    wrap.style.top = `${mid.y - origin.y}px`;
+  }
+
+  // Câblage du libellé optionnel d'un connecteur : un seul champ texte (reuse de wireMultiFieldEditing,
+  // qui donne gratuitement undo/dirty-check/is-field-editing) dans la colonne générique `title` — comme
+  // les points de passage dans `text`, aucune colonne dédiée n'est nécessaire.
+  function wireConnectorLabel(entry) {
+    const textarea = entry.el.querySelector('.connector-label-text');
+    if (!textarea) return;
+    wireMultiFieldEditing(entry, [{ key: 'label', el: textarea, column: 'title', dataKey: 'title' }], 'label');
+    // Clic natif sur un libellé déjà affiché (pas forcément passé par le bouton "Texte" de la barre) :
+    // le fait quand même entrer dans le circuit normal d'édition (sélection, undoBefore, etc.), sans
+    // perturber le focus natif qui vient de se produire (cf. entry.enterField, dont le focus() en rAF
+    // est un no-op silencieux sur un champ déjà actif).
+    textarea.addEventListener('focus', () => {
+      if (!textarea.classList.contains('is-field-editing')) entry.enterField('label');
+    });
+    textarea.addEventListener('input', () => {
+      autoWidthTag(textarea);
+      renderConnectorGeometry(entry); // la largeur du libellé a changé : son wrapper doit rester centré
+      refreshToolbarIfSelected(entry); // fait apparaître taille/couleur dès le premier caractère écrit
+    });
+    // Après wireMultiFieldEditing (câblé juste au-dessus) : son propre blur (saveField/stopField,
+    // synchrone pour un champ non riche) a déjà tout mis à jour quand celui-ci s'exécute à son tour —
+    // reste à cacher le libellé s'il est redevenu vide, et les contrôles taille/couleur avec lui.
+    textarea.addEventListener('blur', () => {
+      renderConnectorGeometry(entry);
+      refreshToolbarIfSelected(entry);
+    });
   }
 
   function anchorScreenPoint(entry, side) {
@@ -3730,6 +3828,21 @@
         if (beforeH !== h || beforeStyle !== style) recordFieldUndo(id, { height: beforeH, lineStyle: beforeStyle });
       });
     });
+    // Pointes de flèche (connecteur seulement, cf. showCaps dans lineDropdownHtml) : dans ce MÊME
+    // popover plutôt que deux boutons séparés dans la barre.
+    popover.querySelectorAll('[data-capside]').forEach((btn) => {
+      btn.addEventListener('pointerdown', e => e.stopPropagation());
+      btn.addEventListener('click', () => {
+        const side = btn.dataset.capside;
+        const column = side === 'start' ? 'startCap' : 'endCap';
+        const before = entry.data[column];
+        entry.data[column] = before === 'arrow' ? 'none' : 'arrow';
+        btn.classList.toggle('is-active', entry.data[column] === 'arrow');
+        applyConnectorCaps(entry);
+        Api.updateElement(id, { [column]: entry.data[column] }).catch(() => {});
+        recordFieldUndo(id, { [column]: before });
+      });
+    });
   }
 
   // Menu "⋮" (cf. moreMenuHtml) : généralisé à tous les types d'éléments.
@@ -3822,28 +3935,38 @@
     }
 
     if (type === 'connector') {
-      const startBtn = toolbarEl.querySelector('.element-arrow-start-btn');
-      if (startBtn) {
-        startBtn.addEventListener('pointerdown', e => e.stopPropagation());
-        startBtn.addEventListener('click', () => {
-          const before = entry.data.startCap;
-          entry.data.startCap = entry.data.startCap === 'arrow' ? 'none' : 'arrow';
-          startBtn.classList.toggle('is-active', entry.data.startCap === 'arrow');
-          applyConnectorCaps(entry);
-          Api.updateElement(id, { startCap: entry.data.startCap }).catch(() => {});
-          recordFieldUndo(id, { startCap: before });
+      const labelBtn = toolbarEl.querySelector('.element-connector-label-btn');
+      if (labelBtn) {
+        labelBtn.addEventListener('pointerdown', e => e.stopPropagation());
+        labelBtn.addEventListener('click', () => {
+          closeAllToolbarPopovers(); // le popover "style du trait" peut être resté ouvert à côté
+          // Valeurs par défaut posées ici (pas avant) : tant qu'il n'y a jamais eu de libellé, elles
+          // ne servent à rien et ne doivent pas polluer un connecteur resté sans texte.
+          if (!entry.data.fontSize) entry.data.fontSize = 15;
+          if (!entry.data.textColor) entry.data.textColor = '#1c1c28';
+          entry.enterField('label');
+          renderConnectorGeometry(entry); // affiche tout de suite le champ (vide) au milieu du trait
         });
       }
-      const endBtn = toolbarEl.querySelector('.element-arrow-end-btn');
-      if (endBtn) {
-        endBtn.addEventListener('pointerdown', e => e.stopPropagation());
-        endBtn.addEventListener('click', () => {
-          const before = entry.data.endCap;
-          entry.data.endCap = entry.data.endCap === 'arrow' ? 'none' : 'arrow';
-          endBtn.classList.toggle('is-active', entry.data.endCap === 'arrow');
-          applyConnectorCaps(entry);
-          Api.updateElement(id, { endCap: entry.data.endCap }).catch(() => {});
-          recordFieldUndo(id, { endCap: before });
+      if (entry.data.title) {
+        const fontsizeSelect = toolbarEl.querySelector('[data-role="connectorlabel-fontsize"]');
+        if (fontsizeSelect) {
+          fontsizeSelect.addEventListener('pointerdown', e => e.stopPropagation());
+          fontsizeSelect.addEventListener('change', () => {
+            const before = entry.data.fontSize;
+            const size = Number(fontsizeSelect.value);
+            entry.data.fontSize = size;
+            renderConnectorGeometry(entry);
+            Api.updateElement(id, { fontSize: size }).catch(() => {});
+            if (before !== size) recordFieldUndo(id, { fontSize: before });
+          });
+        }
+        wireColorDropdown(entry, 'connectorlabel-color', (color) => {
+          const before = entry.data.textColor;
+          entry.data.textColor = color;
+          renderConnectorGeometry(entry);
+          Api.updateElement(id, { textColor: color }).catch(() => {});
+          if (before !== color) recordFieldUndo(id, { textColor: before });
         });
       }
     }
@@ -5180,7 +5303,7 @@
   }
 
   function wireElementInteractions(entry) {
-    if (entry.data.type === 'connector') { wireConnectorSelect(entry); wireConnectorHandles(entry); return; }
+    if (entry.data.type === 'connector') { wireConnectorSelect(entry); wireConnectorHandles(entry); wireConnectorLabel(entry); return; }
     if (entry.data.type === 'note' || entry.data.type === 'text' || entry.data.type === 'rectangle' || entry.data.type === 'frame' || entry.data.type === 'stack') wireTextEditing(entry);
     if (entry.data.type === 'instruction') {
       wireMultiFieldEditing(entry, [
