@@ -206,5 +206,6 @@ const Api = (() => {
     listTemplates: () => request('GET', `${base}/templates`),
     getTemplate: (templateId) => request('GET', `${base}/templates/${templateId}`),
     createTemplate: (payload) => request('POST', `${base}/templates`, payload),
+    getHistory: () => request('GET', `${base}/history`),
   };
 })();

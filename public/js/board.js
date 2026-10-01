@@ -165,6 +165,12 @@
   const commentDrawerBody = document.getElementById('commentDrawerBody');
   const commentInput = document.getElementById('commentInput');
   const commentSendBtn = document.getElementById('commentSendBtn');
+  const historyBtn = document.getElementById('historyBtn');
+  const historyDot = document.getElementById('historyDot');
+  const historyDrawer = document.getElementById('historyDrawer');
+  const historyDrawerOverlay = document.getElementById('historyDrawerOverlay');
+  const historyDrawerCloseBtn = document.getElementById('historyDrawerCloseBtn');
+  const historyDrawerBody = document.getElementById('historyDrawerBody');
 
   const elements = new Map(); // id -> { data, el, textEl? }
   const connectorsByElementId = new Map(); // elementId -> Set<connectorId>
@@ -5191,6 +5197,7 @@
     activeCommentElementId = entry.data.id;
     renderedCommentIds.clear();
     commentDrawerBody.innerHTML = '<div class="comment-drawer-empty">Chargement…</div>';
+    closeHistoryDrawer();
     commentDrawer.classList.add('is-open');
     commentDrawerOverlay.classList.add('is-open');
     closeAllToolbarPopovers();
@@ -5231,6 +5238,76 @@
   commentInput.addEventListener('keydown', (e) => {
     if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendComment(); }
   });
+
+  // ---------- Historique (toutes les actions, tous les participants) ----------
+
+  const HISTORY_SEEN_KEY = `tb_history_seen_${Api.whiteboardId}`;
+  let historyOpen = false;
+
+  function renderHistoryItem(entry) {
+    const div = document.createElement('div');
+    div.className = 'comment-item';
+    div.dataset.historyId = entry.id;
+    const header = document.createElement('div');
+    header.className = 'comment-item-header';
+    const avatar = document.createElement('span');
+    avatar.className = 'comment-item-avatar';
+    avatar.style.background = '#8a8a9a';
+    avatar.textContent = (entry.actorName || '?').trim().slice(0, 1).toUpperCase();
+    const name = document.createElement('span');
+    name.className = 'comment-item-name';
+    name.textContent = entry.actorName;
+    const time = document.createElement('span');
+    time.className = 'comment-item-time';
+    time.textContent = formatRelativeTime(entry.createdAt);
+    header.append(avatar, name, time);
+    const text = document.createElement('div');
+    text.className = 'comment-item-text';
+    text.textContent = entry.action;
+    div.append(header, text);
+    return div;
+  }
+
+  function prependHistoryItem(entry) {
+    const empty = historyDrawerBody.querySelector('.comment-drawer-empty');
+    if (empty) empty.remove();
+    historyDrawerBody.insertBefore(renderHistoryItem(entry), historyDrawerBody.firstChild);
+  }
+
+  // La pastille "non lu" (cf. .history-dot dans board.css) disparaît dès l'ouverture du tiroir,
+  // qu'il y ait eu une nouvelle entrée ou non — pas besoin de retenir la date, juste l'état "vu".
+  function markHistorySeen() {
+    sessionStorage.setItem(HISTORY_SEEN_KEY, '1');
+    historyDot.classList.add('hidden');
+  }
+
+  function openHistoryDrawer() {
+    historyOpen = true;
+    closeCommentDrawer();
+    historyDrawer.classList.add('is-open');
+    historyDrawerOverlay.classList.add('is-open');
+    closeAllToolbarPopovers();
+    historyDrawerBody.innerHTML = '<div class="comment-drawer-empty">Chargement…</div>';
+    Api.getHistory().then((entries) => {
+      historyDrawerBody.innerHTML = entries.length ? '' : '<div class="comment-drawer-empty">Aucune activité pour le moment.</div>';
+      entries.forEach(e => historyDrawerBody.appendChild(renderHistoryItem(e)));
+    }).catch(() => {
+      historyDrawerBody.innerHTML = '<div class="comment-drawer-empty">Erreur de chargement.</div>';
+    });
+    markHistorySeen();
+  }
+
+  function closeHistoryDrawer() {
+    historyOpen = false;
+    historyDrawer.classList.remove('is-open');
+    historyDrawerOverlay.classList.remove('is-open');
+  }
+
+  historyBtn.addEventListener('click', () => {
+    if (historyDrawer.classList.contains('is-open')) closeHistoryDrawer(); else openHistoryDrawer();
+  });
+  historyDrawerCloseBtn.addEventListener('click', closeHistoryDrawer);
+  historyDrawerOverlay.addEventListener('click', closeHistoryDrawer);
 
   // ---------- Temps réel ----------
 
@@ -5278,6 +5355,11 @@
       updateElementBadges(entry);
     }
     if (activeCommentElementId === elementId) removeCommentFromDrawer(commentId);
+  });
+
+  Realtime.on('history:created', (entry) => {
+    if (historyOpen) { prependHistoryItem(entry); markHistorySeen(); }
+    else historyDot.classList.remove('hidden');
   });
 
   // ---------- Chargement initial ----------

@@ -187,6 +187,14 @@ async function initDb() {
       actor_name TEXT NOT NULL, actor_color TEXT, text TEXT NOT NULL,
       created_at INTEGER DEFAULT (unixepoch())
     )`,
+    // Historique visible DANS le tableau (bouton "Historique" de la barre du haut) — distinct
+    // d'activity_events (ci-dessus), qui alimente le fil d'actu agrégé de l'UX Dashboard sur tous les
+    // tableaux et n'est pas filtrable par tableau. Volontairement limité aux actions "complètes" et
+    // à fort signal (création, suppression) plutôt que chaque frappe/glisser — cf. board.js.
+    `CREATE TABLE IF NOT EXISTS whiteboard_history (
+      id TEXT PRIMARY KEY, whiteboard_id TEXT NOT NULL, actor_name TEXT NOT NULL,
+      action TEXT NOT NULL, created_at INTEGER DEFAULT (unixepoch())
+    )`,
     // Pas de whiteboard_id : un template est enregistré depuis un tableau mais commun à TOUS les
     // tableaux ensuite (cf. la barre "ajouter" du board, qui les propose à côté de Consigne/Tips).
     // `data` est le même tableau de snapshots que produit board.js pour coller/dupliquer (cf.
@@ -305,6 +313,21 @@ async function logActivity(eventType, actorName, clientName, projectName, detail
     'INSERT INTO activity_events (id, event_type, actor_name, client_name, project_name, detail) VALUES (?, ?, ?, ?, ?, ?)',
     [uuidv4(), eventType, actorName, clientName || null, projectName || null, detail || null]
   );
+}
+
+// Historique DANS le tableau (cf. whiteboard_history) — `action` est une phrase déjà construite
+// ("a ajouté un post-it"), pas un type+detail séparés comme activity_events : affichée telle quelle
+// côté client, bien plus simple qu'un re-formatage à l'affichage pour ce besoin précis.
+async function logBoardHistory(whiteboardId, actorName, action) {
+  const id = uuidv4();
+  await tursoRun(
+    'INSERT INTO whiteboard_history (id, whiteboard_id, actor_name, action) VALUES (?, ?, ?, ?)',
+    [id, whiteboardId, actorName, action]
+  );
+  const row = await tursoGet('SELECT * FROM whiteboard_history WHERE id = ?', [id]);
+  const entry = { id: row.id, actorName: row.actor_name, action: row.action, createdAt: row.created_at };
+  broadcast('history:created', entry, whiteboardId);
+  return entry;
 }
 
 function signSessionFor(user) {
@@ -644,6 +667,10 @@ app.post('/api/whiteboards/:whiteboardId/cursor', whiteboardAuth, (req, res) => 
 // =====================
 
 const ELEMENT_LABELS = { note: 'post-it', line: 'trait', text: 'bloc de texte', image: 'image', rectangle: 'rectangle', connector: 'connecteur', frame: 'frame', instruction: 'bloc consigne', tip: 'bloc tips', webpage: 'bloc page web', stack: 'pile de post-its', arbo: 'arborescence' };
+// Accord de l'article indéfini pour les phrases d'historique (cf. logBoardHistory) — "un post-it",
+// "une image" : un simple tableau plutôt qu'une détection automatique du genre, pas assez de types
+// pour que ça vaille la peine.
+const ELEMENT_ARTICLES = { note: 'un', line: 'un', text: 'un', image: 'une', rectangle: 'un', connector: 'un', frame: 'une', instruction: 'un', tip: 'un', webpage: 'un', stack: 'une', arbo: 'une' };
 // Types dont le champ "text" est du HTML riche (contenteditable) et doit donc être assaini avant
 // stockage — pas juste "tip" (cf. sanitizeRichText).
 const RICH_TEXT_TYPES = ['tip', 'webpage'];
@@ -961,6 +988,7 @@ app.post('/api/whiteboards/:whiteboardId/elements', whiteboardAuth, ah(async (re
   const element = parseElement(row);
   const whiteboard = await tursoGet('SELECT client_name, workshop_name FROM whiteboards WHERE id = ?', [req.params.whiteboardId]);
   await logActivity('element_created', req.user.name, whiteboard?.client_name, whiteboard?.workshop_name, `Nouveau ${ELEMENT_LABELS[type]}`);
+  await logBoardHistory(req.params.whiteboardId, req.user.name, `a ajouté ${ELEMENT_ARTICLES[type]} ${ELEMENT_LABELS[type]}`);
   await touchWhiteboard(req.params.whiteboardId);
   broadcast('element:created', element, req.params.whiteboardId);
   res.json(element);
@@ -1059,6 +1087,14 @@ app.post('/api/whiteboards/:whiteboardId/elements/batch', whiteboardAuth, ah(asy
     sql: 'INSERT INTO activity_events (id, event_type, actor_name, client_name, project_name, detail) VALUES (?, ?, ?, ?, ?, ?)',
     args: [uuidv4(), 'element_created', req.user.name, whiteboard?.client_name || null, whiteboard?.workshop_name || null, `${items.length} éléments créés`],
   });
+  // Une seule ligne d'historique pour tout le lot (collage/template/import PDF) — pas une par élément,
+  // ce serait illisible pour un collage de plusieurs dizaines d'éléments d'un coup.
+  const historyId = uuidv4();
+  const historyAction = items.length > 1 ? `a ajouté ${items.length} éléments` : `a ajouté ${ELEMENT_ARTICLES[items[0].type] || 'un'} ${ELEMENT_LABELS[items[0].type] || 'élément'}`;
+  stmts.push({
+    sql: 'INSERT INTO whiteboard_history (id, whiteboard_id, actor_name, action) VALUES (?, ?, ?, ?)',
+    args: [historyId, req.params.whiteboardId, req.user.name, historyAction],
+  });
   stmts.push({ sql: 'UPDATE whiteboards SET updated_at = unixepoch() WHERE id = ?', args: [req.params.whiteboardId] });
 
   await tursoBatch(stmts, 'write');
@@ -1069,6 +1105,7 @@ app.post('/api/whiteboards/:whiteboardId/elements/batch', whiteboardAuth, ah(asy
   const elements = createdIds.map(id => parseElement(rowById.get(id)));
 
   broadcast('elements:created', { elements }, req.params.whiteboardId);
+  broadcast('history:created', { id: historyId, actorName: req.user.name, action: historyAction, createdAt: Math.floor(Date.now() / 1000) }, req.params.whiteboardId);
   res.json({ elements });
 }));
 
@@ -1332,6 +1369,7 @@ app.delete('/api/whiteboards/:whiteboardId/elements/:id', whiteboardAuth, ah(asy
 
   const whiteboard = await tursoGet('SELECT client_name, workshop_name FROM whiteboards WHERE id = ?', [req.params.whiteboardId]);
   await logActivity('element_deleted', req.user.name, whiteboard?.client_name, whiteboard?.workshop_name, `${ELEMENT_LABELS[existing.type]} supprimé`);
+  await logBoardHistory(req.params.whiteboardId, req.user.name, `a supprimé ${ELEMENT_ARTICLES[existing.type]} ${ELEMENT_LABELS[existing.type]}`);
   await touchWhiteboard(req.params.whiteboardId);
   broadcast('element:deleted', { id: req.params.id }, req.params.whiteboardId);
   res.json({ ok: true });
@@ -1399,6 +1437,17 @@ app.delete('/api/whiteboards/:whiteboardId/elements/:elementId/comments/:comment
   await tursoRun('DELETE FROM whiteboard_comments WHERE id = ?', [req.params.commentId]);
   broadcast('element:comment-deleted', { elementId: req.params.elementId, commentId: req.params.commentId }, req.params.whiteboardId);
   res.json({ ok: true });
+}));
+
+// Historique DANS le tableau (cf. whiteboard_history/logBoardHistory) — pas de pagination, plafonné
+// comme ailleurs dans l'appli (cf. activity_events) : un tableau de travail n'accumule pas des
+// milliers d'actions, inutile de complexifier pour un volume qui ne se présentera pas en pratique.
+app.get('/api/whiteboards/:whiteboardId/history', whiteboardAuth, ah(async (req, res) => {
+  const rows = await tursoAll(
+    'SELECT * FROM whiteboard_history WHERE whiteboard_id = ? ORDER BY created_at DESC LIMIT 100',
+    [req.params.whiteboardId]
+  );
+  res.json(rows.map(r => ({ id: r.id, actorName: r.actor_name, action: r.action, createdAt: r.created_at })));
 }));
 
 // SPA routes
