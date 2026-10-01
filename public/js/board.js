@@ -65,6 +65,17 @@
     node.children.forEach((c) => { count += 1 + countArboDescendants(c); });
     return count;
   }
+
+  // Trouve le PARENT direct du nœud `id` (pour restaurer sa position exacte — index compris — à
+  // l'annulation d'une suppression, cf. showArboDeleteConfirm).
+  function findArboParent(tree, id) {
+    for (const child of tree.children) {
+      if (child.id === id) return tree;
+      const found = findArboParent(child, id);
+      if (found) return found;
+    }
+    return null;
+  }
   // Échelle nommée plutôt qu'un choix de tailles en pixels — mêmes valeurs que les tailles fixes du
   // bloc "consigne" pour "Sous-titre"/"Texte" (cf. .instruction-title/.instruction-desc dans board.css),
   // pour rester visuellement cohérent d'un bloc à l'autre.
@@ -1367,6 +1378,17 @@
     return t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable;
   }
 
+  // Un champ tout juste focus (simple clic qui sélectionne un post-it/bloc, cf. wireBodyDrag) n'a
+  // RIEN à annuler nativement — seul un champ où on a vraiment tapé quelque chose depuis (valeur
+  // différente de celle capturée à l'entrée en édition, cf. "undoBefore" posé par wireTextEditing/
+  // wireMultiFieldEditing/wireArboTree) doit faire retomber Cmd+Z sur l'undo natif du navigateur.
+  // Sinon Cmd+Z semblait ne "rien faire" après un simple clic sur un autre élément.
+  function isFieldDirty(t) {
+    if (t.dataset.undoBefore === undefined) return false;
+    const current = t.isContentEditable ? t.innerHTML : t.value;
+    return current !== t.dataset.undoBefore;
+  }
+
   document.addEventListener('keydown', (e) => {
     const mod = e.metaKey || e.ctrlKey;
 
@@ -1380,9 +1402,14 @@
       return;
     }
 
-    // Annuler : laisser le champ actif gérer son propre undo natif (texte en édition, commentaire…).
+    // Annuler : seul un champ activement modifié (cf. isFieldDirty) laisse le navigateur gérer son
+    // propre undo natif — un champ juste focus sans frappe, ou un editingElementId resté bloqué (cf.
+    // le lien abandonné dans la mini-barre riche), ne doit pas absorber Cmd+Z sans rien annuler.
     if (mod && !e.shiftKey && e.key.toLowerCase() === 'z') {
-      if (isTypingInField() || editingElementId) return;
+      const t = document.activeElement;
+      if (isTypingInField() && isFieldDirty(t)) return;
+      if (isTypingInField()) t.blur();
+      editingElementId = null;
       e.preventDefault();
       undoLastAction();
       return;
@@ -1518,12 +1545,15 @@
   }
 
   // Suppression d'un NŒUD au sein d'une arborescence (pas de l'élément plateau lui-même, qui se
-  // supprime via showDeleteConfirm comme n'importe quel élément) — même popover de confirmation, pas
-  // d'annulation ici (cf. wireArboTree : suppression jugée assez rare/intentionnelle vu la confirmation).
+  // supprime via showDeleteConfirm comme n'importe quel élément) — même popover de confirmation. La
+  // confirmation n'empêche pas une suppression par erreur (un clic trop rapide sur "Supprimer") : on
+  // pousse quand même un cran d'annulation, comme pour tout le reste.
   function showArboDeleteConfirm(entry, nodeId, anchorRect) {
     closeConfirmPopover();
     const node = findArboNode(entry.arboTree, nodeId);
     if (!node) return;
+    const parent = findArboParent(entry.arboTree, nodeId);
+    const index = parent ? parent.children.findIndex(c => c.id === nodeId) : -1;
     const descendants = countArboDescendants(node);
     const pop = document.createElement('div');
     pop.className = 'confirm-popover';
@@ -1549,6 +1579,15 @@
       removeArboNode(entry.arboTree, nodeId);
       renderArboBody(entry);
       saveArboTree(entry, true);
+      if (parent && index !== -1) {
+        recordUndo(() => {
+          parent.children.splice(index, 0, node);
+          renderArboBody(entry);
+          const json = JSON.stringify(entry.arboTree);
+          entry.data.text = json;
+          return Api.updateElement(entry.data.id, { text: json, width: entry.data.width, height: entry.data.height }).then(applyRemoteUpdate).catch(() => {});
+        });
+      }
     });
     outsideClickHandler = (e) => { if (!pop.contains(e.target)) closeConfirmPopover(); };
     setTimeout(() => document.addEventListener('pointerdown', outsideClickHandler), 0);
@@ -3704,11 +3743,29 @@
       editingElementId = null;
       if (save) {
         entry.data.text = textEl.value;
+        // Rien de changé depuis l'entrée en édition (cf. enterEditing) : ne RIEN renvoyer au serveur.
+        // Au-delà de l'économie, c'est nécessaire pour Cmd+Z juste après un simple clic sur un champ
+        // sans y taper (cf. isFieldDirty) — un PATCH envoyé ici, même sans effet, concurrence la propre
+        // requête de l'annulation précédente pour CE MÊME élément et peut la faire ignorer comme
+        // "dépassée" (cf. le dédoublonnage par id dans api.js), rendant l'annulation silencieusement
+        // sans effet.
+        const before = textEl.dataset.undoBefore;
+        const beforeW = Number(textEl.dataset.undoBeforeW);
+        const beforeH = Number(textEl.dataset.undoBeforeH);
+        delete textEl.dataset.undoBeforeW;
+        delete textEl.dataset.undoBeforeH;
+        delete textEl.dataset.undoBefore;
+        if (before !== undefined && before === textEl.value) return;
         const patch = { text: textEl.value };
         // Le post-it grandit avec son texte (cf. autoGrowNoteOnInput) : sa hauteur doit être persistée
         // comme pour le texte libre, contrairement au rectangle dont seule la zone de texte interne grandit.
         if (entry.data.type === 'text' || entry.data.type === 'note') { patch.width = entry.data.width; patch.height = entry.data.height; }
         Api.updateElement(id, patch).catch(() => {});
+        // Un seul cran d'annulation pour TOUTE la session d'édition (pas un par frappe, cf. le
+        // débounce de l'input ci-dessous).
+        if (before !== undefined) {
+          recordUndo(() => Api.updateElement(id, { text: before, width: beforeW, height: beforeH }).then(applyRemoteUpdate).catch(() => {}));
+        }
       }
     }
 
@@ -3750,6 +3807,13 @@
       selectElement(id);
       editingElementId = id;
       el.classList.add('is-editing');
+      // Capturé une seule fois par session d'édition (pas à chaque appel, si enterEditing est
+      // rappelé sans être ressorti d'édition entre-temps) — cf. stopEditing pour l'annulation.
+      if (textEl.dataset.undoBefore === undefined) {
+        textEl.dataset.undoBefore = textEl.value;
+        textEl.dataset.undoBeforeW = entry.data.width;
+        textEl.dataset.undoBeforeH = entry.data.height;
+      }
       // Éditer un élément ne doit pas changer son état (premier plan, etc.) tout seul — seule une
       // action explicite (le menu "⋮") le fait, cf. wireMoreMenu.
       requestAnimationFrame(() => textEl.focus());
@@ -3786,11 +3850,18 @@
     function saveField(f, immediate) {
       const value = fieldValue(f);
       entry.data[f.dataKey] = value;
+      // Sauvegarde immédiate (sortie de champ) mais rien de changé depuis l'entrée en édition : ne RIEN
+      // renvoyer, cf. wireTextEditing pour la raison précise (un PATCH ici, même sans effet, peut faire
+      // ignorer comme "dépassée" une annulation en cours pour ce même élément — Cmd+Z sur champ propre).
+      if (immediate) {
+        clearTimeout(f._saveTimer);
+        if (f.el.dataset.undoBefore === value) return;
+      }
       const patch = { [f.column]: value };
       // Un champ dont la frappe fait grandir tout le bloc (description/titre) doit persister la
       // nouvelle taille avec lui, comme pour le post-it/texte libre (cf. wireTextEditing).
       if (f.autoGrow) { patch.width = entry.data.width; patch.height = entry.data.height; }
-      if (immediate) { clearTimeout(f._saveTimer); Api.updateElement(id, patch).catch(() => {}); return; }
+      if (immediate) { Api.updateElement(id, patch).catch(() => {}); return; }
       clearTimeout(f._saveTimer);
       f._saveTimer = setTimeout(() => Api.updateElement(id, patch).catch(() => {}), 600);
     }
@@ -3799,6 +3870,16 @@
       f.el.classList.remove('is-field-editing');
       if (editingElementId === id) editingElementId = null;
       if (f.rich && activeRichField && activeRichField.el === f.el) { activeRichField = null; hideRichTextToolbar(); }
+      // Un seul cran d'annulation pour toute la session d'édition de CE champ (cf. wireTextEditing,
+      // même principe) — jamais par frappe, et seulement si sa valeur a vraiment changé.
+      const before = f.el.dataset.undoBefore;
+      const after = fieldValue(f);
+      if (before !== undefined && before !== after) {
+        const patch = { [f.column]: before };
+        if (f.autoGrow) { patch.width = Number(f.el.dataset.undoBeforeW); patch.height = Number(f.el.dataset.undoBeforeH); }
+        recordUndo(() => Api.updateElement(id, patch).then(applyRemoteUpdate).catch(() => {}));
+      }
+      delete f.el.dataset.undoBefore;
     }
 
     fields.forEach((f) => {
@@ -3830,7 +3911,12 @@
         stopField(f);
       });
       if (f.rich) {
-        f.el.addEventListener('focus', () => { activeRichField = { entry, el: f.el }; });
+        f.el.addEventListener('focus', () => {
+          // onStop : filet de rattrapage si le champ URL de la mini-barre (cf. showRichLinkInput) est
+          // abandonné sans valider — son propre blur n'a alors aucun moyen de retrouver CE champ-ci
+          // autrement que via activeRichField, qui porte justement ce rappel.
+          activeRichField = { entry, el: f.el, onStop: () => { saveField(f, true); stopField(f); } };
+        });
       }
     });
 
@@ -3840,6 +3926,12 @@
       editingElementId = id;
       const target = fields.find(f => f.key === key) || fields.find(f => f.key === defaultKey);
       fields.forEach(f => f.el.classList.toggle('is-field-editing', f === target));
+      // Capturé une seule fois par session d'édition de ce champ — cf. stopField pour l'annulation.
+      if (target.el.dataset.undoBefore === undefined) {
+        target.el.dataset.undoBefore = fieldValue(target);
+        target.el.dataset.undoBeforeW = entry.data.width;
+        target.el.dataset.undoBeforeH = entry.data.height;
+      }
       // Éditer un champ ne doit pas changer l'état de l'élément (premier plan, etc.) tout seul — seule
       // une action explicite (le menu "⋮") le fait, cf. wireMoreMenu.
       requestAnimationFrame(() => {
@@ -3882,6 +3974,24 @@
     entry._arboSaveTimer = setTimeout(() => Api.updateElement(entry.data.id, patch).catch(() => {}), 600);
   }
 
+  // Un seul cran d'annulation par session d'édition d'un CHAMP (titre ou texte riche d'un nœud),
+  // jamais par frappe — même principe que wireTextEditing/wireMultiFieldEditing, mais la valeur
+  // restaurée vit dans un nœud au sein de l'arbre plutôt que directement sur entry.data : la
+  // fermeture retrouve ce nœud par id (il peut avoir changé de place, pas d'existence, cf. le
+  // mécanisme de suppression) et renvoie tout l'arbre plutôt qu'un seul champ.
+  function pushArboFieldUndo(entry, nodeId, field, before, after) {
+    if (before === after) return;
+    recordUndo(() => {
+      const node = findArboNode(entry.arboTree, nodeId);
+      if (!node) return Promise.resolve();
+      node[field] = before;
+      renderArboBody(entry);
+      const json = JSON.stringify(entry.arboTree);
+      entry.data.text = json;
+      return Api.updateElement(entry.data.id, { text: json, width: entry.data.width, height: entry.data.height }).then(applyRemoteUpdate).catch(() => {});
+    });
+  }
+
   // Bascule UN champ (titre ou texte riche) d'un nœud en édition, en retirant cet état de tous les
   // autres — même principe que wireMultiFieldEditing, mais sur un ensemble de champs qui change avec
   // la structure de l'arbre (ajout/suppression de nœud), d'où une recherche DOM fraîche plutôt qu'une
@@ -3893,6 +4003,12 @@
       el.classList.remove('is-field-editing');
     });
     fieldEl.classList.add('is-field-editing');
+    // Capturé une seule fois par session d'édition — cf. pushArboFieldUndo. Posé aussi (de façon
+    // idempotente) dans le "focusin" de wireArboTree, pour le cas où le focus arrive par Tab plutôt
+    // que par ce chemin.
+    if (fieldEl.dataset.undoBefore === undefined) {
+      fieldEl.dataset.undoBefore = fieldEl.classList.contains('arbo-node-body') ? fieldEl.innerHTML : fieldEl.value;
+    }
     requestAnimationFrame(() => {
       fieldEl.focus();
       if (fieldEl.classList.contains('arbo-node-body') && !fieldEl.textContent) placeCaretAtEnd(fieldEl);
@@ -3914,13 +4030,34 @@
       if (e.target.closest('.arbo-node-title.is-field-editing, .arbo-node-body.is-field-editing, .arbo-add-btn, .arbo-delete-btn')) e.stopPropagation();
     });
 
+    // Partagé entre le focusout normal du corps riche et onStop (cf. activeRichField ci-dessous) :
+    // sort proprement de l'édition et pousse un cran d'annulation si le texte a changé.
+    function finishArboBodyEdit(bodyEl) {
+      bodyEl.classList.remove('is-field-editing');
+      if (activeRichField && activeRichField.el === bodyEl) { activeRichField = null; hideRichTextToolbar(); }
+      if (!root.contains(document.activeElement) && editingElementId === entry.data.id) editingElementId = null;
+      const nodeId = bodyEl.closest('.arbo-node').dataset.nodeId;
+      const before = bodyEl.dataset.undoBefore;
+      const changed = before !== undefined && before !== bodyEl.innerHTML;
+      if (changed) pushArboFieldUndo(entry, nodeId, 'body', before, bodyEl.innerHTML);
+      delete bodyEl.dataset.undoBefore;
+      // Rien de changé : ne rien renvoyer (cf. wireTextEditing — évite de concurrencer une annulation
+      // en cours pour ce même élément quand on quitte un champ propre, ex. Cmd+Z juste après un clic).
+      if (changed) saveArboTree(entry, true);
+    }
+
     root.addEventListener('focusin', (e) => {
       const titleEl = e.target.closest('.arbo-node-title');
       const bodyEl = e.target.closest('.arbo-node-body');
-      if (titleEl) { titleEl.classList.add('is-field-editing'); editingElementId = entry.data.id; }
+      if (titleEl) {
+        titleEl.classList.add('is-field-editing');
+        editingElementId = entry.data.id;
+        if (titleEl.dataset.undoBefore === undefined) titleEl.dataset.undoBefore = titleEl.value;
+      }
       if (bodyEl) {
         bodyEl.classList.add('is-field-editing');
         editingElementId = entry.data.id;
+        if (bodyEl.dataset.undoBefore === undefined) bodyEl.dataset.undoBefore = bodyEl.innerHTML;
         const nodeId = bodyEl.closest('.arbo-node').dataset.nodeId;
         activeRichField = {
           entry,
@@ -3931,6 +4068,9 @@
             node.body = html;
             saveArboTree(entry, false);
           },
+          // Filet de rattrapage si le champ URL de la mini-barre (cf. showRichLinkInput) est abandonné
+          // sans valider : son propre blur ne peut retrouver CE champ qu'via activeRichField.
+          onStop: () => finishArboBodyEdit(bodyEl),
         };
       }
     });
@@ -3943,7 +4083,14 @@
           if (root.contains(document.activeElement)) return;
           titleEl.classList.remove('is-field-editing');
           if (editingElementId === entry.data.id) editingElementId = null;
-          saveArboTree(entry, true);
+          const nodeId = titleEl.closest('.arbo-node').dataset.nodeId;
+          const before = titleEl.dataset.undoBefore;
+          const changed = before !== undefined && before !== titleEl.value;
+          if (changed) pushArboFieldUndo(entry, nodeId, 'title', before, titleEl.value);
+          delete titleEl.dataset.undoBefore;
+          // Rien de changé : ne rien renvoyer (cf. wireTextEditing — évite de concurrencer une
+          // annulation en cours pour ce même élément quand on quitte un champ propre).
+          if (changed) saveArboTree(entry, true);
         }, 0);
       }
       if (bodyEl) {
@@ -3951,10 +4098,7 @@
         // propre champ URL dans la mini-barre, pas une vraie fin d'édition.
         setTimeout(() => {
           if (richTextToolbarEl.contains(document.activeElement)) return;
-          bodyEl.classList.remove('is-field-editing');
-          if (activeRichField && activeRichField.el === bodyEl) { activeRichField = null; hideRichTextToolbar(); }
-          if (!root.contains(document.activeElement) && editingElementId === entry.data.id) editingElementId = null;
-          saveArboTree(entry, true);
+          finishArboBodyEdit(bodyEl);
         }, 0);
       }
     });
@@ -3992,6 +4136,13 @@
         renderArboBody(entry);
         const newTitleEl = entry.el.querySelector(`.arbo-node[data-node-id="${child.id}"] > .arbo-node-box > .arbo-node-title`);
         enterArboField(entry, newTitleEl);
+        recordUndo(() => {
+          removeArboNode(entry.arboTree, child.id);
+          renderArboBody(entry);
+          const json = JSON.stringify(entry.arboTree);
+          entry.data.text = json;
+          return Api.updateElement(entry.data.id, { text: json, width: entry.data.width, height: entry.data.height }).then(applyRemoteUpdate).catch(() => {});
+        });
         return;
       }
       const delBtn = e.target.closest('.arbo-delete-btn');
@@ -4063,9 +4214,17 @@
     input.addEventListener('keydown', (e) => { if (e.key === 'Enter') applyBtn.click(); });
     // Le champ URL abandonné (clic ailleurs sans valider) : referme simplement la mini-barre — un tick
     // plus tard, comme pour le blur du texte riche lui-même, pour laisser un clic sur "OK" (qui déplace
-    // aussi le focus) passer avant ce contrôle.
+    // aussi le focus) passer avant ce contrôle. Si le focus n'est pas non plus revenu sur le champ
+    // riche lui-même (l'utilisateur a cliqué ailleurs sur le tableau), celui-ci ne ressortira jamais
+    // de lui-même d'édition (son propre blur, lors du clic vers CE champ URL, s'était déjà arrêté en
+    // le voyant dans la mini-barre, cf. wireMultiFieldEditing/wireArboTree) : onStop le fait ici, sans
+    // quoi editingElementId et activeRichField resteraient bloqués indéfiniment.
     input.addEventListener('blur', () => {
-      setTimeout(() => { if (!richTextToolbarEl.contains(document.activeElement)) hideRichTextToolbar(); }, 0);
+      setTimeout(() => {
+        if (richTextToolbarEl.contains(document.activeElement)) return;
+        hideRichTextToolbar();
+        if (richField && document.activeElement !== richField.el && richField.onStop) richField.onStop();
+      }, 0);
     });
     applyBtn.addEventListener('mousedown', e => e.preventDefault());
     applyBtn.addEventListener('click', () => {
