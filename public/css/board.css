@@ -534,6 +534,45 @@ body.is-linking .element:not(.is-locked) .connector-anchor { display: block; }
    .element-fontsize-select) — même contrôle, juste plus large pour ce cas précis. */
 .webpage-pagetype-select { width: 120px; }
 
+/* ---- Arborescence (bloc "arbo", cf. wireArboTree) : un seul élément plateau qui dessine un arbre de
+   nœuds (titre + texte riche chacun), jamais un cadre par nœud — resize global uniquement (cf.
+   wireCornerResize, branche isArbo), la hauteur suit toujours le contenu (cf. autoFitArboHeight). ---- */
+.element[data-type="arbo"] { cursor: grab; }
+.element[data-type="arbo"].is-dragging, .element[data-type="arbo"].is-resizing { cursor: grabbing; }
+.arbo-node { display: flex; flex-direction: column; gap: 10px; }
+.arbo-node-box {
+  position: relative; display: flex; flex-direction: column; gap: 6px;
+  padding: 12px 14px; border-radius: 10px;
+}
+.arbo-node-box[data-depth="0"] { background: #eef0f5; border: 1.5px solid #c7c7d1; }
+.arbo-node-box[data-depth="1"], .arbo-node-box[data-depth="2"] { background: #e4edfc; border: 1.5px solid #b9d3f5; }
+.arbo-node-title { font-weight: 700; font-size: 14px; line-height: 1.35; padding: 0; overflow: hidden; }
+.arbo-node-body {
+  font-size: 13px; line-height: 1.5; color: var(--text-muted); overflow-wrap: break-word; min-height: 1.4em;
+}
+.arbo-node-body:empty::before { content: attr(data-placeholder); color: var(--text-muted); }
+.arbo-node-body a { color: #1a56db; text-decoration: underline; }
+/* Indentation + trait vertical de hiérarchie : chaque niveau d'imbrication DOM ajoute le sien, ce qui
+   cumule naturellement l'indentation sans calcul de profondeur en JS. */
+.arbo-children {
+  display: flex; flex-direction: column; gap: 10px;
+  margin-left: 14px; padding-left: 18px; border-left: 2px solid #e2e2ea;
+}
+/* Révélés au survol du nœud seulement (cf. iconPlus/iconTrash) — jamais pour la racine côté
+   suppression (depth 0, pas de bouton rendu du tout, cf. renderArboNodeHtml). */
+.arbo-node-actions {
+  position: absolute; top: 8px; right: 8px; display: flex; gap: 4px;
+  opacity: 0; transition: opacity 0.12s ease;
+}
+.arbo-node-box:hover .arbo-node-actions { opacity: 1; }
+.arbo-add-btn, .arbo-delete-btn {
+  width: 22px; height: 22px; border: none; border-radius: 6px; cursor: pointer; padding: 0;
+  display: flex; align-items: center; justify-content: center;
+  background: rgba(255,255,255,0.85); color: var(--text);
+}
+.arbo-add-btn:hover, .arbo-delete-btn:hover { background: #fff; }
+.arbo-delete-btn { color: #c0392b; }
+
 /* ---- Pile de post-its (raccourci pour en détacher un d'un glisser, cf. wireStackDrag) ---- */
 .element[data-type="stack"] {
   display: flex; flex-direction: column; gap: 8px; padding: 16px;

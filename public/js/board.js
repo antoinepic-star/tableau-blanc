@@ -28,6 +28,43 @@
     applyStackStyle(entry);
     return top;
   }
+
+  // ---------- Arborescence (bloc "arbo") ----------
+  // Toute la structure (titre + texte riche de chaque nœud, imbrication) vit dans UN SEUL élément
+  // plateau : sérialisée en JSON dans `data.text` (racine ArboNode = {id,title,body,children}, cf.
+  // ELEMENT_DEFAULTS.arbo/sanitizeArboText côté serveur). `entry.arboTree` est la copie de travail
+  // locale (parsée une fois au rendu, mutée directement par les frappes/ajouts/suppressions, cf.
+  // wireArboTree) — jamais reparsée depuis `entry.data.text` tant qu'on édite dans cet élément, pour
+  // ne pas perdre une frappe en cours sur un écho serveur.
+  const ARBO_MAX_DEPTH = 2; // profondeur max d'un nœud : 0 (racine, gris) à 2 (N-2) — pas de "+" au-delà.
+
+  function newArboNode(title = '', body = '') {
+    return { id: randomId(), title, body, children: [] };
+  }
+
+  function findArboNode(tree, id) {
+    if (!tree) return null;
+    if (tree.id === id) return tree;
+    for (const child of tree.children) {
+      const found = findArboNode(child, id);
+      if (found) return found;
+    }
+    return null;
+  }
+
+  // Retire le nœud `id` de l'arbre (jamais la racine elle-même, qui se supprime comme n'importe quel
+  // élément via le mécanisme générique) en le cherchant parmi les enfants à tous les niveaux.
+  function removeArboNode(tree, id) {
+    const idx = tree.children.findIndex(c => c.id === id);
+    if (idx !== -1) { tree.children.splice(idx, 1); return true; }
+    return tree.children.some(child => removeArboNode(child, id));
+  }
+
+  function countArboDescendants(node) {
+    let count = 0;
+    node.children.forEach((c) => { count += 1 + countArboDescendants(c); });
+    return count;
+  }
   // Échelle nommée plutôt qu'un choix de tailles en pixels — mêmes valeurs que les tailles fixes du
   // bloc "consigne" pour "Sous-titre"/"Texte" (cf. .instruction-title/.instruction-desc dans board.css),
   // pour rester visuellement cohérent d'un bloc à l'autre.
@@ -77,7 +114,7 @@
   const TEXT_PAD_Y_RATIO = 0.35;
   const TEXT_LINE_HEIGHT_RATIO = 1.35;
   const TEXT_MIN_CONTENT_WIDTH = 30;
-  const BOX_TYPES = ['note', 'text', 'image', 'rectangle', 'frame', 'instruction', 'tip', 'webpage']; // types "boîte" (points d'ancrage pour les connecteurs)
+  const BOX_TYPES = ['note', 'text', 'image', 'rectangle', 'frame', 'instruction', 'tip', 'webpage', 'arbo']; // types "boîte" (points d'ancrage pour les connecteurs)
   const NOTE_DEFAULT_SIZE = 130; // post-it par défaut : carré, plus petit qu'avant (grandit ensuite avec le texte)
   const DRAG_Z_BOOST = 100000; // cf. startGroupDrag : conserve l'ordre relatif du groupe pendant le geste
   const GRID_SIZE = 10; // pas de la grille d'accrochage (glisser + flèches du clavier)
@@ -604,6 +641,7 @@
   const BUILTIN_TEMPLATE_ITEMS = [
     { type: 'instruction', label: 'Consigne', icon: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="7" cy="7" r="4"/><path d="M6 5.5h2v3"/><line x1="4" y1="16" x2="20" y2="16"/><line x1="4" y1="20" x2="15" y2="20"/></svg>' },
     { type: 'tip', label: 'Tips', icon: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18h6"/><path d="M10 21h4"/><path d="M12 3a6 6 0 0 0-3.6 10.8c.5.4.8 1 .8 1.7v.5h5.6v-.5c0-.7.3-1.3.8-1.7A6 6 0 0 0 12 3z"/></svg>' },
+    { type: 'arbo', label: 'Arborescence', icon: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="7" height="5" rx="1"/><rect x="14" y="4" width="7" height="5" rx="1"/><rect x="14" y="15" width="7" height="5" rx="1"/><path d="M6.5 9v3a2 2 0 0 0 2 2H14"/><path d="M14 17.5H8.5a2 2 0 0 1-2-2V12"/></svg>' },
   ];
   // Icône générique pour un template enregistré par un utilisateur (pas de vignette par template).
   const ICON_TEMPLATE_GENERIC = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg>';
@@ -975,6 +1013,17 @@
       const { x, y } = snapPoint(wx - 140, wy - 85);
       createElementTracked({ type, x, y, width: 280, height: 170 })
         .then((data) => { const entry = ensureRendered(data); entry.enterField?.('title'); })
+        .catch(err => alert(err.message));
+    } else if (type === 'arbo') {
+      // Un seul nœud racine au départ (vide, prêt à taper son titre) — cf. ELEMENT_DEFAULTS.arbo.
+      const w = 320, h = 60;
+      const { x, y } = snapPoint(wx - w / 2, wy - h / 2);
+      const tree = newArboNode();
+      createElementTracked({ type: 'arbo', x, y, width: w, height: h, text: JSON.stringify(tree) })
+        .then((data) => {
+          const entry = ensureRendered(data);
+          entry.enterEditing?.();
+        })
         .catch(err => alert(err.message));
     } else if (type === 'webpage') {
       // `variant` porte le type de page choisi dans le sous-menu (cf. ADD_FLYOUTS.webpages) — réutilise
@@ -1468,6 +1517,43 @@
     setTimeout(() => document.addEventListener('pointerdown', outsideClickHandler), 0);
   }
 
+  // Suppression d'un NŒUD au sein d'une arborescence (pas de l'élément plateau lui-même, qui se
+  // supprime via showDeleteConfirm comme n'importe quel élément) — même popover de confirmation, pas
+  // d'annulation ici (cf. wireArboTree : suppression jugée assez rare/intentionnelle vu la confirmation).
+  function showArboDeleteConfirm(entry, nodeId, anchorRect) {
+    closeConfirmPopover();
+    const node = findArboNode(entry.arboTree, nodeId);
+    if (!node) return;
+    const descendants = countArboDescendants(node);
+    const pop = document.createElement('div');
+    pop.className = 'confirm-popover';
+    pop.innerHTML = `
+      <p>${descendants > 0 ? `Supprimer cet élément et ${descendants} sous-élément${descendants > 1 ? 's' : ''} ?` : 'Supprimer cet élément ?'}</p>
+      <div class="confirm-popover-actions">
+        <button type="button" class="confirm-popover-cancel">Annuler</button>
+        <button type="button" class="confirm-popover-confirm confirm-popover-danger">Supprimer</button>
+      </div>
+    `;
+    pop.addEventListener('pointerdown', e => e.stopPropagation());
+    document.body.appendChild(pop);
+    const popRect = pop.getBoundingClientRect();
+    let left = anchorRect.left + anchorRect.width / 2 - popRect.width / 2;
+    left = clamp(left, 8, window.innerWidth - popRect.width - 8);
+    const top = clamp(anchorRect.bottom + 8, 8, window.innerHeight - popRect.height - 8);
+    pop.style.left = `${left}px`;
+    pop.style.top = `${top}px`;
+    activeConfirmPopover = pop;
+    pop.querySelector('.confirm-popover-cancel').addEventListener('click', closeConfirmPopover);
+    pop.querySelector('.confirm-popover-confirm').addEventListener('click', () => {
+      closeConfirmPopover();
+      removeArboNode(entry.arboTree, nodeId);
+      renderArboBody(entry);
+      saveArboTree(entry, true);
+    });
+    outsideClickHandler = (e) => { if (!pop.contains(e.target)) closeConfirmPopover(); };
+    setTimeout(() => document.addEventListener('pointerdown', outsideClickHandler), 0);
+  }
+
   // ---------- Mesure / redimensionnement automatique du texte ----------
 
   let textMeasurer = null;
@@ -1843,6 +1929,10 @@
   // Bascule "couleurs aléatoires" d'une pile de post-its (icône façon lecture aléatoire, cf. iconVote
   // pour le même style de trait).
   function iconShuffle(size = 14) { return `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 3h5v5"/><path d="M4 20 21 3"/><path d="M21 16v5h-5"/><path d="M15 15l6 6"/><path d="M4 4l5 5"/></svg>`; }
+  // Boutons révélés au survol d'un nœud d'arborescence (cf. wireArboTree) : ajouter un sous-élément /
+  // supprimer ce nœud.
+  function iconPlus() { return '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>'; }
+  function iconTrash() { return '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>'; }
   function iconComment() { return '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H8l-5 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>'; }
   // "Vote" simple (façon +1) : un simple "+", même style trait que les autres icônes pour rester
   // cohérent au zoom (contrairement aux glyphes émoji, qui redimensionnent moins proprement).
@@ -2401,6 +2491,11 @@
       `;
       textEl = el.querySelector('.stack-title');
       textEl.value = data.text || '';
+    } else if (data.type === 'arbo') {
+      // Tout l'arbre (titre/texte riche de chaque nœud, imbrication) est reconstruit dans ce seul
+      // conteneur par renderArboBody, une fois `entry` posé plus bas (cf. entry.arboTree) — pas de
+      // champ fixe ici, contrairement aux autres types multi-champs.
+      el.innerHTML = `<div class="arbo-root"></div><div class="element-resize-handle"></div>${anchorsHtml}`;
     }
 
     layerEl.appendChild(el);
@@ -2433,6 +2528,12 @@
       autoGrowWebpageBlock(entry);
     }
     if (data.type === 'stack') applyStackStyle(entry);
+    if (data.type === 'arbo') {
+      let tree;
+      try { tree = JSON.parse(data.text); } catch (_) { tree = null; }
+      entry.arboTree = (tree && typeof tree === 'object' && tree.id) ? tree : newArboNode();
+      renderArboBody(entry);
+    }
     applyLockedState(entry);
     updateElementBadges(entry);
 
@@ -2710,6 +2811,57 @@
     autoGrowFlexBlock(entry);
   }
 
+  // Contrairement à autoGrowFlexBlock (consigne/tips : grandit seulement, jamais en dessous de la
+  // hauteur actuelle), une arborescence doit aussi RÉTRÉCIR quand un nœud est supprimé — toujours
+  // calée exactement sur son contenu, dans les deux sens.
+  function autoFitArboHeight(entry) {
+    if (entry.data.type !== 'arbo') return;
+    const el = entry.el;
+    el.style.height = 'auto';
+    const natural = Math.max(MIN_H, el.scrollHeight);
+    entry.data.height = natural;
+    el.style.height = `${natural}px`;
+  }
+
+  function renderArboNodeHtml(node, depth) {
+    const canAddChild = depth < ARBO_MAX_DEPTH;
+    const canDelete = depth > 0;
+    const childrenHtml = node.children.map(c => renderArboNodeHtml(c, depth + 1)).join('');
+    return `
+      <div class="arbo-node" data-node-id="${node.id}">
+        <div class="arbo-node-box" data-depth="${depth}">
+          <textarea class="arbo-node-title block-field" placeholder="Titre…" maxlength="200" rows="1"></textarea>
+          <div class="arbo-node-body block-field" contenteditable="true" data-placeholder="Texte…"></div>
+          <div class="arbo-node-actions">
+            ${canAddChild ? `<button type="button" class="arbo-add-btn" title="Ajouter un sous-élément">${iconPlus()}</button>` : ''}
+            ${canDelete ? `<button type="button" class="arbo-delete-btn" title="Supprimer">${iconTrash()}</button>` : ''}
+          </div>
+        </div>
+        ${childrenHtml ? `<div class="arbo-children">${childrenHtml}</div>` : ''}
+      </div>
+    `;
+  }
+
+  // Reconstruit tout l'arbre depuis entry.arboTree — appelé au rendu initial, après un ajout/
+  // suppression de nœud (changement de STRUCTURE) et sur écho distant (cf. applyRemoteUpdate) ; jamais
+  // à chaque frappe dans un champ existant (cf. wireArboTree, qui mute le texte en place pour ne pas
+  // perdre le focus/curseur en cours).
+  function renderArboBody(entry) {
+    const root = entry.el.querySelector('.arbo-root');
+    if (!root) return;
+    root.innerHTML = renderArboNodeHtml(entry.arboTree, 0);
+    root.querySelectorAll('.arbo-node').forEach((nodeEl) => {
+      const node = findArboNode(entry.arboTree, nodeEl.dataset.nodeId);
+      if (!node) return;
+      const titleEl = nodeEl.querySelector(':scope > .arbo-node-box > .arbo-node-title');
+      const bodyEl = nodeEl.querySelector(':scope > .arbo-node-box > .arbo-node-body');
+      titleEl.value = node.title || '';
+      autoGrowTextareaField(titleEl);
+      bodyEl.innerHTML = node.body || '';
+    });
+    autoFitArboHeight(entry);
+  }
+
   // Le tag ("Tips" par défaut) épouse la largeur de son texte plutôt que de remplir tout le bloc :
   // même technique de mesure que autoGrowTextareaField, sur l'axe horizontal (border-box, cf. board.css,
   // pour que la largeur posée corresponde exactement au scrollWidth mesuré, padding compris).
@@ -2862,6 +3014,17 @@
     } else if (data.type === 'stack') {
       if (document.activeElement !== entry.textEl) entry.textEl.value = data.text || '';
       applyStackStyle(entry);
+    } else if (data.type === 'arbo') {
+      // Toute la structure tient dans `text` (pas de champ par champ possible ici) : tant qu'on tape
+      // QUELQUE PART dans cet élément, un écho (même d'un autre participant) est ignoré plutôt que de
+      // reconstruire le DOM sous les doigts de qui édite — entry.arboTree (la copie de travail locale)
+      // continue de faire foi jusqu'au prochain enregistrement, cf. saveArboTree.
+      if (!entry.el.contains(document.activeElement)) {
+        let tree;
+        try { tree = JSON.parse(data.text); } catch (_) { tree = null; }
+        entry.arboTree = (tree && typeof tree === 'object' && tree.id) ? tree : newArboNode();
+        renderArboBody(entry);
+      }
     }
 
     updateConnectorsFor(data.id);
@@ -3706,6 +3869,158 @@
     };
   }
 
+  // Sauvegarde toute l'arborescence d'un coup (sérialisation de entry.arboTree dans `text`) — jamais
+  // nœud par nœud, puisque c'est l'élément ENTIER qui porte le JSON (cf. ELEMENT_DEFAULTS.arbo côté
+  // serveur). Envoie aussi width/height : une frappe peut faire grandir/rétrécir tout le bloc
+  // (cf. autoFitArboHeight), comme un champ à autoGrow ailleurs.
+  function saveArboTree(entry, immediate) {
+    const json = JSON.stringify(entry.arboTree);
+    entry.data.text = json;
+    const patch = { text: json, width: entry.data.width, height: entry.data.height };
+    clearTimeout(entry._arboSaveTimer);
+    if (immediate) { Api.updateElement(entry.data.id, patch).catch(() => {}); return; }
+    entry._arboSaveTimer = setTimeout(() => Api.updateElement(entry.data.id, patch).catch(() => {}), 600);
+  }
+
+  // Bascule UN champ (titre ou texte riche) d'un nœud en édition, en retirant cet état de tous les
+  // autres — même principe que wireMultiFieldEditing, mais sur un ensemble de champs qui change avec
+  // la structure de l'arbre (ajout/suppression de nœud), d'où une recherche DOM fraîche plutôt qu'une
+  // liste figée au câblage.
+  function enterArboField(entry, fieldEl) {
+    if (!fieldEl) return;
+    editingElementId = entry.data.id;
+    entry.el.querySelectorAll('.arbo-node-title.is-field-editing, .arbo-node-body.is-field-editing').forEach((el) => {
+      el.classList.remove('is-field-editing');
+    });
+    fieldEl.classList.add('is-field-editing');
+    requestAnimationFrame(() => {
+      fieldEl.focus();
+      if (fieldEl.classList.contains('arbo-node-body') && !fieldEl.textContent) placeCaretAtEnd(fieldEl);
+    });
+  }
+
+  // Câblage d'un bloc "arbo" : délégué sur le conteneur entier (plutôt qu'un câblage par champ comme
+  // wireMultiFieldEditing) puisque l'ensemble des nœuds change dynamiquement — un ajout/suppression
+  // reconstruit tout le DOM (renderArboBody) sans avoir à re-câbler quoi que ce soit après coup.
+  function wireArboTree(entry) {
+    const root = entry.el.querySelector('.arbo-root');
+    if (!root) return;
+
+    root.addEventListener('pointerdown', (e) => {
+      // Sans ce stop, le pointerdown remonte jusqu'à wireBodyDrag (cf. plus bas) qui sélectionne déjà
+      // l'élément et, faute de glisser détecté, appelle entry.enterEditing au relâchement — avant même
+      // que le "click" des boutons +/corbeille n'ait sa chance de s'exécuter (même principe que le
+      // bouton "afficher l'auteur" d'une pile de post-its, cf. wireStackDrag).
+      if (e.target.closest('.arbo-node-title.is-field-editing, .arbo-node-body.is-field-editing, .arbo-add-btn, .arbo-delete-btn')) e.stopPropagation();
+    });
+
+    root.addEventListener('focusin', (e) => {
+      const titleEl = e.target.closest('.arbo-node-title');
+      const bodyEl = e.target.closest('.arbo-node-body');
+      if (titleEl) { titleEl.classList.add('is-field-editing'); editingElementId = entry.data.id; }
+      if (bodyEl) {
+        bodyEl.classList.add('is-field-editing');
+        editingElementId = entry.data.id;
+        const nodeId = bodyEl.closest('.arbo-node').dataset.nodeId;
+        activeRichField = {
+          entry,
+          el: bodyEl,
+          onChange: (html) => {
+            const node = findArboNode(entry.arboTree, nodeId);
+            if (!node) return;
+            node.body = html;
+            saveArboTree(entry, false);
+          },
+        };
+      }
+    });
+
+    root.addEventListener('focusout', (e) => {
+      const titleEl = e.target.closest('.arbo-node-title');
+      const bodyEl = e.target.closest('.arbo-node-body');
+      if (titleEl) {
+        setTimeout(() => {
+          if (root.contains(document.activeElement)) return;
+          titleEl.classList.remove('is-field-editing');
+          if (editingElementId === entry.data.id) editingElementId = null;
+          saveArboTree(entry, true);
+        }, 0);
+      }
+      if (bodyEl) {
+        // Même report d'un tick que wireMultiFieldEditing : cliquer "Lien" déplace le focus vers son
+        // propre champ URL dans la mini-barre, pas une vraie fin d'édition.
+        setTimeout(() => {
+          if (richTextToolbarEl.contains(document.activeElement)) return;
+          bodyEl.classList.remove('is-field-editing');
+          if (activeRichField && activeRichField.el === bodyEl) { activeRichField = null; hideRichTextToolbar(); }
+          if (!root.contains(document.activeElement) && editingElementId === entry.data.id) editingElementId = null;
+          saveArboTree(entry, true);
+        }, 0);
+      }
+    });
+
+    root.addEventListener('input', (e) => {
+      const titleEl = e.target.closest('.arbo-node-title');
+      if (titleEl) {
+        const node = findArboNode(entry.arboTree, titleEl.closest('.arbo-node').dataset.nodeId);
+        if (node) node.title = titleEl.value;
+        autoGrowTextareaField(titleEl);
+        autoFitArboHeight(entry);
+        saveArboTree(entry, false);
+        return;
+      }
+      const bodyEl = e.target.closest('.arbo-node-body');
+      if (bodyEl) {
+        // Cf. wireMultiFieldEditing : un contenteditable vidé garde parfois un "<br>" orphelin, qui lui
+        // ferait perdre son placeholder (cf. :empty dans board.css) même une fois réellement vide.
+        if (bodyEl.innerHTML === '<br>') bodyEl.innerHTML = '';
+        onRichFieldChanged();
+        autoFitArboHeight(entry);
+      }
+    });
+
+    root.addEventListener('click', (e) => {
+      const addBtn = e.target.closest('.arbo-add-btn');
+      if (addBtn) {
+        e.stopPropagation();
+        if (entry.data.locked) return;
+        const node = findArboNode(entry.arboTree, addBtn.closest('.arbo-node').dataset.nodeId);
+        if (!node) return;
+        const child = newArboNode();
+        node.children.push(child);
+        saveArboTree(entry, true);
+        renderArboBody(entry);
+        const newTitleEl = entry.el.querySelector(`.arbo-node[data-node-id="${child.id}"] > .arbo-node-box > .arbo-node-title`);
+        enterArboField(entry, newTitleEl);
+        return;
+      }
+      const delBtn = e.target.closest('.arbo-delete-btn');
+      if (delBtn) {
+        e.stopPropagation();
+        if (entry.data.locked) return;
+        const nodeId = delBtn.closest('.arbo-node').dataset.nodeId;
+        showArboDeleteConfirm(entry, nodeId, delBtn.getBoundingClientRect());
+      }
+    });
+
+    // Même géométrie de clic que wireMultiFieldEditing (le champ dont le rectangle contient le point
+    // cliqué), mais recherchée à chaud : l'ensemble des champs change avec la structure de l'arbre.
+    entry.enterEditing = function enterEditing(ev) {
+      if (entry.data.locked) return;
+      selectElement(entry.data.id);
+      const fields = [...entry.el.querySelectorAll('.arbo-node-title, .arbo-node-body')];
+      let target = fields[0];
+      if (ev && typeof ev.clientY === 'number') {
+        const hit = fields.find((f) => {
+          const r = f.getBoundingClientRect();
+          return ev.clientX >= r.left && ev.clientX <= r.right && ev.clientY >= r.top && ev.clientY <= r.bottom;
+        });
+        if (hit) target = hit;
+      }
+      enterArboField(entry, target);
+    };
+  }
+
   // ---------- Mini barre de mise en forme sur sélection (texte riche du bloc "tips") ----------
   // Contrairement à la barre d'action principale (au-dessus de l'ÉLÉMENT sélectionné), celle-ci
   // apparaît au-dessus de la SÉLECTION DE TEXTE elle-même, façon Notion/Medium — seulement pendant
@@ -3725,7 +4040,11 @@
 
   function onRichFieldChanged() {
     if (!activeRichField) return;
-    const { entry, el } = activeRichField;
+    const { entry, el, onChange } = activeRichField;
+    // Un champ riche d'arborescence (cf. wireArboTree) n'est pas directement `entry.data.text` — il
+    // fournit son propre callback plutôt que ce comportement par défaut (un seul champ riche = tout
+    // le "text" de l'élément, vrai pour "tips"/"page web" mais pas pour un nœud parmi d'autres ici).
+    if (onChange) { onChange(el.innerHTML); return; }
     entry.data.text = el.innerHTML;
     Api.updateElement(entry.data.id, { text: el.innerHTML }).catch(() => {});
   }
@@ -4208,6 +4527,11 @@
         startSize: { w: entry.data.width, h: entry.data.height },
         pointerId: e.pointerId,
         isMosaic,
+        // Même principe que la mosaïque PDF juste au-dessus : largeur seule pilotée au glisser, la
+        // hauteur reste toujours celle que le contenu impose (cf. autoFitArboHeight) — "resizer tout
+        // l'élément, pas cadre par cadre" ne concerne que la largeur, la hauteur n'a pas de sens à
+        // régler à la main pour un arbre dont le nombre de nœuds varie.
+        isArbo: entry.data.type === 'arbo',
         // Ordre de lecture figé une fois pour toutes au début du geste (cf. liveReflowMosaic) — le
         // recalculer à chaque frame d'après une position qu'on vient tout juste de réécrire ferait
         // flotter l'ordre au lieu de le garder stable.
@@ -4236,6 +4560,8 @@
         // relâchement (applyFrameArrangement), autant éviter que la frame tiraille entre la hauteur
         // glissée et celle que la mosaïque impose réellement.
         if (!e.altKey) newW = Math.max(MIN_W, snapToGrid(entry.data.x + newW) - entry.data.x);
+      } else if (resizeState.isArbo) {
+        if (!e.altKey) newW = Math.max(MIN_W, snapToGrid(entry.data.x + newW) - entry.data.x);
       } else {
         newH = Math.max(MIN_H, resizeState.startSize.h + dyScreen / zoom);
         // Accroche à la grille aussi en taille (pas seulement en position) — pas pour une image
@@ -4255,6 +4581,7 @@
       // pas du glisser vertical (cf. ci-dessus) — colonnes qui s'ajoutent/se suppriment en direct,
       // plutôt que de découvrir la disposition finale seulement à la réponse du serveur.
       if (resizeState.isMosaic) newH = liveReflowMosaic(entry, resizeState.mosaicChildren, newW);
+      if (resizeState.isArbo) { autoFitArboHeight(entry); newH = entry.data.height; }
       entry.data.height = newH;
       entry.el.style.height = `${newH}px`;
       syncNoteTextareaHeight(entry);
@@ -4386,6 +4713,7 @@
       ], 'title');
     }
     if (entry.data.type === 'stack') wireStackDrag(entry);
+    if (entry.data.type === 'arbo') wireArboTree(entry);
     wireConnectorAnchors(entry);
     wireBodyDrag(entry);
     if (entry.data.type === 'line') wireLineHandle(entry);

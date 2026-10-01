@@ -108,6 +108,11 @@ const ELEMENT_DEFAULTS = {
   // utilisé par un post-it créé normalement. Largeur alignée sur les blocs consigne/tips (280) — le
   // post-it visuel garde lui sa taille d'origine, cf. .stack-visual dans board.css.
   stack: { width: 280, height: 260, color: ELEMENT_COLORS[0] },
+  // Arborescence (sitemap) : toute la structure (titre + texte riche de chaque nœud, imbrication sur
+  // 3 niveaux max) est sérialisée en JSON dans `text` — racine ArboNode = {id,title,body,children},
+  // cf. sanitizeArboText et board.js. `color` générique non utilisé (fond gris/bleu toujours fixe
+  // selon la profondeur, cf. board.css), gardé seulement pour la contrainte NOT NULL de la colonne.
+  arbo: { width: 320, height: 140, color: ELEMENT_COLORS[0] },
 };
 const ELEMENT_TYPES = Object.keys(ELEMENT_DEFAULTS);
 
@@ -638,7 +643,7 @@ app.post('/api/whiteboards/:whiteboardId/cursor', whiteboardAuth, (req, res) => 
 // TABLEAU : ÉLÉMENTS (post-it, trait, texte, image)
 // =====================
 
-const ELEMENT_LABELS = { note: 'post-it', line: 'trait', text: 'bloc de texte', image: 'image', rectangle: 'rectangle', connector: 'connecteur', frame: 'frame', instruction: 'bloc consigne', tip: 'bloc tips', webpage: 'bloc page web', stack: 'pile de post-its' };
+const ELEMENT_LABELS = { note: 'post-it', line: 'trait', text: 'bloc de texte', image: 'image', rectangle: 'rectangle', connector: 'connecteur', frame: 'frame', instruction: 'bloc consigne', tip: 'bloc tips', webpage: 'bloc page web', stack: 'pile de post-its', arbo: 'arborescence' };
 // Types dont le champ "text" est du HTML riche (contenteditable) et doit donc être assaini avant
 // stockage — pas juste "tip" (cf. sanitizeRichText).
 const RICH_TEXT_TYPES = ['tip', 'webpage'];
@@ -666,6 +671,32 @@ function sanitizeRichText(html) {
     }
     return closing ? `</${lower}>` : `<${lower}>`;
   });
+}
+
+// Racine ArboNode = {id,title,body,children} sérialisée en JSON dans `text` d'un bloc "arbo" (cf.
+// ELEMENT_DEFAULTS.arbo et board.js). Assaini nœud par nœud (title: texte brut tronqué, body: même
+// liste blanche que sanitizeRichText) plutôt qu'en passant tout le JSON à sanitizeRichText, qui
+// mangerait aussi des balises tapées littéralement dans un titre censé rester du texte brut.
+function sanitizeArboNode(node) {
+  if (!node || typeof node !== 'object') return { id: uuidv4(), title: '', body: '', children: [] };
+  return {
+    id: typeof node.id === 'string' && node.id ? node.id : uuidv4(),
+    title: typeof node.title === 'string' ? node.title.slice(0, 200) : '',
+    body: sanitizeRichText(typeof node.body === 'string' ? node.body : ''),
+    children: Array.isArray(node.children) ? node.children.slice(0, 100).map(sanitizeArboNode) : [],
+  };
+}
+function sanitizeArboText(text) {
+  let tree;
+  try { tree = JSON.parse(text); } catch (_) { tree = null; }
+  return JSON.stringify(sanitizeArboNode(tree));
+}
+
+// Point d'entrée unique pour assainir `text` à la création/mise à jour d'un élément, quel que soit
+// son type — évite de dupliquer ce branchement dans les 3 chemins d'écriture (create, batch, patch).
+function sanitizeElementText(type, text) {
+  if (type === 'arbo') return sanitizeArboText(text);
+  return RICH_TEXT_TYPES.includes(type) ? sanitizeRichText(text) : (text || '');
 }
 
 function parseComment(row) {
@@ -913,7 +944,7 @@ app.post('/api/whiteboards/:whiteboardId/elements', whiteboardAuth, ah(async (re
   const values = [
     id, req.params.whiteboardId, type, x ?? 0, y ?? 0,
     width ?? defaults.width, height ?? defaults.height, rotation ?? 0,
-    color ?? defaults.color ?? '#1c1c28', RICH_TEXT_TYPES.includes(type) ? sanitizeRichText(text) : (text || ''), fontSize ?? defaults.fontSize ?? null,
+    color ?? defaults.color ?? '#1c1c28', sanitizeElementText(type, text), fontSize ?? defaults.fontSize ?? null,
     bold ? 1 : 0, italic ? 1 : 0, underline ? 1 : 0, strikethrough ? 1 : 0, imageData || null, grayscale ? 1 : 0,
     startCap || 'none', endCap || 'none', lineStyle || 'solid', backgroundColor || null,
     strokeWidth ?? defaults.strokeWidth ?? 0, strokeColor || defaults.strokeColor || null, radius ?? 0, groupId || null, locked ? 1 : 0,
@@ -1011,7 +1042,7 @@ app.post('/api/whiteboards/:whiteboardId/elements/batch', whiteboardAuth, ah(asy
     const values = [
       id, req.params.whiteboardId, type, x ?? 0, y ?? 0,
       width ?? defaults.width, height ?? defaults.height, rotation ?? 0,
-      color ?? defaults.color ?? '#1c1c28', RICH_TEXT_TYPES.includes(type) ? sanitizeRichText(text) : (text || ''), fontSize ?? defaults.fontSize ?? null,
+      color ?? defaults.color ?? '#1c1c28', sanitizeElementText(type, text), fontSize ?? defaults.fontSize ?? null,
       bold ? 1 : 0, italic ? 1 : 0, underline ? 1 : 0, strikethrough ? 1 : 0, imageData || null, grayscale ? 1 : 0,
       startCap || 'none', endCap || 'none', lineStyle || 'solid', backgroundColor || null,
       strokeWidth ?? defaults.strokeWidth ?? 0, strokeColor || defaults.strokeColor || null, radius ?? 0, groupId || null, locked ? 1 : 0,
@@ -1109,7 +1140,7 @@ app.patch('/api/whiteboards/:whiteboardId/elements/:id', whiteboardAuth, ah(asyn
     height: height ?? existing.height,
     rotation: rotation ?? existing.rotation,
     color: color ?? existing.color,
-    text: text !== undefined ? (RICH_TEXT_TYPES.includes(existing.type) ? sanitizeRichText(text) : text) : existing.text,
+    text: text !== undefined ? sanitizeElementText(existing.type, text) : existing.text,
     font_size: fontSize ?? existing.font_size,
     bold: bold != null ? (bold ? 1 : 0) : existing.bold,
     italic: italic != null ? (italic ? 1 : 0) : existing.italic,
