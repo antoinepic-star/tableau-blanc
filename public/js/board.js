@@ -3022,13 +3022,22 @@
     } else {
       linePath.removeAttribute('stroke-dasharray');
     }
-    // Les petits bouts "sous la pointe" (cf. applyConnectorCaps/renderConnectorGeometry) reprennent
-    // la même couleur/épaisseur mais JAMAIS de pointillés : eux seuls portent le marker, et un
-    // pointillé y recréerait le même problème de phase qu'on cherche justement à éviter.
+    // Les petits bouts "sous la pointe" (cf. applyConnectorCaps/renderConnectorGeometry) ne servent
+    // qu'à porter le marker : leur trait est INVISIBLE. Visible, son extrémité rectangulaire (aussi large
+    // que le trait) dépasserait de la pointe triangulaire, qui s'amincit jusqu'à un point — c'est
+    // justement ce qui masquait le bout de la pointe sur un trait épais.
     ['start', 'end'].forEach((which) => {
       const cap = entry.el.querySelector(`.connector-cap-${which}`);
-      if (cap) { cap.setAttribute('stroke', color); cap.setAttribute('stroke-width', height); }
+      if (cap) { cap.setAttribute('stroke', 'transparent'); cap.setAttribute('stroke-width', height); }
     });
+  }
+
+  // Dimensions de la pointe de flèche : proportionnelles à l'épaisseur du trait SANS plafond (un
+  // plafond fixe la rendait à peine plus large qu'un trait épais — le bout n'était plus lisible) ; la
+  // base est nettement plus large que le trait, comme sur Miro, et reste lisible même en trait fin.
+  function connectorArrowDims(thickness) {
+    const t = thickness || 2;
+    return { len: Math.max(10, t * 3), width: Math.max(10, t * 3.4) };
   }
 
   // Pointes de flèche : des <marker> SVG (pas un positionnement pixel manuel) — leur refX pose la
@@ -3044,18 +3053,18 @@
   // marker tombe donc toujours exactement au bon endroit, dans la bonne direction.
   function applyConnectorCaps(entry) {
     if (entry.data.type !== 'connector') return;
-    const s = clamp((entry.data.height || 2) * 2.4, 10, 20);
+    const { len, width: w } = connectorArrowDims(entry.data.height);
     [['start', entry.data.startCap], ['end', entry.data.endCap]].forEach(([which, cap]) => {
       const capPath = entry.el.querySelector(`.connector-cap-${which}`);
       const marker = entry.el.querySelector(`.connector-marker-${which}`);
       if (!marker) return;
-      marker.setAttribute('markerWidth', s);
-      marker.setAttribute('markerHeight', s);
-      marker.setAttribute('refX', s);
-      marker.setAttribute('refY', s / 2);
+      marker.setAttribute('markerWidth', len);
+      marker.setAttribute('markerHeight', w);
+      marker.setAttribute('refX', len);
+      marker.setAttribute('refY', w / 2);
       const polygon = marker.querySelector('polygon');
       if (polygon) {
-        polygon.setAttribute('points', `0,0 ${s},${s / 2} 0,${s}`);
+        polygon.setAttribute('points', `0,0 ${len},${w / 2} 0,${w}`);
         polygon.setAttribute('fill', entry.data.color);
       }
       if (!capPath) return;
@@ -3502,8 +3511,9 @@
     const xs = [], ys = [];
     segs.forEach(s => { [s.p0, s.c1, s.c2, s.p1].forEach(p => { xs.push(p.x); ys.push(p.y); }); });
     const thickness = entry.data.height || 2;
-    const arrowSize = clamp(thickness * 2.4, 10, 20);
-    const pad = Math.max(20, arrowSize, thickness * 2);
+    const arrowDims = connectorArrowDims(thickness);
+    const arrowSize = arrowDims.len;
+    const pad = Math.max(20, arrowDims.width, thickness * 2);
     const minX = Math.min(...xs) - pad, maxX = Math.max(...xs) + pad;
     const minY = Math.min(...ys) - pad, maxY = Math.max(...ys) + pad;
     const origin = { x: minX, y: minY };
