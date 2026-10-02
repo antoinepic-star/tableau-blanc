@@ -901,3 +901,6 @@ body.is-linking .element:not(.is-locked) .connector-anchor { display: block; }
   animation: busy-spin 0.7s linear infinite;
 }
 @keyframes busy-spin { to { transform: rotate(360deg); } }
+
+/* Photo d'un moodboard : largeur imposée par sa colonne, pas de poignée de redimensionnement. */
+.element.is-moodboard-child .element-resize-handle { display: none !important; }

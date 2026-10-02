@@ -820,6 +820,30 @@ const FRAME_ARRANGE_PADDING = 16; // même valeur que le padding des blocs consi
 const PDF_MOSAIC_PADDING = 20;
 const FRAME_TITLE_HEIGHT = 40; // espace réservé au titre (cf. applyFrameTitleStyle, taille 15px par défaut)
 const FRAME_MIN_HEIGHT = 100;
+// Frame "moodboard" (tag: 'moodboard', cf. board.js) : colonnes de largeur égale façon Pinterest, chaque
+// image mise à la largeur de sa colonne (même ratio) et posée dans la colonne la moins haute. Le nombre
+// de colonnes suit la largeur de la frame (arrondi vers la largeur cible) ; la largeur réelle des
+// colonnes s'ajuste ensuite pour remplir exactement la frame. Mêmes valeurs côté client (board.js).
+const MOODBOARD_PADDING = 12;
+const MOODBOARD_TARGET_COL_WIDTH = 220;
+
+// Remet en page les moodboards parmi `frameIds` (les autres frames sont ignorées) et diffuse le
+// résultat — appelé après toute opération qui peut changer le contenu d'un moodboard (création,
+// suppression, déplacement d'une photo, redimensionnement de la frame). Renvoie les lignes mises à jour.
+async function rearrangeMoodboards(whiteboardId, frameIds) {
+  const ids = [...new Set(frameIds.filter(Boolean))];
+  const all = [];
+  for (const id of ids) {
+    const frame = await tursoGet(
+      'SELECT tag FROM whiteboard_elements WHERE id = ? AND whiteboard_id = ? AND type = ?',
+      [id, whiteboardId, 'frame']
+    );
+    if (frame?.tag !== 'moodboard') continue;
+    all.push(...await applyFrameArrangement(whiteboardId, id));
+  }
+  if (all.length) broadcast('elements:updated', { elements: all }, whiteboardId);
+  return all;
+}
 
 async function applyFrameArrangement(whiteboardId, frameId) {
   const frame = await tursoGet(
@@ -834,7 +858,32 @@ async function applyFrameArrangement(whiteboardId, frameId) {
   );
 
   const touchedIds = [frameId];
-  if (!children.length) {
+  if (frame.tag === 'moodboard') {
+    // Seules les images sont mises en colonnes (un autre élément déposé dans la frame reste où on l'a
+    // posé). Ordre de lecture = (y, x) : le placement "colonne la moins haute" fait croître le haut de
+    // chaque image dans l'ordre de pose (et de gauche à droite à hauteur égale), donc retrier par
+    // (y, x) après coup redonne exactement l'ordre d'avant — et déposer une photo ailleurs dans le
+    // cadre la fait naturellement changer de rang.
+    const images = children.filter(c => c.type === 'image' && c.width > 0 && c.height > 0);
+    const pad = MOODBOARD_PADDING;
+    const cols = Math.max(1, Math.round((frame.width - pad) / (MOODBOARD_TARGET_COL_WIDTH + pad)));
+    const colWidth = Math.max(20, (frame.width - pad * (cols + 1)) / cols);
+    const bottoms = new Array(cols).fill(FRAME_TITLE_HEIGHT + pad);
+    const stmts = [];
+    for (const c of images) {
+      let col = 0;
+      for (let i = 1; i < cols; i++) if (bottoms[i] < bottoms[col]) col = i;
+      const h = colWidth * (c.height / c.width);
+      const x = frame.x + pad + col * (colWidth + pad);
+      const y = frame.y + bottoms[col];
+      stmts.push({ sql: 'UPDATE whiteboard_elements SET x = ?, y = ?, width = ?, height = ?, updated_at = unixepoch() WHERE id = ?', args: [x, y, colWidth, h, c.id] });
+      touchedIds.push(c.id);
+      bottoms[col] += h + pad;
+    }
+    const newHeight = Math.max(FRAME_MIN_HEIGHT, Math.max(...bottoms));
+    stmts.push({ sql: 'UPDATE whiteboard_elements SET height = ?, updated_at = unixepoch() WHERE id = ?', args: [newHeight, frameId] });
+    await tursoBatch(stmts, 'write');
+  } else if (!children.length) {
     if (frame.height !== FRAME_MIN_HEIGHT) {
       await tursoRun('UPDATE whiteboard_elements SET height = ?, updated_at = unixepoch() WHERE id = ?', [FRAME_MIN_HEIGHT, frameId]);
     }
@@ -991,6 +1040,13 @@ app.post('/api/whiteboards/:whiteboardId/elements', whiteboardAuth, ah(async (re
   await logBoardHistory(req.params.whiteboardId, req.user.name, `a ajouté ${ELEMENT_ARTICLES[type]} ${ELEMENT_LABELS[type]}`);
   await touchWhiteboard(req.params.whiteboardId);
   broadcast('element:created', element, req.params.whiteboardId);
+  // Élément posé dans un moodboard : mis en colonne tout de suite. Diffusé APRÈS la création (jamais
+  // avant : un 'elements:updated' pour un élément inconnu d'un client le ferait afficher sans son image).
+  if (frameId) {
+    const arranged = await rearrangeMoodboards(req.params.whiteboardId, [frameId]);
+    const self = arranged.find(a => a.id === element.id);
+    if (self) Object.assign(element, { x: self.x, y: self.y, width: self.width, height: self.height });
+  }
   res.json(element);
 }));
 
@@ -1106,6 +1162,14 @@ app.post('/api/whiteboards/:whiteboardId/elements/batch', whiteboardAuth, ah(asy
 
   broadcast('elements:created', { elements }, req.params.whiteboardId);
   broadcast('history:created', { id: historyId, actorName: req.user.name, action: historyAction, createdAt: Math.floor(Date.now() / 1000) }, req.params.whiteboardId);
+  // Éléments posés dans un moodboard (ex. lot de photos) : mis en colonnes, la réponse portant la
+  // position finale (cf. création à l'unité plus haut).
+  const arranged = await rearrangeMoodboards(req.params.whiteboardId, elements.map(e => e.frameId));
+  const arrangedById = new Map(arranged.map(a => [a.id, a]));
+  elements.forEach((e) => {
+    const a = arrangedById.get(e.id);
+    if (a) Object.assign(e, { x: a.x, y: a.y, width: a.width, height: a.height });
+  });
   res.json({ elements });
 }));
 
@@ -1229,6 +1293,17 @@ app.patch('/api/whiteboards/:whiteboardId/elements/:id', whiteboardAuth, ah(asyn
     const arranged = await applyFrameArrangement(req.params.whiteboardId, req.params.id);
     broadcast('elements:updated', { elements: arranged }, req.params.whiteboardId);
   }
+  // Moodboard : se remet en page quand la frame est redimensionnée (nombre de colonnes) ET quand une
+  // de ses photos change de taille/position/appartenance (ancien ou nouveau cadre concerné).
+  if (existing.type === 'frame' && existing.tag === 'moodboard' && (width !== undefined || height !== undefined)) {
+    const arranged = await rearrangeMoodboards(req.params.whiteboardId, [req.params.id]);
+    const self = arranged.find(a => a.id === element.id);
+    if (self) Object.assign(element, { x: self.x, y: self.y, width: self.width, height: self.height });
+  } else if (existing.type !== 'frame' && (x !== undefined || y !== undefined || width !== undefined || height !== undefined || frameId !== undefined)) {
+    const arranged = await rearrangeMoodboards(req.params.whiteboardId, [existing.frame_id, nextFrameId]);
+    const self = arranged.find(a => a.id === element.id);
+    if (self) Object.assign(element, { x: self.x, y: self.y, width: self.width, height: self.height });
+  }
 
   res.json(element);
 }));
@@ -1279,6 +1354,7 @@ app.post('/api/whiteboards/:whiteboardId/elements/batch-move', whiteboardAuth, a
   });
 
   const updatedById = new Map();
+  const touchedFrameIds = [];
   for (const move of moves) {
     const existing = existingById.get(move.id);
     if (!existing) continue;
@@ -1286,6 +1362,7 @@ app.post('/api/whiteboards/:whiteboardId/elements/batch-move', whiteboardAuth, a
     const frameId = existing.type === 'frame'
       ? existing.frame_id
       : findContainingFrame(move.x, move.y, existing.width, existing.height, frameRowsForContainment, null);
+    if (existing.type !== 'frame') touchedFrameIds.push(existing.frame_id, frameId);
     await tursoRun(
       'UPDATE whiteboard_elements SET x = ?, y = ?, z_index = ?, frame_id = ?, updated_at = unixepoch() WHERE id = ?',
       [move.x, move.y, zIndex, frameId, move.id]
@@ -1294,10 +1371,14 @@ app.post('/api/whiteboards/:whiteboardId/elements/batch-move', whiteboardAuth, a
     updatedById.set(move.id, parseElement(row, { withImageData: false }));
   }
 
-  const updated = [...updatedById.values()];
   await touchWhiteboard(req.params.whiteboardId);
-  broadcast('elements:updated', { elements: updated }, req.params.whiteboardId);
-  res.json({ elements: updated });
+  broadcast('elements:updated', { elements: [...updatedById.values()] }, req.params.whiteboardId);
+  // Photo d'un moodboard déposée (ailleurs dans le cadre, ou dedans/dehors) : le cadre concerné se remet
+  // en page tout de suite, et la réponse porte la position FINALE (celle d'avant la mise en page ferait
+  // revenir la photo là où elle a été lâchée une fois la réponse appliquée côté client).
+  const arranged = await rearrangeMoodboards(req.params.whiteboardId, touchedFrameIds);
+  arranged.forEach(a => { if (updatedById.has(a.id)) updatedById.set(a.id, a); });
+  res.json({ elements: [...updatedById.values()] });
 }));
 
 // "Ordonner" : bouton d'action ponctuelle dans le toolbar de la frame (cf. board.js), pas un mode —
@@ -1372,6 +1453,8 @@ app.delete('/api/whiteboards/:whiteboardId/elements/:id', whiteboardAuth, ah(asy
   await logBoardHistory(req.params.whiteboardId, req.user.name, `a supprimé ${ELEMENT_ARTICLES[existing.type]} ${ELEMENT_LABELS[existing.type]}`);
   await touchWhiteboard(req.params.whiteboardId);
   broadcast('element:deleted', { id: req.params.id }, req.params.whiteboardId);
+  // Photo retirée d'un moodboard : les colonnes se resserrent.
+  if (existing.type !== 'frame' && existing.frame_id) await rearrangeMoodboards(req.params.whiteboardId, [existing.frame_id]);
   res.json({ ok: true });
 }));
 

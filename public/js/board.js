@@ -109,6 +109,16 @@
   const PDF_MOSAIC_CELL_WIDTH = 240; // largeur d'affichage d'une page dans la mosaïque, hauteur au prorata
   const PDF_MOSAIC_COLUMNS = 3;
   const PDF_MOSAIC_PADDING = 20; // même valeur que côté serveur (cf. PDF_MOSAIC_PADDING dans server.js)
+  // ---- Moodboard (frame taguée 'moodboard' : photos en colonnes égales façon Pinterest) ----
+  // Mêmes valeurs que côté serveur (MOODBOARD_PADDING/MOODBOARD_TARGET_COL_WIDTH dans server.js, qui fait
+  // foi : il remet en page à chaque changement, cf. applyFrameArrangement) — ici seulement pour
+  // l'aperçu en direct pendant un redimensionnement (cf. liveReflowMoodboard).
+  const MOODBOARD_PADDING = 12;
+  const MOODBOARD_TARGET_COL_WIDTH = 220;
+  const MOODBOARD_MAX_BYTES = 12 * 1024 * 1024; // par photo (avant réduction) — des photos d'appareil pèsent vite
+  const MOODBOARD_IMAGE_MAX_DIM = 900; // plus grand côté stocké (colonnes jusqu'à ~400px affichées, zoom compris)
+  const MOODBOARD_IMAGE_JPEG_QUALITY = 0.85;
+  const MOODBOARD_BATCH_CHUNK = 15;
   // Nombre de pages envoyées par requête /elements/batch : borne la taille de chaque requête (indépen-
   // damment de la limite du serveur) plutôt que de compter sur une seule requête géante pour tout le
   // PDF, qui grossirait sans limite avec le nombre de pages.
@@ -157,6 +167,7 @@
   const addSubFlyout = document.getElementById('addSubFlyout');
   const imageFileInput = document.getElementById('imageFileInput');
   const pdfFileInput = document.getElementById('pdfFileInput');
+  const moodboardFileInput = document.getElementById('moodboardFileInput');
   const toolbarEl = document.getElementById('elementToolbar');
   const richTextToolbarEl = document.getElementById('richTextToolbar');
   const commentDrawer = document.getElementById('commentDrawer');
@@ -676,6 +687,7 @@
     { type: 'instruction', label: 'Consigne', icon: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="7" cy="7" r="4"/><path d="M6 5.5h2v3"/><line x1="4" y1="16" x2="20" y2="16"/><line x1="4" y1="20" x2="15" y2="20"/></svg>' },
     { type: 'tip', label: 'Tips', icon: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18h6"/><path d="M10 21h4"/><path d="M12 3a6 6 0 0 0-3.6 10.8c.5.4.8 1 .8 1.7v.5h5.6v-.5c0-.7.3-1.3.8-1.7A6 6 0 0 0 12 3z"/></svg>' },
     { type: 'arbo', label: 'Arborescence', icon: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="7" height="5" rx="1"/><rect x="14" y="4" width="7" height="5" rx="1"/><rect x="14" y="15" width="7" height="5" rx="1"/><path d="M6.5 9v3a2 2 0 0 0 2 2H14"/><path d="M14 17.5H8.5a2 2 0 0 1-2-2V12"/></svg>' },
+    { type: 'moodboard', label: 'Moodboard', icon: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="8" height="10" rx="1.5"/><rect x="13" y="3" width="8" height="6" rx="1.5"/><rect x="3" y="15" width="8" height="6" rx="1.5"/><rect x="13" y="11" width="8" height="10" rx="1.5"/></svg>' },
   ];
   // Icône générique pour un template enregistré par un utilisateur (pas de vignette par template).
   const ICON_TEMPLATE_GENERIC = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg>';
@@ -1041,6 +1053,15 @@
       const { x, y } = snapPoint(wx - 240, wy - 180);
       createElementTracked({ type: 'frame', x, y, width: 480, height: 360 })
         .catch(err => alert(err.message));
+    } else if (type === 'moodboard') {
+      // Une frame (tag 'moodboard') calée sur 3 colonnes de largeur cible — le serveur remet ses photos
+      // en page à chaque changement (cf. applyFrameArrangement). Sélectionnée tout de suite : son bouton
+      // "Ajouter des photos" est alors à portée de clic.
+      const w = 3 * MOODBOARD_TARGET_COL_WIDTH + 4 * MOODBOARD_PADDING, h = 160;
+      const { x, y } = snapPoint(wx - w / 2, wy - h / 2);
+      createElementTracked({ type: 'frame', x, y, width: w, height: h, text: 'Moodboard', tag: 'moodboard' })
+        .then((data) => { const entry = ensureRendered(data); selectElement(entry.data.id); })
+        .catch(err => alert(err.message));
     } else if (type === 'instruction' || type === 'tip') {
       // Couleur laissée à la valeur par défaut du serveur (blanc pour consigne, gris du tableau pour
       // tips, cf. ELEMENT_DEFAULTS) — prête à taper le titre tout de suite, comme le texte libre.
@@ -1203,6 +1224,86 @@
     if (file.size > MAX_PDF_BYTES) { alert('PDF trop lourd (max 40 Mo).'); return; }
     const { wx, wy } = pendingPdfPlacement || { wx: 0, wy: 0 };
     withBusy(importPdfFile(file, wx, wy)).catch(err => alert("Impossible d'importer ce PDF : " + err.message));
+  });
+
+  // ---------- Moodboard : ajout de photos ----------
+  // Chaque photo est réduite côté client (plus grand côté MOODBOARD_IMAGE_MAX_DIM, JPEG) avant envoi :
+  // des photos d'appareil de plusieurs Mo chacune ne tiendraient ni dans une requête ni dans la base.
+  // Posées comme de vraies images rattachées à la frame (comme les pages d'un PDF) à un y volontairement
+  // très bas : le serveur les remet en colonnes à la création (cf. applyFrameArrangement) en les triant
+  // par (y, x), donc elles viennent toutes APRÈS les photos déjà présentes, dans l'ordre du lot.
+
+  let pendingMoodboardFrameId = null;
+
+  async function readMoodboardPhoto(file) {
+    const url = await new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result);
+      reader.onerror = reject;
+      reader.readAsDataURL(file);
+    });
+    const img = await new Promise((resolve, reject) => {
+      const i = new Image();
+      i.onload = () => resolve(i);
+      i.onerror = reject;
+      i.src = url;
+    });
+    const scale = Math.min(1, MOODBOARD_IMAGE_MAX_DIM / Math.max(img.naturalWidth, img.naturalHeight));
+    const w = Math.max(1, Math.round(img.naturalWidth * scale));
+    const h = Math.max(1, Math.round(img.naturalHeight * scale));
+    const canvas = document.createElement('canvas');
+    canvas.width = w;
+    canvas.height = h;
+    const ctx = canvas.getContext('2d');
+    ctx.fillStyle = '#fff'; // un PNG transparent deviendrait noir en JPEG
+    ctx.fillRect(0, 0, w, h);
+    ctx.drawImage(img, 0, 0, w, h);
+    const imageData = canvas.toDataURL('image/jpeg', MOODBOARD_IMAGE_JPEG_QUALITY);
+    canvas.width = canvas.height = 0; // libère la mémoire du canvas tout de suite (lot de nombreuses photos)
+    return { imageData, ratio: h / w };
+  }
+
+  async function importMoodboardPhotos(frameId, files) {
+    const frame = elements.get(frameId);
+    if (!frame) return;
+    const photos = [];
+    let skipped = 0;
+    for (const file of files) {
+      if (file.size > MOODBOARD_MAX_BYTES) { skipped++; continue; }
+      try { photos.push(await readMoodboardPhoto(file)); } catch (_) { skipped++; }
+    }
+    if (photos.length) {
+      const colWidth = MOODBOARD_TARGET_COL_WIDTH;
+      const farY = frame.data.y + 100000;
+      let created = [];
+      for (let i = 0; i < photos.length; i += MOODBOARD_BATCH_CHUNK) {
+        const items = photos.slice(i, i + MOODBOARD_BATCH_CHUNK).map((p, j) => ({
+          type: 'image', frameId, x: frame.data.x + i + j, y: farY,
+          width: colWidth, height: colWidth * p.ratio, imageData: p.imageData,
+        }));
+        const { elements: made } = await Api.createElementsBatch(items);
+        made.forEach(data => ensureRendered(data));
+        created = created.concat(made);
+      }
+      const createdIds = created.map(d => d.id);
+      recordUndo(async () => {
+        // Un par un, pas en parallèle : chaque suppression remet le moodboard en page côté serveur, et
+        // des remises en page concurrentes pourraient se baser sur un contenu déjà périmé.
+        for (const cid of createdIds) {
+          removeElementLocal(cid);
+          await Api.deleteElement(cid).catch(() => {});
+        }
+      });
+    }
+    if (skipped) alert(`${skipped} photo${skipped > 1 ? 's' : ''} ignorée${skipped > 1 ? 's' : ''} (illisible${skipped > 1 ? 's' : ''} ou trop lourde${skipped > 1 ? 's' : ''}, max 12 Mo).`);
+  }
+
+  moodboardFileInput.addEventListener('change', (e) => {
+    const files = [...e.target.files];
+    const frameId = pendingMoodboardFrameId;
+    pendingMoodboardFrameId = null;
+    if (!files.length || !frameId) return;
+    withBusy(importMoodboardPhotos(frameId, files)).catch(err => alert("Impossible d'ajouter ces photos : " + err.message));
   });
 
   // ---------- Sélection simple ----------
@@ -1812,6 +1913,7 @@
 
   function iconArrowCapStart() { return '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="19" y1="12" x2="5" y2="12"/><polyline points="11 6 5 12 11 18"/></svg>'; }
   function iconArrowCapEnd() { return '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="13 6 19 12 13 18"/></svg>'; }
+  function iconAddPhotos() { return '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="14" height="14" rx="2"/><circle cx="8" cy="8" r="1.5"/><path d="M17 12l-4-4-8 9"/><line x1="19" y1="17" x2="19" y2="23"/><line x1="16" y1="20" x2="22" y2="20"/></svg>'; }
   function iconTextLabel() { return '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 7 4 4 20 4 20 7"/><line x1="12" y1="4" x2="12" y2="20"/><line x1="9" y1="20" x2="15" y2="20"/></svg>'; }
 
   // Bouton "Style et épaisseur" du trait/connecteur : continu/pointillé + épaisseur, dans UN popover
@@ -1941,7 +2043,11 @@
       controls = colorDropdownHtml('color', data.color, false, 'Couleur de fond')
         + borderDropdownHtml(data, { withRadius: false })
         + `<span class="element-toolbar-sep"></span>`
-        + `<button type="button" class="element-icon-btn element-arrange-btn" title="Ordonner (ranger le contenu actuel en grille)">${iconArrange()}</button>`
+        // Moodboard : "Ordonner" n'a pas de sens (la mise en colonnes est permanente) ; à la place, le
+        // bouton qui sert à le remplir.
+        + (data.tag === 'moodboard'
+          ? `<button type="button" class="element-icon-btn element-moodboard-add-btn" title="Ajouter des photos">${iconAddPhotos()}</button>`
+          : `<button type="button" class="element-icon-btn element-arrange-btn" title="Ordonner (ranger le contenu actuel en grille)">${iconArrange()}</button>`)
         + `<span class="element-toolbar-sep"></span>`
         + `<select class="element-fontsize-select" data-role="title-fontsize" title="Taille du titre">${fontSizeOptionsHtml(data.fontSize)}</select>`
         + colorDropdownHtml('title', data.titleColor, false, 'Couleur du titre');
@@ -2085,7 +2191,16 @@
     toolbarEl.style.top = `${top}px`;
   }
 
+  // Une photo de moodboard a toujours la largeur de sa colonne (cf. applyFrameArrangement) : lui laisser
+  // une poignée de redimensionnement n'aurait aucun effet durable, elle reprendrait aussitôt sa taille.
+  function isMoodboardChild(entry) {
+    if (entry.data.type !== 'image' || !entry.data.frameId) return false;
+    const frame = elements.get(entry.data.frameId);
+    return !!frame && frame.data.tag === 'moodboard';
+  }
+
   function showToolbarFor(entry) {
+    entry.el.classList.toggle('is-moodboard-child', isMoodboardChild(entry));
     if (entry.data.locked) {
       toolbarEl.innerHTML = buildLockedToolbarHtml(entry);
       toolbarEl.classList.add('is-open');
@@ -4236,6 +4351,15 @@
           if (before !== size) recordFieldUndo(id, { fontSize: before });
         });
       }
+      const addPhotosBtn = toolbarEl.querySelector('.element-moodboard-add-btn');
+      if (addPhotosBtn) {
+        addPhotosBtn.addEventListener('pointerdown', e => e.stopPropagation());
+        addPhotosBtn.addEventListener('click', () => {
+          pendingMoodboardFrameId = id;
+          moodboardFileInput.value = '';
+          moodboardFileInput.click();
+        });
+      }
       const arrangeBtn = toolbarEl.querySelector('.element-arrange-btn');
       if (arrangeBtn) {
         arrangeBtn.addEventListener('pointerdown', e => e.stopPropagation());
@@ -5195,7 +5319,34 @@
   // `children` doit être dans l'ordre de lecture, figé une fois pour toutes au début du geste (cf.
   // resizeState.mosaicChildren) — le recalculer à chaque frame d'après une position qu'on vient tout
   // juste de réécrire ferait flotter l'ordre au lieu de le garder stable.
+  // Même principe pour un moodboard (colonnes égales, cf. applyFrameArrangement côté serveur : même
+  // nombre de colonnes, même largeur de colonne, même placement "colonne la moins haute"). Les ratios
+  // viennent du rapport hauteur/largeur COURANT de chaque photo, qui ne change jamais (la photo est
+  // toujours mise à l'échelle proportionnellement) — pas besoin de les mémoriser à part.
+  function liveReflowMoodboard(frameEntry, children, newWidth) {
+    const pad = MOODBOARD_PADDING;
+    const cols = Math.max(1, Math.round((newWidth - pad) / (MOODBOARD_TARGET_COL_WIDTH + pad)));
+    const colWidth = Math.max(20, (newWidth - pad * (cols + 1)) / cols);
+    const bottoms = new Array(cols).fill(FRAME_TITLE_HEIGHT + pad);
+    children.forEach((child) => {
+      if (child.data.type !== 'image' || !(child.data.width > 0) || !(child.data.height > 0)) return;
+      let col = 0;
+      for (let i = 1; i < cols; i++) if (bottoms[i] < bottoms[col]) col = i;
+      const h = colWidth * (child.data.height / child.data.width);
+      const x = frameEntry.data.x + pad + col * (colWidth + pad);
+      const y = frameEntry.data.y + bottoms[col];
+      Object.assign(child.data, { x, y, width: colWidth, height: h });
+      child.el.style.left = `${x}px`;
+      child.el.style.top = `${y}px`;
+      child.el.style.width = `${colWidth}px`;
+      child.el.style.height = `${h}px`;
+      bottoms[col] += h + pad;
+    });
+    return Math.max(FRAME_MIN_HEIGHT, Math.max(...bottoms));
+  }
+
   function liveReflowMosaic(frameEntry, children, newWidth) {
+    if (frameEntry.data.tag === 'moodboard') return liveReflowMoodboard(frameEntry, children, newWidth);
     const padding = PDF_MOSAIC_PADDING;
     const maxX = Math.max(newWidth - padding, padding + 40);
     let cursorX = padding, cursorY = FRAME_TITLE_HEIGHT + padding, rowHeight = 0, placedInRow = 0;
@@ -5289,10 +5440,10 @@
     let resizeState = null;
 
     handle.addEventListener('pointerdown', (e) => {
-      if (entry.cropping || entry.data.locked) return;
+      if (entry.cropping || entry.data.locked || isMoodboardChild(entry)) return;
       e.stopPropagation();
       selectElement(entry.data.id);
-      const isMosaic = entry.data.type === 'frame' && entry.data.tag === 'pdf-mosaic';
+      const isMosaic = entry.data.type === 'frame' && (entry.data.tag === 'pdf-mosaic' || entry.data.tag === 'moodboard');
       resizeState = {
         startScreen: { x: e.clientX, y: e.clientY },
         startSize: { w: entry.data.width, h: entry.data.height },
