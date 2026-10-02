@@ -1961,7 +1961,6 @@
 
   function iconArrowCapStart() { return '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="19" y1="12" x2="5" y2="12"/><polyline points="11 6 5 12 11 18"/></svg>'; }
   function iconArrowCapEnd() { return '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="13 6 19 12 13 18"/></svg>'; }
-  function iconSaveBlock() { return '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>'; }
   function iconAddPhotos() { return '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="14" height="14" rx="2"/><circle cx="8" cy="8" r="1.5"/><path d="M17 12l-4-4-8 9"/><line x1="19" y1="17" x2="19" y2="23"/><line x1="16" y1="20" x2="22" y2="20"/></svg>'; }
   function iconTextLabel() { return '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 7 4 4 20 4 20 7"/><line x1="12" y1="4" x2="12" y2="20"/><line x1="9" y1="20" x2="15" y2="20"/></svg>'; }
 
@@ -1999,7 +1998,7 @@
   // séparées dans la barre (cf. la maquette Miro fournie) — généralisé à tous les types d'éléments,
   // pas seulement le rectangle. Une frame n'a pas de premier/arrière-plan (elle reste toujours tout
   // au fond, cf. server.js) : showFront/showBack les masquent pour elle.
-  function moreMenuHtml({ showFront = true, showBack = true } = {}) {
+  function moreMenuHtml({ showFront = true, showBack = true, showSaveBlock = false } = {}) {
     return `
       <div class="toolbar-dropdown" data-role="more-wrap">
         <button type="button" class="toolbar-dropdown-trigger" data-role="more-trigger" title="Plus d'options">${iconMoreDots()}</button>
@@ -2007,6 +2006,7 @@
           <button type="button" class="toolbar-menu-item" data-role="more-duplicate">Dupliquer</button>
           ${showFront ? `<button type="button" class="toolbar-menu-item" data-role="more-front">Mettre au premier plan</button>` : ''}
           ${showBack ? `<button type="button" class="toolbar-menu-item" data-role="more-back">Envoyer à l'arrière-plan</button>` : ''}
+          ${showSaveBlock ? `<button type="button" class="toolbar-menu-item" data-role="more-save-block">Enregistrer en tant que bloc</button>` : ''}
           <span class="toolbar-menu-sep"></span>
           <button type="button" class="toolbar-menu-item toolbar-menu-danger" data-role="more-delete">Supprimer</button>
         </div>
@@ -2092,7 +2092,6 @@
       controls = colorDropdownHtml('color', data.color, false, 'Couleur de fond')
         + borderDropdownHtml(data, { withRadius: false })
         + `<span class="element-toolbar-sep"></span>`
-        + `<button type="button" class="element-icon-btn element-save-block-btn" title="Enregistrer en tant que bloc">${iconSaveBlock()}</button>`
         // Moodboard : "Ordonner" n'a pas de sens (la mise en colonnes est permanente) ; à la place, le
         // bouton qui sert à le remplir.
         + (data.tag === 'moodboard'
@@ -2135,7 +2134,7 @@
       ${voteCommentHtml}
       <button type="button" class="element-icon-btn element-lock-btn" title="${lockButtonTitle(data)}">${iconLock()}</button>
       <span class="element-toolbar-sep"></span>
-      ${moreMenuHtml({ showFront: !isFrame, showBack: !isFrame })}
+      ${moreMenuHtml({ showFront: !isFrame, showBack: !isFrame, showSaveBlock: isFrame })}
     `;
   }
 
@@ -4239,6 +4238,11 @@
       dup.addEventListener('pointerdown', e => e.stopPropagation());
       dup.addEventListener('click', () => { popover.classList.remove('is-open'); duplicateElement(entry); });
     }
+    const saveBlock = popover.querySelector('[data-role="more-save-block"]');
+    if (saveBlock) {
+      saveBlock.addEventListener('pointerdown', e => e.stopPropagation());
+      saveBlock.addEventListener('click', () => { closeAllToolbarPopovers(); openTemplateDrawer(id); });
+    }
     const front = popover.querySelector('[data-role="more-front"]');
     if (front) {
       front.addEventListener('pointerdown', e => e.stopPropagation());
@@ -4400,11 +4404,6 @@
           Api.updateElement(id, { fontSize: size }).catch(() => {});
           if (before !== size) recordFieldUndo(id, { fontSize: before });
         });
-      }
-      const saveBlockBtn = toolbarEl.querySelector('.element-save-block-btn');
-      if (saveBlockBtn) {
-        saveBlockBtn.addEventListener('pointerdown', e => e.stopPropagation());
-        saveBlockBtn.addEventListener('click', () => { closeAllToolbarPopovers(); openTemplateDrawer(id); });
       }
       const addPhotosBtn = toolbarEl.querySelector('.element-moodboard-add-btn');
       if (addPhotosBtn) {
