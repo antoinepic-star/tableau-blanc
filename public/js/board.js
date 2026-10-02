@@ -3467,7 +3467,34 @@
       textarea.style.color = entry.data.color || '#1c1c28';
       autoWidthTag(textarea);
     }
-    return { show: true, halfWidth: wrap.offsetWidth / 2, halfHeight: wrap.offsetHeight / 2 };
+    const halfWidth = wrap.offsetWidth / 2, halfHeight = wrap.offsetHeight / 2;
+    return { show: true, halfWidth, halfHeight, ink: measureConnectorLabelInk(textarea, halfWidth, halfHeight) };
+  }
+
+  // Boîte des lettres VISIBLES du libellé (relative à son centre), pas celle de sa ligne de texte : une
+  // ligne de texte fait environ 1,3 × la taille de police alors qu'un mot en minuscules sans hampe
+  // ("non") n'en occupe que la moitié — caler le trou du trait sur la ligne laissait donc un grand vide
+  // au-dessus/en dessous des lettres, bien plus que la marge voulue. Mesure par canvas (boîte réelle des
+  // glyphes) ; repli sur la boîte de ligne si le navigateur ne fournit pas ces métriques.
+  let connectorInkCtx = null;
+  function measureConnectorLabelInk(textarea, halfWidth, halfHeight) {
+    const fallback = { left: -halfWidth, right: halfWidth, top: -halfHeight, bottom: halfHeight };
+    const text = textarea.value;
+    if (!text) return fallback;
+    if (!connectorInkCtx) connectorInkCtx = document.createElement('canvas').getContext('2d');
+    const cs = getComputedStyle(textarea);
+    connectorInkCtx.font = `${cs.fontStyle} ${cs.fontWeight} ${cs.fontSize} ${cs.fontFamily}`;
+    const m = connectorInkCtx.measureText(text);
+    if (m.actualBoundingBoxAscent === undefined || m.fontBoundingBoxAscent === undefined) return fallback;
+    const lineH = textarea.offsetHeight;
+    const baseline = (lineH - (m.fontBoundingBoxAscent + m.fontBoundingBoxDescent)) / 2 + m.fontBoundingBoxAscent;
+    const originX = -m.width / 2; // texte centré dans la zone (text-align:center)
+    return {
+      left: originX - m.actualBoundingBoxLeft,
+      right: originX + m.actualBoundingBoxRight,
+      top: baseline - m.actualBoundingBoxAscent - lineH / 2,
+      bottom: baseline + m.actualBoundingBoxDescent - lineH / 2,
+    };
   }
 
   function positionConnectorLabel(entry, mid, origin) {
@@ -3483,8 +3510,8 @@
   // rond/oblique, cf. retour). On parcourt les points échantillonnés du tracé et on retient le premier
   // et le dernier qui tombent dans le rectangle (centré sur le milieu, marge comprise) : tout ce qui
   // est entre les deux est à exclure, le reste garde la vraie forme de la courbe de chaque côté.
-  function connectorLabelGapExclusion(table, mid, halfWidth, halfHeight) {
-    const rect = { x0: mid.x - halfWidth, x1: mid.x + halfWidth, y0: mid.y - halfHeight, y1: mid.y + halfHeight };
+  function connectorLabelGapExclusion(table, mid, ink, marginX, marginY) {
+    const rect = { x0: mid.x + ink.left - marginX, x1: mid.x + ink.right + marginX, y0: mid.y + ink.top - marginY, y1: mid.y + ink.bottom + marginY };
     let first = -1, last = -1;
     table.forEach((p, i) => {
       if (p.x >= rect.x0 && p.x <= rect.x1 && p.y >= rect.y0 && p.y <= rect.y1) {
@@ -3555,7 +3582,7 @@
     if (entry.data.startCap === 'arrow') exclusions.push({ start: 0, end: Math.max(0, arrowSize - 1) });
     if (entry.data.endCap === 'arrow') exclusions.push({ start: Math.max(0, totalLen - (arrowSize - 1)), end: totalLen });
     if (labelInfo.show) {
-      const gap = connectorLabelGapExclusion(table, mid, labelInfo.halfWidth + 3, labelInfo.halfHeight + 2);
+      const gap = connectorLabelGapExclusion(table, mid, labelInfo.ink, 4, 3);
       if (gap) exclusions.push(gap);
     }
 
