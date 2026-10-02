@@ -3510,8 +3510,8 @@
   // rond/oblique, cf. retour). On parcourt les points échantillonnés du tracé et on retient le premier
   // et le dernier qui tombent dans le rectangle (centré sur le milieu, marge comprise) : tout ce qui
   // est entre les deux est à exclure, le reste garde la vraie forme de la courbe de chaque côté.
-  function connectorLabelGapExclusion(table, mid, ink, marginX, marginY) {
-    const rect = { x0: mid.x + ink.left - marginX, x1: mid.x + ink.right + marginX, y0: mid.y + ink.top - marginY, y1: mid.y + ink.bottom + marginY };
+  function connectorLabelGapExclusion(table, mid, ink, marginX, marginTop, marginBottom) {
+    const rect = { x0: mid.x + ink.left - marginX, x1: mid.x + ink.right + marginX, y0: mid.y + ink.top - marginTop, y1: mid.y + ink.bottom + marginBottom };
     let first = -1, last = -1;
     table.forEach((p, i) => {
       if (p.x >= rect.x0 && p.x <= rect.x1 && p.y >= rect.y0 && p.y <= rect.y1) {
@@ -3582,7 +3582,10 @@
     if (entry.data.startCap === 'arrow') exclusions.push({ start: 0, end: Math.max(0, arrowSize - 1) });
     if (entry.data.endCap === 'arrow') exclusions.push({ start: Math.max(0, totalLen - (arrowSize - 1)), end: totalLen });
     if (labelInfo.show) {
-      const gap = connectorLabelGapExclusion(table, mid, labelInfo.ink, 4, 3);
+      // Marge du HAUT réduite à mesure que la police grossit (titres) : le vide au-dessus des lettres
+      // paraissait plus grand qu'en dessous sur les grosses tailles. Côtés et bas inchangés.
+      const marginTop = Math.max(0.5, 3 - ((entry.data.fontSize || 15) - 15) / 18);
+      const gap = connectorLabelGapExclusion(table, mid, labelInfo.ink, 4, marginTop, 3);
       if (gap) exclusions.push(gap);
     }
 
