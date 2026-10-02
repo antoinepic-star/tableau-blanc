@@ -176,7 +176,8 @@
   const commentInput = document.getElementById('commentInput');
   const commentSendBtn = document.getElementById('commentSendBtn');
   const historyBtn = document.getElementById('historyBtn');
-  const historyDot = document.getElementById('historyDot');
+  const historyDots = document.querySelectorAll('[data-history-dot]');
+  const setHistoryDot = (visible) => historyDots.forEach(d => d.classList.toggle('hidden', !visible));
   const historyDrawer = document.getElementById('historyDrawer');
   const historyDrawerOverlay = document.getElementById('historyDrawerOverlay');
   const historyDrawerCloseBtn = document.getElementById('historyDrawerCloseBtn');
@@ -6061,7 +6062,7 @@
   // qu'il y ait eu une nouvelle entrée ou non — pas besoin de retenir la date, juste l'état "vu".
   function markHistorySeen() {
     sessionStorage.setItem(HISTORY_SEEN_KEY, '1');
-    historyDot.classList.add('hidden');
+    setHistoryDot(false);
   }
 
   function openHistoryDrawer() {
@@ -6087,6 +6088,7 @@
   }
 
   historyBtn.addEventListener('click', () => {
+    closeTopbarMoreMenu();
     if (historyDrawer.classList.contains('is-open')) closeHistoryDrawer(); else openHistoryDrawer();
   });
   historyDrawerCloseBtn.addEventListener('click', closeHistoryDrawer);
@@ -6142,7 +6144,7 @@
 
   Realtime.on('history:created', (entry) => {
     if (historyOpen) { prependHistoryItem(entry); markHistorySeen(); }
-    else historyDot.classList.remove('hidden');
+    else setHistoryDot(true);
   });
 
   // ---------- Chargement initial ----------

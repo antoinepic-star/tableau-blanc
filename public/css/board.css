@@ -57,11 +57,14 @@ body.board-page { overflow: hidden; height: 100vh; }
 /* Pastille "non lu" (cf. historyDot dans board.js) : une entrée est apparue pendant que le tiroir
    était fermé — disparaît à l'ouverture (markHistorySeen), comme la pastille de verrouillage ci-dessus,
    juste assez visible pour se remarquer sans gêner. */
-#historyBtn { position: relative; }
+/* Le bouton Historique est rangé dans le menu "⋯" : la pastille est donc posée sur "⋯" (visible menu
+   fermé) ET dans la ligne "Historique" du menu ouvert (cf. data-history-dot dans board.js). */
+#topbarMoreBtn { position: relative; }
 .history-dot {
   position: absolute; top: 3px; right: 3px; width: 7px; height: 7px; border-radius: 50%;
   background: #d64545; border: 1.5px solid #fff;
 }
+.history-dot.history-dot-inline { position: static; margin-left: auto; flex: none; }
 .history-dot.hidden { display: none; }
 
 /* ---------- Barre "ajouter" flottante (façon Miro) ---------- */
