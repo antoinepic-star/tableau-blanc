@@ -3582,10 +3582,12 @@
     if (entry.data.startCap === 'arrow') exclusions.push({ start: 0, end: Math.max(0, arrowSize - 1) });
     if (entry.data.endCap === 'arrow') exclusions.push({ start: Math.max(0, totalLen - (arrowSize - 1)), end: totalLen });
     if (labelInfo.show) {
-      // Marge du HAUT réduite à mesure que la police grossit (titres) : le vide au-dessus des lettres
-      // paraissait plus grand qu'en dessous sur les grosses tailles. Côtés et bas inchangés.
-      const marginTop = Math.max(2, 3 - ((entry.data.fontSize || 15) - 15) / 37);
-      const gap = connectorLabelGapExclusion(table, mid, labelInfo.ink, 4, marginTop, 3);
+      // Marge verticale (identique en haut et en bas) proportionnelle à la taille de police : c'est
+      // l'espace que laissait la boîte de ligne sous les lettres (environ 0,3 × la taille, plus un peu
+      // de marge), celui qui convenait. Une marge fixe de quelques pixels paraissait collée dès que le
+      // trait est épais et oblique (son extrémité coupée déborde du rectangle d'une demi-épaisseur).
+      const marginV = 2 + 0.28 * (entry.data.fontSize || 15);
+      const gap = connectorLabelGapExclusion(table, mid, labelInfo.ink, 4, marginV, marginV);
       if (gap) exclusions.push(gap);
     }
 
