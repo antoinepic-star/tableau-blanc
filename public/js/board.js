@@ -3584,7 +3584,7 @@
     if (labelInfo.show) {
       // Marge du HAUT réduite à mesure que la police grossit (titres) : le vide au-dessus des lettres
       // paraissait plus grand qu'en dessous sur les grosses tailles. Côtés et bas inchangés.
-      const marginTop = Math.max(0.5, 3 - ((entry.data.fontSize || 15) - 15) / 18);
+      const marginTop = Math.max(2, 3 - ((entry.data.fontSize || 15) - 15) / 37);
       const gap = connectorLabelGapExclusion(table, mid, labelInfo.ink, 4, marginTop, 3);
       if (gap) exclusions.push(gap);
     }
