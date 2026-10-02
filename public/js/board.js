@@ -2092,12 +2092,10 @@
       controls = colorDropdownHtml('color', data.color, false, 'Couleur de fond')
         + borderDropdownHtml(data, { withRadius: false })
         + `<span class="element-toolbar-sep"></span>`
-        // Moodboard : "Ordonner" n'a pas de sens (la mise en colonnes est permanente) ; à la place, le
-        // bouton qui sert à le remplir.
+        // Moodboard : le bouton qui sert à le remplir (la mise en colonnes est permanente).
         + (data.tag === 'moodboard'
-          ? `<button type="button" class="element-icon-btn element-moodboard-add-btn" title="Ajouter des photos">${iconAddPhotos()}</button>`
-          : `<button type="button" class="element-icon-btn element-arrange-btn" title="Ordonner (ranger le contenu actuel en grille)">${iconArrange()}</button>`)
-        + `<span class="element-toolbar-sep"></span>`
+          ? `<button type="button" class="element-icon-btn element-moodboard-add-btn" title="Ajouter des photos">${iconAddPhotos()}</button><span class="element-toolbar-sep"></span>`
+          : '')
         + `<select class="element-fontsize-select" data-role="title-fontsize" title="Taille du titre">${fontSizeOptionsHtml(data.fontSize)}</select>`
         + colorDropdownHtml('title', data.titleColor, false, 'Couleur du titre');
     } else if (data.type === 'instruction' || data.type === 'tip') {
@@ -2178,7 +2176,6 @@
   function iconVote() { return '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>'; }
   function iconToFront() { return '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="12" height="12" rx="1.5"/><rect x="9" y="9" width="12" height="12" rx="1.5" fill="currentColor" stroke="none"/></svg>'; }
   function iconToBack() { return '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="12" height="12" rx="1.5" fill="currentColor" stroke="none"/><rect x="9" y="9" width="12" height="12" rx="1.5"/></svg>'; }
-  function iconArrange() { return '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>'; }
   // Alignement du TEXTE dans une forme (distinct des icônes d'alignement d'ÉLÉMENTS ci-dessus,
   // iconAlignLeft/Center/Right, qui représentent le calage d'objets les uns par rapport aux autres) :
   // trois lignes de longueurs différentes, calées comme le ferait le texte lui-même.
@@ -4412,35 +4409,6 @@
           pendingMoodboardFrameId = id;
           moodboardFileInput.value = '';
           moodboardFileInput.click();
-        });
-      }
-      const arrangeBtn = toolbarEl.querySelector('.element-arrange-btn');
-      if (arrangeBtn) {
-        arrangeBtn.addEventListener('pointerdown', e => e.stopPropagation());
-        arrangeBtn.addEventListener('click', () => {
-          // Action ponctuelle (comme dupliquer) : range le contenu actuel une fois, sans laisser de
-          // mode actif — ajouter/déplacer un élément après coup ne redéclenche rien. Géométrie complète
-          // (pas seulement x/y) capturée avant : ranger peut aussi redimensionner le contenu — ET la
-          // frame elle-même (sa hauteur s'ajuste pour tout contenir, cf. applyFrameArrangement).
-          const childIds = frameChildren(id);
-          const beforeFrame = { x: entry.data.x, y: entry.data.y, width: entry.data.width, height: entry.data.height };
-          const before = childIds.map((cid) => {
-            const en = elements.get(cid);
-            return en ? { id: cid, x: en.data.x, y: en.data.y, width: en.data.width, height: en.data.height } : null;
-          }).filter(Boolean);
-          Api.arrangeFrame(id).then(({ elements: arranged }) => {
-            arranged.forEach(applyRemoteUpdate);
-            recordUndo(async () => {
-              // La frame D'ABORD (attendue), puis les enfants : sinon un enfant restauré à une position
-              // qui ne rentre plus dans la frame ENCORE rétrécie (cf. findContainingFrame côté serveur,
-              // basé sur la taille ACTUELLE) se retrouverait détaché par erreur (frameId recalculé à
-              // null) avant même que la frame n'ait retrouvé sa taille d'origine.
-              await Api.updateElement(id, beforeFrame).then(applyRemoteUpdate).catch(() => {});
-              await Promise.all(before.map(b =>
-                Api.updateElement(b.id, { x: b.x, y: b.y, width: b.width, height: b.height }).then(applyRemoteUpdate).catch(() => {})
-              ));
-            });
-          }).catch(() => {});
         });
       }
     }
