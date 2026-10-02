@@ -826,6 +826,12 @@ const FRAME_MIN_HEIGHT = 100;
 // colonnes s'ajuste ensuite pour remplir exactement la frame. Mêmes valeurs côté client (board.js).
 const MOODBOARD_PADDING = 12;
 const MOODBOARD_TARGET_COL_WIDTH = 220;
+// Haut de la zone des photos : sous le titre de la frame, dont la hauteur suit sa taille de police
+// (top 16px + interligne 1.5×, cf. applyFrameTitleStyle côté client) — sinon un gros titre était
+// recouvert par les photos. Ne descend jamais sous FRAME_TITLE_HEIGHT (taille par défaut).
+function moodboardTitleBottom(frame) {
+  return Math.max(FRAME_TITLE_HEIGHT, 16 + Math.round((frame.font_size || 15) * 1.5) + 1);
+}
 
 // Remet en page les moodboards parmi `frameIds` (les autres frames sont ignorées) et diffuse le
 // résultat — appelé après toute opération qui peut changer le contenu d'un moodboard (création,
@@ -868,7 +874,7 @@ async function applyFrameArrangement(whiteboardId, frameId) {
     const pad = MOODBOARD_PADDING;
     const cols = Math.max(1, Math.round((frame.width - pad) / (MOODBOARD_TARGET_COL_WIDTH + pad)));
     const colWidth = Math.max(20, (frame.width - pad * (cols + 1)) / cols);
-    const bottoms = new Array(cols).fill(FRAME_TITLE_HEIGHT + pad);
+    const bottoms = new Array(cols).fill(moodboardTitleBottom(frame) + pad);
     const stmts = [];
     for (const c of images) {
       let col = 0;
@@ -1295,7 +1301,7 @@ app.patch('/api/whiteboards/:whiteboardId/elements/:id', whiteboardAuth, ah(asyn
   }
   // Moodboard : se remet en page quand la frame est redimensionnée (nombre de colonnes) ET quand une
   // de ses photos change de taille/position/appartenance (ancien ou nouveau cadre concerné).
-  if (existing.type === 'frame' && existing.tag === 'moodboard' && (width !== undefined || height !== undefined)) {
+  if (existing.type === 'frame' && existing.tag === 'moodboard' && (width !== undefined || height !== undefined || fontSize !== undefined)) {
     const arranged = await rearrangeMoodboards(req.params.whiteboardId, [req.params.id]);
     const self = arranged.find(a => a.id === element.id);
     if (self) Object.assign(element, { x: self.x, y: self.y, width: self.width, height: self.height });

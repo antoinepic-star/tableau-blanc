@@ -4459,7 +4459,19 @@
           const size = Number(titleFontSizeSelect.value);
           entry.data.fontSize = size;
           applyFrameTitleStyle(entry);
-          Api.updateElement(id, { fontSize: size }).catch(() => {});
+          // Moodboard : la zone des photos commence sous le titre, donc suit sa taille — remise en page
+          // immédiate ici, confirmée ensuite par le serveur (cf. moodboardTitleBottom dans server.js).
+          if (entry.data.tag === 'moodboard') {
+            const kids = frameChildren(id).map(cid => elements.get(cid)).filter(Boolean)
+              .sort((a, b) => a.data.y - b.data.y || a.data.x - b.data.x);
+            const newH = liveReflowMoodboard(entry, kids, entry.data.width);
+            entry.data.height = newH;
+            entry.el.style.height = `${newH}px`;
+            repositionToolbar(entry);
+            updateConnectorsFor(id);
+            kids.forEach(c => updateConnectorsFor(c.data.id));
+          }
+          Api.updateElement(id, { fontSize: size }).then(applyRemoteUpdate).catch(() => {});
           if (before !== size) recordFieldUndo(id, { fontSize: before });
         });
       }
@@ -5423,7 +5435,7 @@
     const pad = MOODBOARD_PADDING;
     const cols = Math.max(1, Math.round((newWidth - pad) / (MOODBOARD_TARGET_COL_WIDTH + pad)));
     const colWidth = Math.max(20, (newWidth - pad * (cols + 1)) / cols);
-    const bottoms = new Array(cols).fill(FRAME_TITLE_HEIGHT + pad);
+    const bottoms = new Array(cols).fill(Math.max(FRAME_TITLE_HEIGHT, 16 + Math.round((frameEntry.data.fontSize || 15) * 1.5) + 1) + pad);
     children.forEach((child) => {
       if (child.data.type !== 'image' || !(child.data.width > 0) || !(child.data.height > 0)) return;
       let col = 0;
