@@ -301,9 +301,9 @@
   document.getElementById('newWhiteboardBtn').addEventListener('click', () => openWhiteboardForm(null));
   document.getElementById('backToListBtn').addEventListener('click', showWhiteboardList);
 
-  // ---------- Liste des templates ----------
-  // Pas de création ici (cf. templateListView dans admin.html) : un template ne se crée que depuis un
-  // tableau. Le back-office se contente de renommer/changer les tags/supprimer.
+  // ---------- Liste des blocs ----------
+  // Pas de création ici (cf. templateListView dans admin.html) : un bloc ne se crée que depuis une
+  // frame d'un tableau. Le back-office se contente de renommer/changer les tags/supprimer.
 
   async function loadTemplates() {
     const templates = await api('GET', '/api/admin/templates');
@@ -314,7 +314,7 @@
     const listEl = document.getElementById('templateList');
     listEl.innerHTML = '';
     if (!templates.length) {
-      listEl.innerHTML = '<div class="sh-empty-state">Aucun template enregistré pour l’instant — depuis un tableau, le bouton "…" en haut à droite permet d’en créer un.</div>';
+      listEl.innerHTML = '<div class="sh-empty-state">Aucun bloc enregistré pour l’instant — il se crée depuis une frame, dans un board.</div>';
       return;
     }
     templates.forEach((t) => {
@@ -322,8 +322,11 @@
       row.className = 'sh-list-row';
       row.innerHTML = `
         <div class="sh-list-row-main">
-          <span class="sh-list-row-title"></span>
-          <span class="sh-list-row-subtitle"></span>
+          <div>
+            <span class="sh-list-row-title"></span>
+            <span class="sh-list-row-subtitle" data-role="count"></span>
+          </div>
+          <span class="sh-list-row-subtitle" data-role="tags"></span>
         </div>
         <div class="sh-list-row-right">
           <button type="button" class="tb-row-icon-btn" data-action="edit" title="Modifier">
@@ -335,9 +338,10 @@
         </div>
       `;
       row.querySelector('.sh-list-row-title').textContent = t.name;
-      row.querySelector('.sh-list-row-subtitle').textContent = t.tags.length
-        ? `${t.tags.join(' · ')} — ${t.elementCount} élément${t.elementCount > 1 ? 's' : ''}`
-        : `${t.elementCount} élément${t.elementCount > 1 ? 's' : ''}`;
+      row.querySelector('[data-role="count"]').textContent = `· ${t.elementCount} élément${t.elementCount > 1 ? 's' : ''}`;
+      const tagsEl = row.querySelector('[data-role="tags"]');
+      if (t.tags.length) tagsEl.textContent = t.tags.join(' · ');
+      else tagsEl.remove();
       row.querySelector('[data-action="edit"]').addEventListener('click', (e) => { e.stopPropagation(); openTemplateForm(t); });
       row.querySelector('[data-action="delete"]').addEventListener('click', (e) => {
         e.stopPropagation();
@@ -358,7 +362,7 @@
 
   document.getElementById('templateFormSaveBtn').addEventListener('click', async () => {
     const name = document.getElementById('tfName').value.trim();
-    if (!name) { alert('Merci de donner un titre au template.'); return; }
+    if (!name) { alert('Merci de donner un titre au bloc.'); return; }
     const tags = document.getElementById('tfTags').value.split(',').map(s => s.trim()).filter(Boolean);
     const btn = document.getElementById('templateFormSaveBtn');
     btn.disabled = true;

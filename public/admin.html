@@ -55,7 +55,7 @@
 
     <nav class="tb-section-nav">
       <button type="button" class="tb-section-nav-btn is-active" id="navWhiteboardsBtn">Tableaux blancs</button>
-      <button type="button" class="tb-section-nav-btn" id="navTemplatesBtn">Templates</button>
+      <button type="button" class="tb-section-nav-btn" id="navTemplatesBtn">Blocs</button>
     </nav>
 
     <div class="sh-overlay" id="shToolsOverlay" onclick="shCloseDrawer('shToolsDrawer','shToolsOverlay')"></div>
@@ -203,9 +203,9 @@
 
     <main id="templateListView" class="sh-page-container" style="display:none">
       <div class="sh-page-header-row">
-        <h1>Liste des templates</h1>
+        <h1>Liste des blocs</h1>
       </div>
-      <div class="sh-field-hint" style="margin-bottom:16px;">Un template ne se crée que depuis un tableau (bouton "…" en haut à droite) — ici, tu peux le renommer, changer ses tags, ou le supprimer. Communs à tous les tableaux.</div>
+      <div class="sh-field-hint" style="margin-bottom:16px;">Pour créer un bloc, il faut le faire directement dans une frame, depuis un board. Ici, on peut simplement renommer, changer les tags, ou supprimer.</div>
       <div id="templateList" class="sh-entity-list"></div>
     </main>
   </div>
@@ -272,7 +272,7 @@
   <div class="sh-overlay" id="templateFormOverlay" onclick="shCloseDrawer('templateFormDrawer','templateFormOverlay')"></div>
   <aside class="sh-drawer" id="templateFormDrawer">
     <div class="sh-drawer-header">
-      <h2>Modifier le template</h2>
+      <h2>Modifier le bloc</h2>
       <button type="button" class="sh-icon-trigger" onclick="shCloseDrawer('templateFormDrawer','templateFormOverlay')" aria-label="Fermer">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
       </button>
@@ -295,7 +295,7 @@
   <!-- Modale de suppression -->
   <div class="sh-modal-overlay" id="deleteTemplateModal">
     <div class="sh-modal">
-      <h3>Supprimer ce template ?</h3>
+      <h3>Supprimer ce bloc ?</h3>
       <p>Cette action est irréversible.</p>
       <div class="sh-modal-actions">
         <button type="button" class="sh-btn sh-btn-secondary" onclick="shCloseModal('deleteTemplateModal')">Annuler</button>
