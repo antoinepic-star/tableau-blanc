@@ -666,7 +666,7 @@ app.post('/api/whiteboards/:whiteboardId/cursor', whiteboardAuth, (req, res) => 
 // TABLEAU : ÉLÉMENTS (post-it, trait, texte, image)
 // =====================
 
-const ELEMENT_LABELS = { note: 'post-it', line: 'trait', text: 'bloc de texte', image: 'image', rectangle: 'rectangle', connector: 'connecteur', frame: 'frame', instruction: 'bloc consigne', tip: 'bloc tips', webpage: 'bloc page web', stack: 'pile de post-its', arbo: 'arborescence' };
+const ELEMENT_LABELS = { note: 'post-it', line: 'trait', text: 'bloc de texte', image: 'image', rectangle: 'rectangle', connector: 'connecteur', frame: 'frame', instruction: 'bloc consigne', tip: 'bloc tips', webpage: 'bloc user flow', stack: 'pile de post-its', arbo: 'arborescence' };
 // Accord de l'article indéfini pour les phrases d'historique (cf. logBoardHistory) — "un post-it",
 // "une image" : un simple tableau plutôt qu'une détection automatique du genre, pas assez de types
 // pour que ça vaille la peine.

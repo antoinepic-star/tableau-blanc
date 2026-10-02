@@ -290,7 +290,7 @@
   // transporte déjà pas) : un template est un point de départ propre, pas un clone exact de l'activité.
   templateSaveBtn.addEventListener('click', () => {
     const name = templateNameInput.value.trim();
-    if (!name) { alert('Merci de donner un titre au template.'); return; }
+    if (!name) { alert('Merci de donner un titre au bloc.'); return; }
     const data = [...elements.values()].map(en => snapshotForCreate(en.data));
     if (!data.length) { alert('Le tableau est vide.'); return; }
     const tags = templateTagsInput.value.split(',').map(t => t.trim()).filter(Boolean);
@@ -669,10 +669,6 @@
         { type: 'rectangle', variant: 'diamond', label: 'Losange', icon: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><polygon points="12,3 21,12 12,21 3,12"/></svg>' },
       ],
     },
-    webpages: {
-      kind: 'items',
-      items: WEBPAGE_TYPES.map(t => ({ type: 'webpage', variant: t.key, label: t.label, icon: wpSvg(t.key, 22, 15) })),
-    },
     notecolors: { kind: 'colors' },
     textstyles: { kind: 'textstyles' },
     uploads: { kind: 'uploads' },
@@ -687,6 +683,9 @@
     { type: 'instruction', label: 'Consigne', icon: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="7" cy="7" r="4"/><path d="M6 5.5h2v3"/><line x1="4" y1="16" x2="20" y2="16"/><line x1="4" y1="20" x2="15" y2="20"/></svg>' },
     { type: 'tip', label: 'Tips', icon: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18h6"/><path d="M10 21h4"/><path d="M12 3a6 6 0 0 0-3.6 10.8c.5.4.8 1 .8 1.7v.5h5.6v-.5c0-.7.3-1.3.8-1.7A6 6 0 0 0 12 3z"/></svg>' },
     { type: 'arbo', label: 'Arborescence', icon: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="7" height="5" rx="1"/><rect x="14" y="4" width="7" height="5" rx="1"/><rect x="14" y="15" width="7" height="5" rx="1"/><path d="M6.5 9v3a2 2 0 0 0 2 2H14"/><path d="M14 17.5H8.5a2 2 0 0 1-2-2V12"/></svg>' },
+    // Pas posé directement : ouvre un sous-menu avec les différents types de page (cf. openUserFlowsFlyout).
+    // Ex-"Pages web", qui avait son propre bouton dans la barre avant d'être rangé ici.
+    { submenu: 'userflows', label: 'User flows', icon: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><line x1="3" y1="9" x2="21" y2="9"/><circle cx="6.5" cy="6.5" r="0.6" fill="currentColor" stroke="none"/><circle cx="8.5" cy="6.5" r="0.6" fill="currentColor" stroke="none"/></svg>' },
     { type: 'moodboard', label: 'Moodboard', icon: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="8" height="10" rx="1.5"/><rect x="13" y="3" width="8" height="6" rx="1.5"/><rect x="3" y="15" width="8" height="6" rx="1.5"/><rect x="13" y="11" width="8" height="10" rx="1.5"/></svg>' },
   ];
   // Icône générique pour un template enregistré par un utilisateur (pas de vignette par template).
@@ -866,28 +865,37 @@
         <button type="button" class="add-flyout-item" data-builtin="${i}">
           <span class="add-flyout-item-icon">${it.icon}</span>
           <span class="add-flyout-item-label">${it.label}</span>
+          ${it.submenu ? `<span class="add-flyout-item-chevron">${ICON_CHEVRON_RIGHT}</span>` : ''}
         </button>
       `).join('') + `
         <span class="toolbar-menu-sep"></span>
         <button type="button" class="add-flyout-item" id="otherTemplatesBtn">
           <span class="add-flyout-item-icon">${ICON_TEMPLATE_GENERIC}</span>
-          <span class="add-flyout-item-label">Autres templates</span>
+          <span class="add-flyout-item-label">Autres blocs</span>
           <span class="add-flyout-item-chevron">${ICON_CHEVRON_RIGHT}</span>
         </button>
       `;
       addFlyout.querySelectorAll('[data-builtin]').forEach((btn, i) => {
         btn.addEventListener('click', (e) => {
           const it = BUILTIN_TEMPLATE_ITEMS[i];
+          if (it.submenu === 'userflows') {
+            e.stopPropagation();
+            // Re-cliquer sur l'entrée déjà ouverte referme son sous-menu ; cliquer sur une AUTRE entrée à
+            // sous-menu (Autres blocs) remplace simplement le contenu (cf. dataset.owner).
+            if (addSubFlyout.classList.contains('is-open') && addSubFlyout.dataset.owner === 'userflows') { addSubFlyout.classList.remove('is-open'); return; }
+            openUserFlowsFlyout(e.currentTarget, sourceBtn);
+            return;
+          }
           armPlacement(it.type, it.icon, { sourceBtn, x: e.clientX, y: e.clientY });
         });
       });
-      // Chargée dès l'ouverture de CE menu (pas seulement au clic sur "Autres templates") pour que le
+      // Chargée dès l'ouverture de CE menu (pas seulement au clic sur "Autres blocs") pour que le
       // sous-menu s'affiche sans latence supplémentaire — reste juste un nom+tags par template, léger
       // même chargé "pour rien" si personne ne clique dessus.
       const otherTemplatesPromise = Api.listTemplates().catch(() => []);
       document.getElementById('otherTemplatesBtn').addEventListener('click', (e) => {
         e.stopPropagation();
-        if (addSubFlyout.classList.contains('is-open')) { addSubFlyout.classList.remove('is-open'); return; }
+        if (addSubFlyout.classList.contains('is-open') && addSubFlyout.dataset.owner === 'other') { addSubFlyout.classList.remove('is-open'); return; }
         openOtherTemplatesFlyout(e.currentTarget, otherTemplatesPromise, sourceBtn);
       });
     }
@@ -905,11 +913,12 @@
       addSubFlyout.style.top = `${clamp(r.top + r.height / 2 - fRect.height / 2, 8, window.innerHeight - fRect.height - 8)}px`;
     }
     addSubFlyout.innerHTML = '<div class="add-flyout-loading">Chargement…</div>';
+    addSubFlyout.dataset.owner = 'other';
     addSubFlyout.classList.add('is-open');
     position();
     templatesPromise.then((templates) => {
       if (!templates.length) {
-        addSubFlyout.innerHTML = '<div class="add-flyout-empty">Aucun autre template enregistré</div>';
+        addSubFlyout.innerHTML = '<div class="add-flyout-empty">Aucun autre bloc enregistré</div>';
       } else {
         addSubFlyout.innerHTML = '';
         templates.forEach((t) => {
@@ -942,6 +951,30 @@
     }).catch(() => {
       addSubFlyout.innerHTML = '<div class="add-flyout-empty">Erreur de chargement.</div>';
     });
+  }
+
+  // Sous-menu "User flows" : les types de page (accueil, connexion, liste...), qui posent chacun un bloc
+  // 'webpage' de ce type (cf. placeNewElement, WEBPAGE_TYPES). Même emplacement/mécanique que "Autres
+  // blocs" ci-dessus, mais le contenu est local : rien à charger.
+  function openUserFlowsFlyout(anchorBtn, sourceBtn) {
+    addSubFlyout.innerHTML = WEBPAGE_TYPES.map((t, i) => `
+      <button type="button" class="add-flyout-item" data-index="${i}">
+        <span class="add-flyout-item-icon">${wpSvg(t.key, 22, 15)}</span>
+        <span class="add-flyout-item-label">${t.label}</span>
+      </button>
+    `).join('');
+    addSubFlyout.querySelectorAll('.add-flyout-item').forEach((btn, i) => {
+      btn.addEventListener('click', (e) => {
+        const t = WEBPAGE_TYPES[i];
+        armPlacement('webpage', wpSvg(t.key, 22, 15), { variant: t.key, sourceBtn, x: e.clientX, y: e.clientY });
+      });
+    });
+    addSubFlyout.dataset.owner = 'userflows';
+    addSubFlyout.classList.add('is-open');
+    const r = anchorBtn.getBoundingClientRect();
+    const fRect = addSubFlyout.getBoundingClientRect();
+    addSubFlyout.style.left = `${r.right + 10}px`;
+    addSubFlyout.style.top = `${clamp(r.top + r.height / 2 - fRect.height / 2, 8, window.innerHeight - fRect.height - 8)}px`;
   }
 
   function openAddFlyout(btn, key) {
