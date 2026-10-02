@@ -3493,9 +3493,22 @@
       }
     });
     if (first === -1) return null;
-    const startIdx = Math.max(0, first - 1);
-    const endIdx = Math.min(table.length - 1, last + 1);
-    return { start: table[startIdx].dist, end: table[endIdx].dist };
+    // Affine l'entrée/sortie par dichotomie entre l'échantillon dehors et le premier dedans (resp. le
+    // dernier dedans et celui d'après) : sans ça, le trou déborde du rectangle d'un pas d'échantillonnage
+    // entier (parfois des dizaines d'unités), donc bien plus que la marge voulue.
+    const inside = (p) => p.x >= rect.x0 && p.x <= rect.x1 && p.y >= rect.y0 && p.y <= rect.y1;
+    const refine = (outer, inner) => {
+      let lo = 0, hi = 1; // 0 = outer (dehors), 1 = inner (dedans)
+      for (let k = 0; k < 14; k++) {
+        const m = (lo + hi) / 2;
+        const p = { x: outer.x + (inner.x - outer.x) * m, y: outer.y + (inner.y - outer.y) * m };
+        if (inside(p)) hi = m; else lo = m;
+      }
+      return outer.dist + (inner.dist - outer.dist) * hi;
+    };
+    const start = first > 0 ? refine(table[first - 1], table[first]) : table[first].dist;
+    const end = last < table.length - 1 ? refine(table[last + 1], table[last]) : table[last].dist;
+    return { start, end };
   }
 
   function renderConnectorGeometry(entry) {
