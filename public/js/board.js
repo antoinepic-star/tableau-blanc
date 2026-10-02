@@ -3290,6 +3290,121 @@
     };
   }
 
+  // Découpe UN segment de Bézier cubique en deux, pile au paramètre t (De Casteljau) — utilisé pour
+  // extraire une portion exacte du tracé (garder seulement [t1,t2] d'un segment), que ce soit pour
+  // laisser un trou au milieu (libellé) ou raccourcir une extrémité (pointe de flèche, cf. plus bas).
+  function splitBezierAt(s, t) {
+    const lerp = (a, b, u) => ({ x: a.x + (b.x - a.x) * u, y: a.y + (b.y - a.y) * u });
+    const p01 = lerp(s.p0, s.c1, t), p12 = lerp(s.c1, s.c2, t), p23 = lerp(s.c2, s.p1, t);
+    const p012 = lerp(p01, p12, t), p123 = lerp(p12, p23, t);
+    const p0123 = lerp(p012, p123, t);
+    return {
+      left: { p0: s.p0, c1: p01, c2: p012, p1: p0123 },
+      right: { p0: p0123, c1: p123, c2: p23, p1: s.p1 },
+    };
+  }
+
+  // Table d'échantillons (point + segment d'origine + t + longueur cumulée depuis le départ) : base
+  // commune à tout ce qui a besoin de raisonner en distance parcourue le long de la courbe plutôt qu'en
+  // paramètre t brut (milieu du libellé, trou autour de lui, recul des extrémités sous les pointes de
+  // flèche) — une seule passe d'échantillonnage, réutilisée partout ci-dessous.
+  function connectorArcTable(segs) {
+    const SAMPLES = 16;
+    const table = [];
+    let dist = 0;
+    segs.forEach((s, segIndex) => {
+      let prev = null;
+      for (let i = 0; i <= SAMPLES; i++) {
+        const t = i / SAMPLES;
+        const p = bezierPointAt(s, t);
+        if (prev) dist += Math.hypot(p.x - prev.x, p.y - prev.y);
+        table.push({ x: p.x, y: p.y, segIndex, t, dist });
+        prev = p;
+      }
+    });
+    return table;
+  }
+
+  // Retrouve le point (+ segment/t d'origine) à une distance parcourue donnée, par interpolation entre
+  // les deux échantillons encadrants — jamais entre deux segments différents (un t interpolé entre deux
+  // paramétrisations distinctes n'aurait aucun sens), auquel cas on se cale sur le second échantillon.
+  function pointAtArcLength(table, target) {
+    const last = table[table.length - 1];
+    if (target <= 0) return table[0];
+    if (target >= last.dist) return last;
+    for (let i = 1; i < table.length; i++) {
+      if (table[i].dist >= target) {
+        const a = table[i - 1], b = table[i];
+        if (a.segIndex !== b.segIndex) return b;
+        const span = b.dist - a.dist;
+        const frac = span ? (target - a.dist) / span : 0;
+        return { x: a.x + (b.x - a.x) * frac, y: a.y + (b.y - a.y) * frac, segIndex: a.segIndex, t: a.t + (b.t - a.t) * frac };
+      }
+    }
+    return last;
+  }
+
+  // Extrait la portion de `segs` comprise entre deux points d'arc (bornes incluses), en découpant les
+  // segments de départ/arrivée pile aux bons t — les segments strictement entre les deux restent
+  // entiers, ceux strictement AVANT/APRÈS sont exclus.
+  function connectorSubpathSegs(segs, fromInfo, toInfo) {
+    const out = [];
+    for (let i = fromInfo.segIndex; i <= toInfo.segIndex; i++) {
+      const seg = segs[i];
+      if (i === fromInfo.segIndex && i === toInfo.segIndex) {
+        const afterFrom = splitBezierAt(seg, fromInfo.t).right;
+        const tRel = fromInfo.t >= 1 ? 0 : clamp((toInfo.t - fromInfo.t) / (1 - fromInfo.t), 0, 1);
+        out.push(splitBezierAt(afterFrom, tRel).left);
+      } else if (i === fromInfo.segIndex) {
+        out.push(splitBezierAt(seg, fromInfo.t).right);
+      } else if (i === toInfo.segIndex) {
+        out.push(splitBezierAt(seg, toInfo.t).left);
+      } else {
+        out.push(seg);
+      }
+    }
+    return out;
+  }
+
+  // Fusionne/trie/clippe une liste de plages [début,fin] (en longueur d'arc) à exclure du tracé visible
+  // — au cas où, sur un connecteur très court, le recul sous une pointe de flèche chevaucherait le trou
+  // du libellé : mieux vaut une seule plage fusionnée qu'un découpage incohérent.
+  function mergeConnectorExclusions(exclusions, totalLen) {
+    const sorted = exclusions
+      .map(e => ({ start: clamp(e.start, 0, totalLen), end: clamp(e.end, 0, totalLen) }))
+      .filter(e => e.end > e.start)
+      .sort((a, b) => a.start - b.start);
+    const merged = [];
+    sorted.forEach((e) => {
+      const last = merged[merged.length - 1];
+      if (last && e.start <= last.end) last.end = Math.max(last.end, e.end);
+      else merged.push({ ...e });
+    });
+    return merged;
+  }
+
+  // Construit le `d` du trait VISIBLE (pas celui, toujours entier, de la zone de clic) en retirant une
+  // ou plusieurs plages de la courbe complète : sous chaque pointe de flèche (le trait ne doit pas
+  // déborder dessous — cf. le fin reste de tiret visible par endroits sinon, une pointe triangulaire ne
+  // couvrant pas toute l'épaisseur du trait jusqu'à son extrémité) et autour du libellé s'il y en a un.
+  // Plusieurs "M" dans un seul `d` : des sous-tracés disjoints dans UN SEUL <path>, standard SVG — et
+  // marker-start/marker-end continuent de ne s'appliquer qu'aux tout premier/dernier sommets du `d`
+  // entier, jamais à ces coupures internes.
+  function connectorVisiblePathD(segs, origin, table, totalLen, exclusions) {
+    const merged = mergeConnectorExclusions(exclusions, totalLen);
+    const visibleRanges = [];
+    let cursor = 0;
+    merged.forEach((ex) => {
+      if (ex.start > cursor) visibleRanges.push({ start: cursor, end: ex.start });
+      cursor = Math.max(cursor, ex.end);
+    });
+    if (cursor < totalLen) visibleRanges.push({ start: cursor, end: totalLen });
+    return visibleRanges
+      .filter(r => r.end - r.start > 0.01)
+      .map(r => connectorPathD(connectorSubpathSegs(segs, pointAtArcLength(table, r.start), pointAtArcLength(table, r.end)), origin))
+      .join(' ');
+  }
+
   // Reconstruit les poignées de points de passage à chaque recalcul de géométrie (coût négligeable,
   // quelques divs) : une poignée "sommet" par point de passage EXISTANT (le glisser le repositionne),
   // une poignée "ajouter" plus discrète au milieu paramétrique de CHAQUE segment (le glisser y insère
@@ -3308,6 +3423,33 @@
       html += `<div class="connector-waypoint-handle" data-kind="vertex" data-index="${i - 1}" style="left:${p.x - origin.x}px; top:${p.y - origin.y}px"></div>`;
     }
     container.innerHTML = html;
+  }
+
+  // Synchronise le CONTENU du libellé (valeur/taille/couleur hors édition, largeur auto) avant tout
+  // calcul de géométrie — sa largeur conditionne le trou à laisser dans le tracé, il faut donc la
+  // connaître AVANT de construire le `d` visible, pas seulement pour le positionner après coup.
+  function syncConnectorLabelContent(entry) {
+    const wrap = entry.el.querySelector('.connector-label');
+    const textarea = entry.el.querySelector('.connector-label-text');
+    if (!wrap || !textarea) return { show: false, halfWidth: 0 };
+    const editing = textarea.classList.contains('is-field-editing');
+    const show = !!(entry.data.title || editing);
+    wrap.classList.toggle('is-hidden', !show);
+    if (!show) return { show: false, halfWidth: 0 };
+    if (document.activeElement !== textarea) {
+      textarea.value = entry.data.title || '';
+      textarea.style.fontSize = `${entry.data.fontSize || 15}px`;
+      textarea.style.color = entry.data.textColor || '#1c1c28';
+      autoWidthTag(textarea);
+    }
+    return { show: true, halfWidth: wrap.offsetWidth / 2 };
+  }
+
+  function positionConnectorLabel(entry, mid, origin) {
+    const wrap = entry.el.querySelector('.connector-label');
+    if (!wrap || wrap.classList.contains('is-hidden')) return;
+    wrap.style.left = `${mid.x - origin.x}px`;
+    wrap.style.top = `${mid.y - origin.y}px`;
   }
 
   function renderConnectorGeometry(entry) {
@@ -3339,64 +3481,33 @@
     entry.el.style.width = `${width}px`;
     entry.el.style.height = `${height}px`;
 
-    const d = connectorPathD(segs, origin);
+    const table = connectorArcTable(segs);
+    const totalLen = table[table.length - 1].dist;
+    const labelInfo = syncConnectorLabelContent(entry);
+
+    // Trou à laisser dans le trait VISIBLE (pas la zone de clic) : sous chaque pointe de flèche — une
+    // pointe triangulaire, par construction, ne couvre pas toute l'épaisseur du trait jusqu'à son tout
+    // dernier pixel (elle s'amincit jusqu'à un point) ; un trait pointillé/continu qui va jusque-là
+    // laisse donc dépasser un petit bout de trait à côté de la pointe. Reculer le trait d'avance, sous
+    // la zone que la pointe recouvre de toute façon, règle ça proprement plutôt qu'au cas par cas selon
+    // le style de trait. Pareil autour du libellé, avec une petite marge en plus de sa largeur mesurée.
+    const exclusions = [];
+    if (entry.data.startCap === 'arrow') exclusions.push({ start: 0, end: Math.max(0, arrowSize - 1) });
+    if (entry.data.endCap === 'arrow') exclusions.push({ start: Math.max(0, totalLen - (arrowSize - 1)), end: totalLen });
+    let mid = null;
+    if (labelInfo.show) {
+      mid = pointAtArcLength(table, totalLen / 2);
+      const halfGap = labelInfo.halfWidth + 6;
+      exclusions.push({ start: totalLen / 2 - halfGap, end: totalLen / 2 + halfGap });
+    }
+
     const hitPath = entry.el.querySelector('.connector-hit');
     const linePath = entry.el.querySelector('.connector-line');
-    if (hitPath) hitPath.setAttribute('d', d);
-    if (linePath) linePath.setAttribute('d', d);
+    if (hitPath) hitPath.setAttribute('d', connectorPathD(segs, origin));
+    if (linePath) linePath.setAttribute('d', connectorVisiblePathD(segs, origin, table, totalLen, exclusions));
 
     renderConnectorHandles(entry, points, segs, origin);
-    renderConnectorLabel(entry, segs, origin);
-  }
-
-  // Milieu du tracé complet par longueur d'arc (pas juste le milieu d'UN segment) : échantillonne
-  // chaque courbe de Bézier puis cherche le point à la moitié de la longueur cumulée — reste correct
-  // même avec plusieurs points de passage, où "le milieu" au sens visuel n'est pas forcément au
-  // milieu paramétrique d'un segment donné.
-  function connectorArcMidpoint(segs) {
-    const SAMPLES = 12;
-    const pts = [];
-    segs.forEach((s) => { for (let i = 0; i <= SAMPLES; i++) pts.push(bezierPointAt(s, i / SAMPLES)); });
-    const lens = [];
-    let total = 0;
-    for (let i = 1; i < pts.length; i++) {
-      const d = Math.hypot(pts[i].x - pts[i - 1].x, pts[i].y - pts[i - 1].y);
-      lens.push(d);
-      total += d;
-    }
-    const target = total / 2;
-    let acc = 0;
-    for (let i = 0; i < lens.length; i++) {
-      if (acc + lens[i] >= target) {
-        const t = lens[i] ? (target - acc) / lens[i] : 0;
-        return { x: pts[i].x + (pts[i + 1].x - pts[i].x) * t, y: pts[i].y + (pts[i + 1].y - pts[i].y) * t };
-      }
-      acc += lens[i];
-    }
-    return pts[pts.length - 1] || { x: 0, y: 0 };
-  }
-
-  // Libellé au milieu de la flèche (optionnel, cf. wireConnectorLabel) : affiché dès qu'il y a du texte
-  // OU qu'on est en train d'en écrire un (is-field-editing), repositionné à chaque recalcul de
-  // géométrie comme les poignées. Sa valeur n'est resynchronisée que hors édition (document.activeElement),
-  // même principe que les autres champs de ce projet, pour ne jamais écraser une frappe en cours.
-  function renderConnectorLabel(entry, segs, origin) {
-    const wrap = entry.el.querySelector('.connector-label');
-    const textarea = entry.el.querySelector('.connector-label-text');
-    if (!wrap || !textarea) return;
-    const editing = textarea.classList.contains('is-field-editing');
-    const show = !!(entry.data.title || editing);
-    wrap.classList.toggle('is-hidden', !show);
-    if (!show) return;
-    if (document.activeElement !== textarea) {
-      textarea.value = entry.data.title || '';
-      textarea.style.fontSize = `${entry.data.fontSize || 15}px`;
-      textarea.style.color = entry.data.textColor || '#1c1c28';
-      autoWidthTag(textarea);
-    }
-    const mid = connectorArcMidpoint(segs);
-    wrap.style.left = `${mid.x - origin.x}px`;
-    wrap.style.top = `${mid.y - origin.y}px`;
+    if (mid) positionConnectorLabel(entry, mid, origin);
   }
 
   // Câblage du libellé optionnel d'un connecteur : un seul champ texte (reuse de wireMultiFieldEditing,

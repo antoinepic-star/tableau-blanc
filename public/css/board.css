@@ -427,14 +427,14 @@ body.is-linking .element:not(.is-locked) .connector-anchor { display: block; }
 .connector-addpoint-handle { width: 9px; height: 9px; margin: -4.5px 0 0 -4.5px; background: var(--purple); opacity: 0.4; }
 .connector-addpoint-handle:hover { opacity: 0.8; }
 
-/* Libellé optionnel au milieu du connecteur (cf. wireConnectorLabel) : fond opaque = couleur du canevas
-   (#canvasViewport) avec une marge autour du texte, pour que le trait (qui passe dessous, cf. l'ordre
-   des enfants dans renderElement) disparaisse visuellement sous le libellé plutôt que de le traverser.
-   Toujours visible dès qu'il y a du texte (pas seulement à la sélection, contrairement aux poignées) :
-   c'est du contenu, pas un contrôle d'édition. */
+/* Libellé optionnel au milieu du connecteur (cf. wireConnectorLabel) : fond transparent — le trou
+   laissé dans le tracé (cf. connectorVisiblePathD) fait disparaître le trait SOUS le texte, donc pas
+   besoin d'un fond opaque pour le cacher ; ça évite le rectangle gris qui jurait sur un fond coloré
+   (frame, etc.) derrière la flèche. Toujours visible dès qu'il y a du texte (pas seulement à la
+   sélection, contrairement aux poignées) : c'est du contenu, pas un contrôle d'édition. */
 .connector-label {
   position: absolute; transform: translate(-50%, -50%); z-index: 1;
-  background: #eef0f5; border-radius: 4px; padding: 1px 7px; max-width: 320px;
+  padding: 1px 7px; max-width: 320px;
   pointer-events: auto;
 }
 .connector-label.is-hidden { display: none; }
