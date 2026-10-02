@@ -1146,25 +1146,70 @@
     }
   }
 
+  // Pose une image (fichier choisi OU collé depuis le presse-papiers) centrée sur (wx, wy). Au-delà de
+  // la limite de poids, une image collée (typiquement une capture d'écran en PNG, souvent lourde) est
+  // ré-encodée en JPEG réduit plutôt que refusée : la personne n'a pas "choisi" ce fichier, elle ne
+  // peut donc pas le réduire elle-même avant de coller.
+  function addImageFromFile(file, wx, wy, { shrinkIfHeavy = false } = {}) {
+    return new Promise((resolve) => {
+      if (file.size > MAX_IMAGE_BYTES && !shrinkIfHeavy) { alert('Image trop lourde (max 4 Mo).'); return resolve(); }
+      const reader = new FileReader();
+      reader.onload = () => {
+        const img = new Image();
+        img.onload = () => {
+          let imageData = reader.result;
+          if (file.size > MAX_IMAGE_BYTES) {
+            const k = Math.min(1, 1600 / Math.max(img.naturalWidth, img.naturalHeight));
+            const canvas = document.createElement('canvas');
+            canvas.width = Math.max(1, Math.round(img.naturalWidth * k));
+            canvas.height = Math.max(1, Math.round(img.naturalHeight * k));
+            const ctx = canvas.getContext('2d');
+            ctx.fillStyle = '#fff';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+            imageData = canvas.toDataURL('image/jpeg', 0.85);
+          }
+          let w = img.naturalWidth, h = img.naturalHeight;
+          if (w >= h && w > MAX_IMAGE_DIM) { h = h * (MAX_IMAGE_DIM / w); w = MAX_IMAGE_DIM; }
+          else if (h > MAX_IMAGE_DIM) { w = w * (MAX_IMAGE_DIM / h); h = MAX_IMAGE_DIM; }
+          const { x, y } = snapPoint(wx - w / 2, wy - h / 2);
+          createElementTracked({ type: 'image', x, y, width: w, height: h, imageData })
+            .catch(err => alert(err.message))
+            .then(resolve);
+        };
+        img.onerror = () => { alert("Ce fichier n'est pas une image lisible."); resolve(); };
+        img.src = reader.result;
+      };
+      reader.readAsDataURL(file);
+    });
+  }
+
   imageFileInput.addEventListener('change', (e) => {
     const file = e.target.files[0];
     if (!file) return;
-    if (file.size > MAX_IMAGE_BYTES) { alert('Image trop lourde (max 4 Mo).'); return; }
-    const reader = new FileReader();
-    reader.onload = () => {
-      const img = new Image();
-      img.onload = () => {
-        let w = img.naturalWidth, h = img.naturalHeight;
-        if (w >= h && w > MAX_IMAGE_DIM) { h = h * (MAX_IMAGE_DIM / w); w = MAX_IMAGE_DIM; }
-        else if (h > MAX_IMAGE_DIM) { w = w * (MAX_IMAGE_DIM / h); h = MAX_IMAGE_DIM; }
-        const { wx, wy } = pendingImagePlacement || { wx: 0, wy: 0 };
-        const { x, y } = snapPoint(wx - w / 2, wy - h / 2);
-        createElementTracked({ type: 'image', x, y, width: w, height: h, imageData: reader.result })
-          .catch(err => alert(err.message));
-      };
-      img.src = reader.result;
-    };
-    reader.readAsDataURL(file);
+    const { wx, wy } = pendingImagePlacement || { wx: 0, wy: 0 };
+    addImageFromFile(file, wx, wy);
+  });
+
+  // Collage direct d'une image copiée ailleurs (page web, capture d'écran…) : posée au centre de la
+  // vue, plusieurs images légèrement décalées. Sans image dans le presse-papiers, retombe sur le
+  // collage interne d'éléments du tableau (Cmd/Ctrl+C sur la sélection). Ignoré pendant une saisie de
+  // texte, pour laisser le collage natif du champ.
+  document.addEventListener('paste', (e) => {
+    if (isTypingInField() || editingElementId) return;
+    const files = [...(e.clipboardData?.files || [])].filter(f => f.type.startsWith('image/'));
+    if (files.length) {
+      e.preventDefault();
+      const c = viewportCenterWorld();
+      const step = GRID_SIZE * 2;
+      withBusy((async () => {
+        for (let i = 0; i < files.length; i++) await addImageFromFile(files[i], c.x + i * step, c.y + i * step, { shrinkIfHeavy: true });
+      })());
+      return;
+    }
+    if (!clipboard.length) return;
+    e.preventDefault();
+    pasteClipboard();
   });
 
   // ---------- Import PDF (une frame "mosaïque", une image par page) ----------
@@ -1603,13 +1648,6 @@
       copySelection();
       return;
     }
-    if (mod && e.key.toLowerCase() === 'v') {
-      if (isTypingInField() || editingElementId) return;
-      if (!clipboard.length) return;
-      e.preventDefault();
-      pasteClipboard();
-      return;
-    }
     if (e.key.startsWith('Arrow') && !mod) {
       if (isTypingInField() || editingElementId) return;
       if (!selectedElementId && !multiSelectedIds.size) return;
@@ -1624,6 +1662,9 @@
 
     if (editingElementId) return;
     if (e.key !== 'Backspace' && e.key !== 'Delete') return;
+    // Un champ de saisie (commentaire, titre de frame, libellé de flèche…) garde sa touche Retour
+    // arrière : sinon corriger un message proposait de supprimer l'élément sélectionné.
+    if (isTypingInField()) return;
     if (multiSelectedIds.size >= 2) {
       e.preventDefault();
       const ids = [...multiSelectedIds];
@@ -3876,6 +3917,26 @@
     window.addEventListener('pointermove', onMove);
     window.addEventListener('pointerup', onUp);
   }
+
+  // Le trait de clic élargi (.connector-hit, ~20px) d'une flèche déjà ancrée à un point recouvre ce
+  // point : sans ça, le clic tomberait sur la flèche et il serait impossible d'en tirer (ou d'en
+  // faire arriver) une deuxième depuis le même point. On donne donc la priorité au point d'ancrage
+  // visible d'un élément sélectionné quand le clic tombe sur un tel trait, à moins de 10px.
+  document.addEventListener('pointerdown', (e) => {
+    if (e.button !== 0 || !e.target.classList || !e.target.classList.contains('connector-hit')) return;
+    let best = null, bestDist = 10;
+    document.querySelectorAll('.element.is-selected:not(.is-locked) .connector-anchor').forEach((dot) => {
+      const r = dot.getBoundingClientRect();
+      const dist = Math.hypot(e.clientX - (r.left + r.width / 2), e.clientY - (r.top + r.height / 2));
+      if (dist < bestDist) { bestDist = dist; best = dot; }
+    });
+    if (!best) return;
+    const host = elements.get(best.closest('.element').dataset.id);
+    if (!host || !BOX_TYPES.includes(host.data.type)) return;
+    e.stopPropagation();
+    e.preventDefault();
+    startLinking(host, best.dataset.side, e);
+  }, true);
 
   function wireConnectorAnchors(entry) {
     if (!BOX_TYPES.includes(entry.data.type)) return;
