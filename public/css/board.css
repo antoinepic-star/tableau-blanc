@@ -434,7 +434,7 @@ body.is-linking .element:not(.is-locked) .connector-anchor { display: block; }
    sélection, contrairement aux poignées) : c'est du contenu, pas un contrôle d'édition. */
 .connector-label {
   position: absolute; transform: translate(-50%, -50%); z-index: 1;
-  padding: 1px 7px; max-width: 320px;
+  padding: 0 3px; max-width: 320px;
   pointer-events: auto;
 }
 .connector-label.is-hidden { display: none; }

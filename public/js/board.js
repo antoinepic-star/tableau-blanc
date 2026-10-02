@@ -1912,15 +1912,11 @@
       controls = colorDropdownHtml('color', data.color, false, 'Couleur') + lineDropdownHtml(data, { showCaps: data.type === 'connector' });
       if (data.type === 'connector') {
         controls += `<button type="button" class="element-icon-btn element-connector-label-btn" title="${data.title ? 'Modifier le texte' : 'Ajouter du texte'}">${iconTextLabel()}</button>`;
-        // Taille/couleur du libellé : seulement une fois qu'il y en a un (ou qu'on est en train d'en
-        // écrire un, cf. wireConnectorLabel) — inutile tant qu'il n'y a rien à mettre en forme.
+        // Taille du libellé : seulement une fois qu'il y en a un. Pas de couleur dédiée : le texte
+        // prend celle du trait (cf. syncConnectorLabelContent). Même valeur par défaut (15) que pour
+        // l'affichage réel, sinon la taille sélectionnée différerait de celle affichée.
         if (data.title) {
-          // Mêmes valeurs par défaut (15/#1c1c28) que renderConnectorLabel pour l'affichage réel : sans
-          // ce fallback, un libellé créé avant que l'utilisateur n'ait jamais ouvert ces contrôles (donc
-          // sans fontSize/textColor déjà persistés) montrerait une taille sélectionnée différente de
-          // celle réellement affichée sur le trait.
-          controls += `<select class="element-fontsize-select" data-role="connectorlabel-fontsize" title="Taille du texte">${fontSizeOptionsHtml(data.fontSize || 15)}</select>`
-            + colorDropdownHtml('connectorlabel-color', data.textColor || '#1c1c28', false, 'Couleur du texte');
+          controls += `<select class="element-fontsize-select" data-role="connectorlabel-fontsize" title="Taille du texte">${fontSizeOptionsHtml(data.fontSize || 15)}</select>`;
         }
       }
     } else if (data.type === 'text') {
@@ -3015,6 +3011,9 @@
     if (!linePath) return;
     linePath.setAttribute('stroke', color);
     linePath.setAttribute('stroke-width', height);
+    // Le libellé prend la couleur du trait (pas de couleur de texte à part).
+    const labelText = entry.el.querySelector('.connector-label-text');
+    if (labelText) labelText.style.color = color;
     if (entry.data.lineStyle === 'dashed') {
       const dash = Math.max(6, height * 2.2);
       const gap = Math.max(5, height * 1.6);
@@ -3465,7 +3464,7 @@
     if (document.activeElement !== textarea) {
       textarea.value = entry.data.title || '';
       textarea.style.fontSize = `${entry.data.fontSize || 15}px`;
-      textarea.style.color = entry.data.textColor || '#1c1c28';
+      textarea.style.color = entry.data.color || '#1c1c28';
       autoWidthTag(textarea);
     }
     return { show: true, halfWidth: wrap.offsetWidth / 2, halfHeight: wrap.offsetHeight / 2 };
@@ -3543,7 +3542,7 @@
     if (entry.data.startCap === 'arrow') exclusions.push({ start: 0, end: Math.max(0, arrowSize - 1) });
     if (entry.data.endCap === 'arrow') exclusions.push({ start: Math.max(0, totalLen - (arrowSize - 1)), end: totalLen });
     if (labelInfo.show) {
-      const gap = connectorLabelGapExclusion(table, mid, labelInfo.halfWidth + 5, labelInfo.halfHeight + 4);
+      const gap = connectorLabelGapExclusion(table, mid, labelInfo.halfWidth + 3, labelInfo.halfHeight + 2);
       if (gap) exclusions.push(gap);
     }
 
@@ -4117,7 +4116,6 @@
           // Valeurs par défaut posées ici (pas avant) : tant qu'il n'y a jamais eu de libellé, elles
           // ne servent à rien et ne doivent pas polluer un connecteur resté sans texte.
           if (!entry.data.fontSize) entry.data.fontSize = 15;
-          if (!entry.data.textColor) entry.data.textColor = '#1c1c28';
           entry.enterField('label');
           renderConnectorGeometry(entry); // affiche tout de suite le champ (vide) au milieu du trait
         });
@@ -4135,13 +4133,6 @@
             if (before !== size) recordFieldUndo(id, { fontSize: before });
           });
         }
-        wireColorDropdown(entry, 'connectorlabel-color', (color) => {
-          const before = entry.data.textColor;
-          entry.data.textColor = color;
-          renderConnectorGeometry(entry);
-          Api.updateElement(id, { textColor: color }).catch(() => {});
-          if (before !== color) recordFieldUndo(id, { textColor: before });
-        });
       }
     }
 
