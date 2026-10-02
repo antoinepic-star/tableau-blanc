@@ -2504,6 +2504,8 @@
           </defs>
           <path class="connector-hit"></path>
           <path class="connector-line" fill="none"></path>
+          <path class="connector-cap-start" fill="none"></path>
+          <path class="connector-cap-end" fill="none"></path>
         </svg>
         <div class="connector-handles"></div>
         <div class="connector-label is-hidden">
@@ -3020,17 +3022,31 @@
     } else {
       linePath.removeAttribute('stroke-dasharray');
     }
+    // Les petits bouts "sous la pointe" (cf. applyConnectorCaps/renderConnectorGeometry) reprennent
+    // la même couleur/épaisseur mais JAMAIS de pointillés : eux seuls portent le marker, et un
+    // pointillé y recréerait le même problème de phase qu'on cherche justement à éviter.
+    ['start', 'end'].forEach((which) => {
+      const cap = entry.el.querySelector(`.connector-cap-${which}`);
+      if (cap) { cap.setAttribute('stroke', color); cap.setAttribute('stroke-width', height); }
+    });
   }
 
   // Pointes de flèche : des <marker> SVG (pas un positionnement pixel manuel) — leur refX pose la
-  // pointe exactement sur le dernier point du path, donc toujours pile au bord de l'élément visé, sans
-  // jamais déborder dedans ni s'arrêter avant (cf. renderElement pour leur définition initiale, vide).
+  // pointe exactement sur le dernier point du path auquel ils sont attachés.
+  //
+  // Attachés à un petit bout de tracé DÉDIÉ (.connector-cap-start/-end), jamais à .connector-line :
+  // .connector-line est RACCOURCI (cf. renderConnectorGeometry) pour laisser la place à la pointe, et
+  // son extrémité coupée ne correspond donc plus au vrai point d'ancrage une fois le trait courbé — un
+  // marker qui y serait attaché pointerait dans la tangente du trait coupé, pas celle du trait réel à
+  // CET endroit (lequel continue de courber après la coupe), créant un décrochage anguleux visible dès
+  // que le trait est épais et/ou pointillé (l'épaisseur du trait ne faisant qu'accentuer l'écart).
+  // Le petit bout dédié, lui, est tracé avec la géométrie RÉELLE jusqu'au vrai point d'ancrage : son
+  // marker tombe donc toujours exactement au bon endroit, dans la bonne direction.
   function applyConnectorCaps(entry) {
     if (entry.data.type !== 'connector') return;
-    const linePath = entry.el.querySelector('.connector-line');
-    if (!linePath) return;
     const s = clamp((entry.data.height || 2) * 2.4, 10, 20);
     [['start', entry.data.startCap], ['end', entry.data.endCap]].forEach(([which, cap]) => {
+      const capPath = entry.el.querySelector(`.connector-cap-${which}`);
       const marker = entry.el.querySelector(`.connector-marker-${which}`);
       if (!marker) return;
       marker.setAttribute('markerWidth', s);
@@ -3042,8 +3058,9 @@
         polygon.setAttribute('points', `0,0 ${s},${s / 2} 0,${s}`);
         polygon.setAttribute('fill', entry.data.color);
       }
-      if (cap === 'arrow') linePath.setAttribute(`marker-${which}`, `url(#conn-marker-${which}-${entry.data.id})`);
-      else linePath.removeAttribute(`marker-${which}`);
+      if (!capPath) return;
+      if (cap === 'arrow') capPath.setAttribute(`marker-${which}`, `url(#conn-marker-${which}-${entry.data.id})`);
+      else capPath.removeAttribute(`marker-${which}`);
     });
   }
 
@@ -3425,24 +3442,24 @@
     container.innerHTML = html;
   }
 
-  // Synchronise le CONTENU du libellé (valeur/taille/couleur hors édition, largeur auto) avant tout
-  // calcul de géométrie — sa largeur conditionne le trou à laisser dans le tracé, il faut donc la
-  // connaître AVANT de construire le `d` visible, pas seulement pour le positionner après coup.
+  // Synchronise le CONTENU du libellé (valeur/taille/couleur hors édition, largeur ET hauteur auto)
+  // avant tout calcul de géométrie — sa boîte conditionne le trou à laisser dans le tracé, il faut donc
+  // la connaître AVANT de construire le `d` visible, pas seulement pour le positionner après coup.
   function syncConnectorLabelContent(entry) {
     const wrap = entry.el.querySelector('.connector-label');
     const textarea = entry.el.querySelector('.connector-label-text');
-    if (!wrap || !textarea) return { show: false, halfWidth: 0 };
+    if (!wrap || !textarea) return { show: false, halfWidth: 0, halfHeight: 0 };
     const editing = textarea.classList.contains('is-field-editing');
     const show = !!(entry.data.title || editing);
     wrap.classList.toggle('is-hidden', !show);
-    if (!show) return { show: false, halfWidth: 0 };
+    if (!show) return { show: false, halfWidth: 0, halfHeight: 0 };
     if (document.activeElement !== textarea) {
       textarea.value = entry.data.title || '';
       textarea.style.fontSize = `${entry.data.fontSize || 15}px`;
       textarea.style.color = entry.data.textColor || '#1c1c28';
       autoWidthTag(textarea);
     }
-    return { show: true, halfWidth: wrap.offsetWidth / 2 };
+    return { show: true, halfWidth: wrap.offsetWidth / 2, halfHeight: wrap.offsetHeight / 2 };
   }
 
   function positionConnectorLabel(entry, mid, origin) {
@@ -3450,6 +3467,27 @@
     if (!wrap || wrap.classList.contains('is-hidden')) return;
     wrap.style.left = `${mid.x - origin.x}px`;
     wrap.style.top = `${mid.y - origin.y}px`;
+  }
+
+  // Trou à laisser dans le trait autour du libellé, en longueur d'arc — calé sur sa VRAIE boîte
+  // (rectangle, pas un rayon symétrique le long de la courbe) : sur un tronçon qui courbe, un trou
+  // "à distance de courbe égale de chaque côté" ne correspond pas au rectangle du texte (il paraît
+  // rond/oblique, cf. retour). On parcourt les points échantillonnés du tracé et on retient le premier
+  // et le dernier qui tombent dans le rectangle (centré sur le milieu, marge comprise) : tout ce qui
+  // est entre les deux est à exclure, le reste garde la vraie forme de la courbe de chaque côté.
+  function connectorLabelGapExclusion(table, mid, halfWidth, halfHeight) {
+    const rect = { x0: mid.x - halfWidth, x1: mid.x + halfWidth, y0: mid.y - halfHeight, y1: mid.y + halfHeight };
+    let first = -1, last = -1;
+    table.forEach((p, i) => {
+      if (p.x >= rect.x0 && p.x <= rect.x1 && p.y >= rect.y0 && p.y <= rect.y1) {
+        if (first === -1) first = i;
+        last = i;
+      }
+    });
+    if (first === -1) return null;
+    const startIdx = Math.max(0, first - 1);
+    const endIdx = Math.min(table.length - 1, last + 1);
+    return { start: table[startIdx].dist, end: table[endIdx].dist };
   }
 
   function renderConnectorGeometry(entry) {
@@ -3484,21 +3522,19 @@
     const table = connectorArcTable(segs);
     const totalLen = table[table.length - 1].dist;
     const labelInfo = syncConnectorLabelContent(entry);
+    const mid = pointAtArcLength(table, totalLen / 2);
 
-    // Trou à laisser dans le trait VISIBLE (pas la zone de clic) : sous chaque pointe de flèche — une
-    // pointe triangulaire, par construction, ne couvre pas toute l'épaisseur du trait jusqu'à son tout
-    // dernier pixel (elle s'amincit jusqu'à un point) ; un trait pointillé/continu qui va jusque-là
-    // laisse donc dépasser un petit bout de trait à côté de la pointe. Reculer le trait d'avance, sous
-    // la zone que la pointe recouvre de toute façon, règle ça proprement plutôt qu'au cas par cas selon
-    // le style de trait. Pareil autour du libellé, avec une petite marge en plus de sa largeur mesurée.
+    // Trous à laisser dans le trait VISIBLE (pas la zone de clic), en longueur d'arc : sous le
+    // libellé (cf. connectorLabelGapExclusion) et sous chaque pointe de flèche. Ce dernier trou n'est
+    // PAS affaire de style de trait : il existe pour laisser la place à un petit bout de tracé séparé
+    // qui porte le marker (cf. applyConnectorCaps et plus bas) — jamais le trait principal lui-même,
+    // dont l'extrémité coupée ne serait plus le vrai point d'ancrage une fois la courbe prise en compte.
     const exclusions = [];
     if (entry.data.startCap === 'arrow') exclusions.push({ start: 0, end: Math.max(0, arrowSize - 1) });
     if (entry.data.endCap === 'arrow') exclusions.push({ start: Math.max(0, totalLen - (arrowSize - 1)), end: totalLen });
-    let mid = null;
     if (labelInfo.show) {
-      mid = pointAtArcLength(table, totalLen / 2);
-      const halfGap = labelInfo.halfWidth + 6;
-      exclusions.push({ start: totalLen / 2 - halfGap, end: totalLen / 2 + halfGap });
+      const gap = connectorLabelGapExclusion(table, mid, labelInfo.halfWidth + 5, labelInfo.halfHeight + 4);
+      if (gap) exclusions.push(gap);
     }
 
     const hitPath = entry.el.querySelector('.connector-hit');
@@ -3506,8 +3542,25 @@
     if (hitPath) hitPath.setAttribute('d', connectorPathD(segs, origin));
     if (linePath) linePath.setAttribute('d', connectorVisiblePathD(segs, origin, table, totalLen, exclusions));
 
+    // Bouts dédiés sous chaque pointe de flèche (cf. applyConnectorCaps) : géométrie RÉELLE et complète
+    // jusqu'au vrai point d'ancrage (jamais coupée), pour que le marker qui s'y attache tombe toujours
+    // exactement au bon endroit et dans la bonne direction, même quand la courbe continue de tourner
+    // sur ce dernier tronçon.
+    const capStart = entry.el.querySelector('.connector-cap-start');
+    const capEnd = entry.el.querySelector('.connector-cap-end');
+    if (capStart) {
+      capStart.setAttribute('d', entry.data.startCap === 'arrow'
+        ? connectorPathD(connectorSubpathSegs(segs, table[0], pointAtArcLength(table, Math.max(0, arrowSize - 1))), origin)
+        : '');
+    }
+    if (capEnd) {
+      capEnd.setAttribute('d', entry.data.endCap === 'arrow'
+        ? connectorPathD(connectorSubpathSegs(segs, pointAtArcLength(table, Math.max(0, totalLen - (arrowSize - 1))), table[table.length - 1]), origin)
+        : '');
+    }
+
     renderConnectorHandles(entry, points, segs, origin);
-    if (mid) positionConnectorLabel(entry, mid, origin);
+    if (labelInfo.show) positionConnectorLabel(entry, mid, origin);
   }
 
   // Câblage du libellé optionnel d'un connecteur : un seul champ texte (reuse de wireMultiFieldEditing,
