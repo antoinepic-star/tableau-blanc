@@ -153,7 +153,6 @@
   const topbarMoreMenu = document.getElementById('topbarMoreMenu');
   const gridToggleMenuBtn = document.getElementById('gridToggleMenuBtn');
   const gridToggleMenuLabel = document.getElementById('gridToggleMenuLabel');
-  const saveTemplateMenuBtn = document.getElementById('saveTemplateMenuBtn');
   const templateDrawer = document.getElementById('templateDrawer');
   const templateDrawerOverlay = document.getElementById('templateDrawerOverlay');
   const templateDrawerCloseBtn = document.getElementById('templateDrawerCloseBtn');
@@ -270,8 +269,14 @@
     closeTopbarMoreMenu();
   });
 
-  function openTemplateDrawer() {
-    templateNameInput.value = '';
+  // Frame dont on enregistre le contenu en tant que bloc (cf. le bouton de sa barre d'action).
+  let templateSourceFrameId = null;
+
+  function openTemplateDrawer(frameId) {
+    templateSourceFrameId = frameId;
+    const frame = elements.get(frameId);
+    // Pré-remplit avec le titre de la frame : c'est presque toujours le nom qu'on voudra donner au bloc.
+    templateNameInput.value = (frame && frame.data.text) ? frame.data.text.trim() : '';
     templateTagsInput.value = '';
     templateDrawer.classList.add('is-open');
     templateDrawerOverlay.classList.add('is-open');
@@ -281,18 +286,27 @@
     templateDrawer.classList.remove('is-open');
     templateDrawerOverlay.classList.remove('is-open');
   }
-  saveTemplateMenuBtn.addEventListener('click', () => { closeTopbarMoreMenu(); openTemplateDrawer(); });
   templateDrawerCloseBtn.addEventListener('click', closeTemplateDrawer);
   templateDrawerOverlay.addEventListener('click', closeTemplateDrawer);
 
-  // Capture TOUT le contenu actuel du tableau (cf. snapshotForCreate, même forme que pour copier/
-  // coller) — verrouillage et votes/commentaires ne sont jamais repris (snapshotForCreate ne les
-  // transporte déjà pas) : un template est un point de départ propre, pas un clone exact de l'activité.
+  // Une frame ET tout ce qui est dedans (cf. snapshotForCreate, même forme que pour copier/coller),
+  // plus les connecteurs dont les DEUX extrémités sont dans ce lot (un connecteur dont une extrémité
+  // resterait dehors n'aurait plus de sens une fois posé ailleurs). Verrouillage et votes/commentaires
+  // ne sont jamais repris (snapshotForCreate ne les transporte déjà pas) : un bloc est un point de
+  // départ propre, pas un clone exact de l'activité.
+  function frameBlockSnapshots(frameId) {
+    const idSet = new Set([frameId, ...frameChildren(frameId)]);
+    elements.forEach((en) => {
+      if (en.data.type === 'connector' && idSet.has(en.data.fromElementId) && idSet.has(en.data.toElementId)) idSet.add(en.data.id);
+    });
+    return [...idSet].map(id => elements.get(id)).filter(Boolean).map(en => snapshotForCreate(en.data));
+  }
+
   templateSaveBtn.addEventListener('click', () => {
     const name = templateNameInput.value.trim();
     if (!name) { alert('Merci de donner un titre au bloc.'); return; }
-    const data = [...elements.values()].map(en => snapshotForCreate(en.data));
-    if (!data.length) { alert('Le tableau est vide.'); return; }
+    if (!templateSourceFrameId || !elements.has(templateSourceFrameId)) { alert('Cette frame n’existe plus.'); closeTemplateDrawer(); return; }
+    const data = frameBlockSnapshots(templateSourceFrameId);
     const tags = templateTagsInput.value.split(',').map(t => t.trim()).filter(Boolean);
     withBusy(Api.createTemplate({ name, tags, data }))
       .then(() => {
@@ -1946,6 +1960,7 @@
 
   function iconArrowCapStart() { return '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="19" y1="12" x2="5" y2="12"/><polyline points="11 6 5 12 11 18"/></svg>'; }
   function iconArrowCapEnd() { return '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="13 6 19 12 13 18"/></svg>'; }
+  function iconSaveBlock() { return '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>'; }
   function iconAddPhotos() { return '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="14" height="14" rx="2"/><circle cx="8" cy="8" r="1.5"/><path d="M17 12l-4-4-8 9"/><line x1="19" y1="17" x2="19" y2="23"/><line x1="16" y1="20" x2="22" y2="20"/></svg>'; }
   function iconTextLabel() { return '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 7 4 4 20 4 20 7"/><line x1="12" y1="4" x2="12" y2="20"/><line x1="9" y1="20" x2="15" y2="20"/></svg>'; }
 
@@ -2076,6 +2091,7 @@
       controls = colorDropdownHtml('color', data.color, false, 'Couleur de fond')
         + borderDropdownHtml(data, { withRadius: false })
         + `<span class="element-toolbar-sep"></span>`
+        + `<button type="button" class="element-icon-btn element-save-block-btn" title="Enregistrer en tant que bloc">${iconSaveBlock()}</button>`
         // Moodboard : "Ordonner" n'a pas de sens (la mise en colonnes est permanente) ; à la place, le
         // bouton qui sert à le remplir.
         + (data.tag === 'moodboard'
@@ -4383,6 +4399,11 @@
           Api.updateElement(id, { fontSize: size }).catch(() => {});
           if (before !== size) recordFieldUndo(id, { fontSize: before });
         });
+      }
+      const saveBlockBtn = toolbarEl.querySelector('.element-save-block-btn');
+      if (saveBlockBtn) {
+        saveBlockBtn.addEventListener('pointerdown', e => e.stopPropagation());
+        saveBlockBtn.addEventListener('click', () => { closeAllToolbarPopovers(); openTemplateDrawer(id); });
       }
       const addPhotosBtn = toolbarEl.querySelector('.element-moodboard-add-btn');
       if (addPhotosBtn) {
