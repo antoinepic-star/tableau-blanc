@@ -1481,7 +1481,7 @@
 
   function nudgeSelection(dx, dy) {
     const ids = multiSelectedIds.size ? [...multiSelectedIds] : (selectedElementId ? [selectedElementId] : []);
-    const movable = ids.filter((id) => { const en = elements.get(id); return en && !en.data.locked; });
+    const movable = ids.filter((id) => { const en = elements.get(id); return en && !en.data.locked && !isMoodboardChild(en); });
     if (!movable.length) return;
     const before = movable.map((id) => { const en = elements.get(id); return { id, x: en.data.x, y: en.data.y }; });
     movable.forEach((id) => {
@@ -2393,7 +2393,7 @@
     if (!entries.length) return;
     // Un connecteur n'a pas de position propre (dérivée de ses deux ancres) : l'aligner n'a pas de
     // sens, et il serait de toute façon aussitôt "remis à sa place" au prochain recalcul.
-    const movable = entries.filter(en => en.data.type !== 'connector');
+    const movable = entries.filter(en => en.data.type !== 'connector' && !isMoodboardChild(en));
     const isAlign = action === 'align-left' || action === 'align-right' || action === 'align-center';
     if (isAlign && !movable.length) return;
 
@@ -5056,6 +5056,10 @@
   }
 
   function startGroupDrag(ids, entry, e) {
+    // Une photo de moodboard ne se déplace jamais seule (cf. wireBodyDrag) — y compris prise dans une
+    // sélection multiple ; elle suit en revanche son cadre quand celui-ci fait partie du geste.
+    const idSet = new Set(ids);
+    ids = ids.filter((mid) => { const en = elements.get(mid); return !en || !isMoodboardChild(en) || idSet.has(en.data.frameId); });
     const isRealGroup = !!entry.data.groupId;
     const startScreen = { x: e.clientX, y: e.clientY };
     const startPositions = new Map();
@@ -5199,6 +5203,15 @@
         return;
       }
       if (entry.cropping) return;
+      // Photo de moodboard : se sélectionne (pour la supprimer, la commenter...) mais ne se déplace pas —
+      // réorganiser par glisser est volontairement désactivé pour cette première version. Le cadre, lui,
+      // se déplace toujours avec ses photos (cf. plus bas, glisser une frame).
+      if (isMoodboardChild(entry)) {
+        e.stopPropagation();
+        selectElement(id);
+        closeConfirmPopover();
+        return;
+      }
       // Pas de garde sur is-editing ici : un clic sur le textarea lui-même stoppe déjà la
       // propagation (cf. wireTextEditing) quand on édite, donc seul un clic sur le bord — hors
       // textarea — arrive jusqu'ici, et il doit pouvoir démarrer un glisser même en édition.
