@@ -140,6 +140,11 @@
     { text: 'pour', w: 40, hint: 'Résultat attendu' },
   ];
   const JTBD_NOTE_COLOR = '#FFF083';
+  // Bloc "Matrice 2×2" (frame tag 'matrix') : deux axes qui se croisent au centre de la zone de tracé, dessinés
+  // par la frame (suivent donc son redimensionnement). Taille de départ : chaque carré accueille au moins 8
+  // post-it (4 × 2). Titres d'axe dans les colonnes title (horizontal) et number (vertical) de la frame, son
+  // propre titre étant celui du graphique.
+  const MATRIX = { W: 1300, H: 920, MARGIN_L: 56, MARGIN_R: 24, MARGIN_B: 60, MIN_TOP: 76, TITLE_SIZE: 28 };
   const JTBD_COLS = (() => {
     let x = JTBD.PAD;
     return JTBD_LABELS.map((l, i) => {
@@ -726,6 +731,7 @@
     { submenu: 'userflows', label: 'User flows', icon: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><line x1="3" y1="9" x2="21" y2="9"/><circle cx="6.5" cy="6.5" r="0.6" fill="currentColor" stroke="none"/><circle cx="8.5" cy="6.5" r="0.6" fill="currentColor" stroke="none"/></svg>' },
     { type: 'jtbd', label: 'Jobs to be done', icon: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="4" height="4" rx="1"/><line x1="10" y1="6" x2="21" y2="6"/><rect x="3" y="10" width="4" height="4" rx="1"/><line x1="10" y1="12" x2="21" y2="12"/><rect x="3" y="16" width="4" height="4" rx="1"/><line x1="10" y1="18" x2="21" y2="18"/></svg>' },
     { type: 'moodboard', label: 'Moodboard', icon: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="8" height="10" rx="1.5"/><rect x="13" y="3" width="8" height="6" rx="1.5"/><rect x="3" y="15" width="8" height="6" rx="1.5"/><rect x="13" y="11" width="8" height="10" rx="1.5"/></svg>' },
+    { type: 'matrix', label: 'Matrice 2×2', icon: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="3" x2="12" y2="21"/><line x1="3" y1="12" x2="21" y2="12"/><polyline points="9.5 5.5 12 3 14.5 5.5"/><polyline points="18.5 9.5 21 12 18.5 14.5"/></svg>' },
   ];
   // Icône générique pour un template enregistré par un utilisateur (pas de vignette par template).
   const ICON_TEMPLATE_GENERIC = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg>';
@@ -1136,6 +1142,14 @@
         .catch(err => alert(err.message));
     } else if (type === 'jtbd') {
       createJtbdBlock(wx, wy);
+    } else if (type === 'matrix') {
+      // Frame ordinaire (les post-it y sont libres), seuls ses axes et leurs titres sont propres au bloc.
+      const { x, y } = snapPoint(wx - MATRIX.W / 2, wy - MATRIX.H / 2);
+      createElementTracked({
+        type: 'frame', x, y, width: MATRIX.W, height: MATRIX.H, text: 'Titre du graphique', fontSize: MATRIX.TITLE_SIZE,
+        tag: 'matrix', title: 'Axe horizontal', number: 'Axe vertical',
+      }).then((data) => { ensureRendered(data); selectElement(data.id); })
+        .catch(err => alert(err.message));
     } else if (type === 'instruction' || type === 'tip') {
       // Couleur laissée à la valeur par défaut du serveur (blanc pour consigne, gris du tableau pour
       // tips, cf. ELEMENT_DEFAULTS) — prête à taper le titre tout de suite, comme le texte libre.
@@ -1636,6 +1650,48 @@
       });
     } catch (err) { alert(err.message); }
     finally { frame.jtbdBusy = false; }
+  }
+
+  // ---------- Bloc "Matrice 2×2" ----------
+  // Le haut de la zone de tracé suit la taille du titre du graphique (comme pour un moodboard) : un gros titre
+  // ne doit pas passer sur la flèche de l'axe vertical.
+  function syncMatrixDecor(entry) {
+    const decor = entry.el.querySelector('.matrix-decor');
+    if (!decor) return;
+    const top = Math.max(MATRIX.MIN_TOP, 16 + Math.round((entry.data.fontSize || 15) * 1.5) + 10);
+    decor.style.setProperty('--matrix-top', `${top}px`);
+    decor.querySelectorAll('.matrix-axis-title').forEach((input) => {
+      if (document.activeElement !== input) input.value = entry.data[input.dataset.axis] || '';
+    });
+  }
+
+  function wireMatrixDecor(entry) {
+    const id = entry.data.id;
+    entry.el.querySelectorAll('.matrix-axis-title').forEach((input) => {
+      const column = input.dataset.axis;
+      // Le champ reçoit ses propres clics : ni le glisser de la frame, ni son entrée en édition (titre) ne
+      // doivent démarrer — mais la frame reste sélectionnée pour garder sa barre d'outils.
+      ['pointerdown', 'click', 'dblclick'].forEach((evt) => input.addEventListener(evt, (e) => {
+        e.stopPropagation();
+        if (evt === 'pointerdown') { closeConfirmPopover(); if (selectedElementId !== id) selectElement(id); }
+      }));
+      let before = null;
+      input.addEventListener('focus', () => { before = entry.data[column] || ''; input.select(); });
+      input.addEventListener('keydown', (e) => {
+        e.stopPropagation(); // ni suppression de l'élément, ni raccourcis du tableau pendant la saisie
+        if (e.key === 'Enter') input.blur();
+        else if (e.key === 'Escape') { input.value = before ?? ''; input.blur(); }
+      });
+      input.addEventListener('change', () => {
+        const next = input.value.trim();
+        if (next === (before ?? '')) return;
+        const prev = before ?? '';
+        entry.data[column] = next;
+        before = next;
+        Api.updateElement(id, { [column]: next }).catch(() => {});
+        recordFieldUndo(id, { [column]: prev });
+      });
+    });
   }
 
   // ---------- Copier / coller ----------
@@ -2982,12 +3038,18 @@
       el.innerHTML = `
         <textarea class="frame-title" placeholder="Titre…" maxlength="200" rows="1"></textarea>
         ${data.tag === 'jtbd' ? '<div class="jtbd-decor"></div>' : ''}
+        ${data.tag === 'matrix' ? `<div class="matrix-decor">
+          <div class="matrix-plot"><div class="matrix-axis matrix-axis-x"></div><div class="matrix-axis matrix-axis-y"></div></div>
+          <input type="text" class="matrix-axis-title matrix-axis-title-x" data-axis="title" maxlength="60" placeholder="Axe horizontal" spellcheck="false">
+          <input type="text" class="matrix-axis-title matrix-axis-title-y" data-axis="number" maxlength="60" placeholder="Axe vertical" spellcheck="false">
+        </div>` : ''}
         <div class="element-resize-handle"></div>
         ${anchorsHtml}
       `;
       textEl = el.querySelector('.frame-title');
       textEl.value = data.text || '';
       if (data.tag === 'jtbd') el.classList.add('is-jtbd');
+      if (data.tag === 'matrix') el.classList.add('is-matrix');
     } else if (data.type === 'instruction') {
       // Trois champs indépendants (numéro/titre/description), contrairement à tous les autres types
       // qui n'en ont qu'un seul (cf. wireMultiFieldEditing, qui généralise wireTextEditing pour ce cas).
@@ -3064,6 +3126,7 @@
     if (data.type === 'rectangle') { applyRectangleStyle(entry); applyRectangleTextStyle(entry); autoGrowRectangleTextarea(entry); }
     if (data.type === 'frame') { applyRectangleStyle(entry); applyFrameTitleStyle(entry); }
     if (data.type === 'frame' && data.tag === 'jtbd') { wireJtbdDecor(entry); syncJtbdDecor(entry); }
+    if (data.type === 'frame' && data.tag === 'matrix') { wireMatrixDecor(entry); syncMatrixDecor(entry); }
     if (data.type === 'note') {
       applyNoteTextStyle(entry); syncNoteTextareaHeight(entry);
       // Post-it d'un bloc "Jobs to be done" : indice de la colonne dans le champ vide (si sa frame est déjà
@@ -3605,6 +3668,7 @@
       applyRectangleStyle(entry);
       applyFrameTitleStyle(entry);
       if (data.tag === 'jtbd' && entry.el.querySelector('.jtbd-decor')) syncJtbdDecor(entry);
+      if (data.tag === 'matrix' && entry.el.querySelector('.matrix-decor')) syncMatrixDecor(entry);
     } else if (data.type === 'instruction') {
       entry.el.style.background = data.color;
       if (document.activeElement !== entry.numberEl) entry.numberEl.value = data.number || '';

@@ -937,3 +937,27 @@ body.is-linking .element:not(.is-locked) .connector-anchor { display: block; }
   color: #4a463c; font: inherit; font-size: 13px; font-weight: 600; cursor: pointer; white-space: nowrap;
 }
 .jtbd-add-row:hover { background: #f6f4ee; border-color: #a9a395; }
+
+/* ---- Bloc "Matrice 2×2" (frame tag 'matrix', cf. syncMatrixDecor dans board.js) : deux axes en croix au
+   centre d'une zone de tracé qui épouse la frame (donc suit son redimensionnement), un titre par axe. Le
+   décor laisse passer les clics (la frame se sélectionne/se déplace normalement) ; seuls les titres d'axe,
+   modifiables, les captent. ---- */
+.matrix-decor { position: absolute; inset: 0; pointer-events: none; --matrix-top: 76px; }
+.matrix-plot { position: absolute; left: 56px; right: 24px; top: var(--matrix-top); bottom: 60px; }
+.matrix-axis { position: absolute; background: #4a463c; }
+.matrix-axis-x { left: 0; right: 0; top: 50%; height: 2px; margin-top: -1px; }
+.matrix-axis-y { top: 0; bottom: 0; left: 50%; width: 2px; margin-left: -1px; }
+.matrix-axis-x::after, .matrix-axis-y::before { content: ''; position: absolute; width: 0; height: 0; border: 6px solid transparent; }
+.matrix-axis-x::after { right: -2px; top: -5px; border-left: 11px solid #4a463c; border-right: 0; }
+.matrix-axis-y::before { top: -2px; left: -5px; border-bottom: 11px solid #4a463c; border-top: 0; }
+.matrix-axis-title {
+  position: absolute; pointer-events: auto; border: none; outline: none; background: transparent; padding: 0;
+  font-family: inherit; font-size: 14px; font-weight: 600; color: #4a463c; text-align: center; cursor: text;
+}
+.matrix-axis-title:focus { background: rgba(224,166,43,0.12); border-radius: 4px; }
+.matrix-axis-title::placeholder { color: #a9a395; font-weight: 500; }
+.matrix-axis-title-x { left: 56px; right: 24px; bottom: 16px; height: 28px; }
+.matrix-axis-title-y {
+  left: 14px; width: 28px; top: var(--matrix-top); bottom: 60px;
+  writing-mode: vertical-rl; transform: rotate(180deg);
+}
