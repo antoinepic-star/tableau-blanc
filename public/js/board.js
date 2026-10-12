@@ -1662,7 +1662,15 @@
     decor.style.setProperty('--matrix-top', `${top}px`);
     decor.querySelectorAll('.matrix-axis-title').forEach((input) => {
       if (document.activeElement !== input) input.value = entry.data[input.dataset.axis] || '';
+      fitMatrixAxisTitle(input);
     });
+  }
+
+  // Le titre n'occupe que la place de son texte (sinon un champ plus large que lui recouvrirait, et
+  // intercepterait les clics sur, le fond de la frame le long de l'axe).
+  function fitMatrixAxisTitle(input) {
+    const n = Math.max(input.value.length, input.placeholder.length, 4) + 1;
+    input.style[input.dataset.axis === 'title' ? 'width' : 'height'] = `${n}ch`;
   }
 
   function wireMatrixDecor(entry) {
@@ -1676,6 +1684,7 @@
         if (evt === 'pointerdown') { closeConfirmPopover(); if (selectedElementId !== id) selectElement(id); }
       }));
       let before = null;
+      input.addEventListener('input', () => fitMatrixAxisTitle(input));
       input.addEventListener('focus', () => { before = entry.data[column] || ''; input.select(); });
       input.addEventListener('keydown', (e) => {
         e.stopPropagation(); // ni suppression de l'élément, ni raccourcis du tableau pendant la saisie
@@ -3039,9 +3048,11 @@
         <textarea class="frame-title" placeholder="Titre…" maxlength="200" rows="1"></textarea>
         ${data.tag === 'jtbd' ? '<div class="jtbd-decor"></div>' : ''}
         ${data.tag === 'matrix' ? `<div class="matrix-decor">
-          <div class="matrix-plot"><div class="matrix-axis matrix-axis-x"></div><div class="matrix-axis matrix-axis-y"></div></div>
-          <input type="text" class="matrix-axis-title matrix-axis-title-x" data-axis="title" maxlength="60" placeholder="Axe horizontal" spellcheck="false">
-          <input type="text" class="matrix-axis-title matrix-axis-title-y" data-axis="number" maxlength="60" placeholder="Axe vertical" spellcheck="false">
+          <div class="matrix-plot">
+            <div class="matrix-axis matrix-axis-x"></div><div class="matrix-axis matrix-axis-y"></div>
+            <input type="text" class="matrix-axis-title matrix-axis-title-x" data-axis="title" maxlength="60" placeholder="Axe horizontal" spellcheck="false">
+            <input type="text" class="matrix-axis-title matrix-axis-title-y" data-axis="number" maxlength="60" placeholder="Axe vertical" spellcheck="false">
+          </div>
         </div>` : ''}
         <div class="element-resize-handle"></div>
         ${anchorsHtml}

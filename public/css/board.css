@@ -951,13 +951,16 @@ body.is-linking .element:not(.is-locked) .connector-anchor { display: block; }
 .matrix-axis-x::after { right: -2px; top: -5px; border-left: 11px solid #4a463c; border-right: 0; }
 .matrix-axis-y::before { top: -2px; left: -5px; border-bottom: 11px solid #4a463c; border-top: 0; }
 .matrix-axis-title {
-  position: absolute; pointer-events: auto; border: none; outline: none; background: transparent; padding: 0;
-  font-family: inherit; font-size: 14px; font-weight: 600; color: #4a463c; text-align: center; cursor: text;
+  position: absolute; pointer-events: auto; box-sizing: content-box; border: none; outline: none; background: transparent;
+  padding: 0; font-family: inherit; font-size: 14px; font-weight: 600; color: #4a463c; cursor: text; text-align: end;
 }
 .matrix-axis-title:focus { background: rgba(224,166,43,0.12); border-radius: 4px; }
 .matrix-axis-title::placeholder { color: #a9a395; font-weight: 500; }
-.matrix-axis-title-x { left: 56px; right: 24px; bottom: 16px; height: 28px; }
+/* Titres posés le long des axes, juste avant leurs flèches : l'horizontal au-dessus de la ligne, vers sa
+   pointe droite ; le vertical à gauche de la ligne, vers sa pointe haute (texte lu de bas en haut). Largeur
+   (resp. hauteur) posée en JS d'après le texte, cf. fitMatrixAxisTitle. */
+.matrix-axis-title-x { right: 20px; top: 50%; margin-top: -30px; height: 22px; line-height: 22px; max-width: calc(50% - 30px); }
 .matrix-axis-title-y {
-  left: 14px; width: 28px; top: var(--matrix-top); bottom: 60px;
+  top: 20px; left: 50%; margin-left: -30px; width: 22px; line-height: 22px; max-height: calc(50% - 30px);
   writing-mode: vertical-rl; transform: rotate(180deg);
 }
