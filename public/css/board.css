@@ -905,5 +905,35 @@ body.is-linking .element:not(.is-locked) .connector-anchor { display: block; }
 }
 @keyframes busy-spin { to { transform: rotate(360deg); } }
 
-/* Photo d'un moodboard : largeur imposée par sa colonne, pas de poignée de redimensionnement. */
-.element.is-moodboard-child .element-resize-handle { display: none !important; }
+/* Élément épinglé par sa frame (photo de moodboard : largeur imposée par sa colonne ; post-it de bloc "Jobs to be
+   done" : emplacement fixe) : pas de poignée de redimensionnement. */
+.element.is-pinned-child .element-resize-handle { display: none !important; }
+
+/* ---- Bloc "Jobs to be done" (frame tag 'jtbd', cf. syncJtbdDecor dans board.js) : consigne à gauche de la
+   frame, phrase "Quand … j'ai envie de … pour …" de chaque ligne, corbeille de ligne et bouton "Ajouter une
+   ligne" dessinés par la frame elle-même. Le conteneur n'a pas de taille : ses enfants se positionnent
+   directement dans le repère de la frame. Un clic sur la consigne ou une phrase remonte à la frame
+   (sélectionne/déplace tout le bloc) ; ni l'un ni l'autre n'est éditable. ---- */
+.jtbd-decor { position: absolute; left: 0; top: 0; width: 0; height: 0; }
+.element.is-jtbd .element-resize-handle { display: none !important; }
+.jtbd-consigne {
+  position: absolute; top: 0; box-sizing: border-box; padding: 16px; background: #fff; border-radius: 10px;
+  box-shadow: 0 1px 3px rgba(20,20,30,0.12); display: flex; flex-direction: column; gap: 8px; cursor: grab;
+}
+.jtbd-consigne-title { font-weight: 700; font-size: 15px; line-height: 1.35; color: var(--text); }
+.jtbd-consigne-desc { font-size: 13px; line-height: 1.5; color: var(--text-muted); }
+.jtbd-consigne-desc b { color: var(--text); }
+.jtbd-label {
+  position: absolute; display: flex; align-items: center; font-size: 15px; font-weight: 600; color: #4a463c;
+  white-space: nowrap; cursor: grab;
+}
+.jtbd-row-delete {
+  position: absolute; width: 28px; height: 28px; padding: 0; border: none; border-radius: 6px; background: transparent;
+  color: #8a867a; display: flex; align-items: center; justify-content: center; cursor: pointer; opacity: 0.6;
+}
+.jtbd-row-delete:hover { background: #f0eee8; color: #c0392b; opacity: 1; }
+.jtbd-add-row {
+  position: absolute; height: 36px; padding: 0 14px; border: 1px dashed #c9c4b8; border-radius: 8px; background: #fff;
+  color: #4a463c; font: inherit; font-size: 13px; font-weight: 600; cursor: pointer; white-space: nowrap;
+}
+.jtbd-add-row:hover { background: #f6f4ee; border-color: #a9a395; }

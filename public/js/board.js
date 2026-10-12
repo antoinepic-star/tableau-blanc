@@ -129,6 +129,29 @@
   // calcul ne fait qu'éviter d'attendre sa réponse pour voir les colonnes bouger.
   const FRAME_TITLE_HEIGHT = 40;
   const FRAME_MIN_HEIGHT = 100;
+  // Bloc "Jobs to be done" (frame tag 'jtbd') : la frame ne contient que des post-it ; consigne, phrases
+  // ("Quand… j'ai envie de… pour…"), boutons +/corbeille sont dessinés par la frame elle-même (cf.
+  // syncJtbdDecor). Le nombre de lignes se déduit de sa hauteur (HEADER + n × ROW_H + FOOTER) et les post-it
+  // sont à des positions calculées (jtbdCols/ROW_H) : rien à stocker de plus, ni côté serveur.
+  const JTBD = { CONSIGNE_W: 280, CONSIGNE_GAP: 24, PAD: 20, HEADER: 64, ROW_H: 150, NOTE_W: 140, NOTE_H: 130, FOOTER: 60, DEL_W: 28, LABEL_GAP: 10, GROUP_GAP: 16 };
+  const JTBD_LABELS = [
+    { text: 'Quand', w: 56, hint: 'Situation' },
+    { text: "j'ai envie de", w: 104, hint: 'Motivation' },
+    { text: 'pour', w: 40, hint: 'Résultat attendu' },
+  ];
+  const JTBD_NOTE_COLOR = '#FFF083';
+  const JTBD_COLS = (() => {
+    let x = JTBD.PAD;
+    return JTBD_LABELS.map((l, i) => {
+      const col = { ...l, labelX: x, noteX: x + l.w + JTBD.LABEL_GAP };
+      x = col.noteX + JTBD.NOTE_W + (i < JTBD_LABELS.length - 1 ? JTBD.GROUP_GAP : 0);
+      return col;
+    });
+  })();
+  const JTBD_DEL_X = JTBD_COLS[JTBD_COLS.length - 1].noteX + JTBD.NOTE_W + JTBD.LABEL_GAP;
+  const JTBD_WIDTH = JTBD_DEL_X + JTBD.DEL_W + JTBD.PAD;
+  const jtbdFrameHeight = (rows) => JTBD.HEADER + rows * JTBD.ROW_H + JTBD.FOOTER;
+  const jtbdRowCount = (frameData) => Math.max(1, Math.round((frameData.height - JTBD.HEADER - JTBD.FOOTER) / JTBD.ROW_H));
   const ZOOM_MIN = 0.2;
   const ZOOM_MAX = 2.5;
   const TEXT_PAD_X_RATIO = 0.55;
@@ -701,6 +724,7 @@
     // Pas posé directement : ouvre un sous-menu avec les différents types de page (cf. openUserFlowsFlyout).
     // Ex-"Pages web", qui avait son propre bouton dans la barre avant d'être rangé ici.
     { submenu: 'userflows', label: 'User flows', icon: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><line x1="3" y1="9" x2="21" y2="9"/><circle cx="6.5" cy="6.5" r="0.6" fill="currentColor" stroke="none"/><circle cx="8.5" cy="6.5" r="0.6" fill="currentColor" stroke="none"/></svg>' },
+    { type: 'jtbd', label: 'Jobs to be done', icon: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="4" height="4" rx="1"/><line x1="10" y1="6" x2="21" y2="6"/><rect x="3" y="10" width="4" height="4" rx="1"/><line x1="10" y1="12" x2="21" y2="12"/><rect x="3" y="16" width="4" height="4" rx="1"/><line x1="10" y1="18" x2="21" y2="18"/></svg>' },
     { type: 'moodboard', label: 'Moodboard', icon: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="8" height="10" rx="1.5"/><rect x="13" y="3" width="8" height="6" rx="1.5"/><rect x="3" y="15" width="8" height="6" rx="1.5"/><rect x="13" y="11" width="8" height="10" rx="1.5"/></svg>' },
   ];
   // Icône générique pour un template enregistré par un utilisateur (pas de vignette par template).
@@ -1110,6 +1134,8 @@
       createElementTracked({ type: 'frame', x, y, width: w, height: h, text: 'Moodboard', tag: 'moodboard' })
         .then((data) => { const entry = ensureRendered(data); selectElement(entry.data.id); })
         .catch(err => alert(err.message));
+    } else if (type === 'jtbd') {
+      createJtbdBlock(wx, wy);
     } else if (type === 'instruction' || type === 'tip') {
       // Couleur laissée à la valeur par défaut du serveur (blanc pour consigne, gris du tableau pour
       // tips, cf. ELEMENT_DEFAULTS) — prête à taper le titre tout de suite, comme le texte libre.
@@ -1429,6 +1455,189 @@
     });
   }
 
+  // ---------- Bloc "Jobs to be done" ----------
+  // Décor de la frame : consigne à gauche (hors de la frame, alignée en haut), phrase "Quand … j'ai envie de …
+  // pour …" de chaque ligne, corbeille de ligne et bouton "Ajouter une ligne". Tout est reconstruit d'après la
+  // hauteur de la frame (nombre de lignes) ; seuls les post-it sont de vrais éléments.
+  const ICON_TRASH_SM = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>';
+
+  function syncJtbdDecor(entry) {
+    const decor = entry.el.querySelector('.jtbd-decor');
+    if (!decor) return;
+    const rows = jtbdRowCount(entry.data);
+    // Les coordonnées du décor sont celles de la boîte extérieure de la frame (comme ses post-it), pas
+    // celles de l'intérieur de son contour.
+    const sw = entry.data.strokeWidth || 0;
+    decor.style.left = `${-sw}px`;
+    decor.style.top = `${-sw}px`;
+    let html = `
+      <div class="jtbd-consigne" style="left:${-(JTBD.CONSIGNE_W + JTBD.CONSIGNE_GAP)}px;width:${JTBD.CONSIGNE_W}px">
+        <div class="jtbd-consigne-title">Jobs to be done</div>
+        <div class="jtbd-consigne-desc">Complète chaque phrase en ajoutant des post-it :<br><br><b>Quand</b> [situation / contexte], <b>j'ai envie de</b> [motivation / action] <b>pour</b> [résultat attendu].</div>
+      </div>`;
+    for (let i = 0; i < rows; i++) {
+      const top = JTBD.HEADER + i * JTBD.ROW_H;
+      JTBD_COLS.forEach((c) => {
+        html += `<span class="jtbd-label" style="left:${c.labelX}px;top:${top}px;width:${c.w}px;height:${JTBD.NOTE_H}px">${c.text}</span>`;
+      });
+      if (rows > 1) {
+        html += `<button type="button" class="jtbd-row-delete" data-row="${i}" title="Supprimer cette ligne" style="left:${JTBD_DEL_X}px;top:${top + (JTBD.NOTE_H - JTBD.DEL_W) / 2}px">${ICON_TRASH_SM}</button>`;
+      }
+    }
+    html += `<button type="button" class="jtbd-add-row" style="left:${JTBD.PAD}px;top:${JTBD.HEADER + rows * JTBD.ROW_H + 4}px">+ Ajouter une ligne</button>`;
+    decor.innerHTML = html;
+    syncJtbdPlaceholders(entry);
+  }
+
+  // Chaque post-it d'une ligne affiche, tant qu'il est vide, ce qu'on attend de lui (colonne d'après sa position).
+  function syncJtbdPlaceholders(frameEntry) {
+    frameChildren(frameEntry.data.id).forEach((cid) => {
+      const en = elements.get(cid);
+      if (!en || en.data.type !== 'note' || !en.textEl) return;
+      const dx = en.data.x - frameEntry.data.x;
+      let best = 0;
+      JTBD_COLS.forEach((c, i) => { if (Math.abs(c.noteX - dx) < Math.abs(JTBD_COLS[best].noteX - dx)) best = i; });
+      en.textEl.placeholder = JTBD_COLS[best].hint;
+    });
+  }
+
+  function wireJtbdDecor(entry) {
+    const decor = entry.el.querySelector('.jtbd-decor');
+    // Un clic sur un bouton ne doit pas démarrer le glisser de la frame ; ailleurs (consigne, phrases) il
+    // remonte normalement jusqu'à la frame : sélectionner/déplacer tout le bloc.
+    decor.addEventListener('pointerdown', (e) => { if (e.target.closest('button')) e.stopPropagation(); });
+    decor.addEventListener('click', (e) => {
+      const btn = e.target.closest('button');
+      if (!btn || entry.data.locked) return;
+      if (btn.classList.contains('jtbd-add-row')) addJtbdRow(entry);
+      else if (btn.classList.contains('jtbd-row-delete')) confirmJtbdRowDelete(entry, Number(btn.dataset.row), btn.getBoundingClientRect());
+    });
+  }
+
+  function setJtbdFrameHeight(frame, height) {
+    frame.data.height = height;
+    frame.el.style.height = `${height}px`;
+    syncJtbdDecor(frame);
+    if (selectedElementId === frame.data.id) repositionToolbar(frame);
+    updateConnectorsFor(frame.data.id);
+  }
+
+  function jtbdRowItems(frameData, row) {
+    return JTBD_COLS.map(c => ({
+      type: 'note', frameId: frameData.id, x: frameData.x + c.noteX, y: frameData.y + JTBD.HEADER + row * JTBD.ROW_H,
+      width: JTBD.NOTE_W, height: JTBD.NOTE_H, color: JTBD_NOTE_COLOR, text: '',
+    }));
+  }
+
+  async function createJtbdBlock(wx, wy) {
+    const rows = 3;
+    const height = jtbdFrameHeight(rows);
+    // Centré sur l'ensemble consigne + frame.
+    const totalW = JTBD.CONSIGNE_W + JTBD.CONSIGNE_GAP + JTBD_WIDTH;
+    const { x, y } = snapPoint(wx - totalW / 2 + JTBD.CONSIGNE_W + JTBD.CONSIGNE_GAP, wy - height / 2);
+    try {
+      const frameData = await withBusy(Api.createElement({ type: 'frame', x, y, width: JTBD_WIDTH, height, text: 'Jobs to be done', tag: 'jtbd' }));
+      ensureRendered(frameData);
+      const items = [];
+      for (let r = 0; r < rows; r++) items.push(...jtbdRowItems(frameData, r));
+      const { elements: made } = await withBusy(Api.createElementsBatch(items));
+      made.forEach(d => ensureRendered(d));
+      selectElement(frameData.id);
+      recordUndo(async () => {
+        made.forEach(d => removeElementLocal(d.id));
+        removeElementLocal(frameData.id);
+        await Api.deleteElement(frameData.id, { deleteContents: true }).catch(() => {});
+      });
+    } catch (err) { alert(err.message); }
+  }
+
+  async function addJtbdRow(frame) {
+    if (frame.jtbdBusy) return;
+    frame.jtbdBusy = true;
+    const f = frame.data;
+    const n = jtbdRowCount(f);
+    const beforeH = f.height;
+    setJtbdFrameHeight(frame, jtbdFrameHeight(n + 1));
+    try {
+      // La frame grandit d'abord (sinon la nouvelle ligne serait posée hors d'elle), puis ses post-it arrivent.
+      await Api.updateElement(f.id, { height: f.height });
+      const { elements: made } = await Api.createElementsBatch(jtbdRowItems(f, n));
+      made.forEach(d => ensureRendered(d));
+      recordUndo(async () => {
+        made.forEach(d => removeElementLocal(d.id));
+        await Promise.all(made.map(d => Api.deleteElement(d.id).catch(() => {})));
+        const fr = elements.get(f.id);
+        if (fr) { setJtbdFrameHeight(fr, beforeH); await Api.updateElement(f.id, { height: beforeH }).catch(() => {}); }
+      });
+    } catch (err) {
+      setJtbdFrameHeight(frame, beforeH);
+      alert(err.message);
+    } finally { frame.jtbdBusy = false; }
+  }
+
+  function confirmJtbdRowDelete(frame, row, anchorRect) {
+    closeConfirmPopover();
+    const pop = document.createElement('div');
+    pop.className = 'confirm-popover';
+    pop.innerHTML = `
+      <p>Supprimer cette ligne et ses post-it ?</p>
+      <div class="confirm-popover-actions">
+        <button type="button" class="confirm-popover-cancel">Annuler</button>
+        <button type="button" class="confirm-popover-confirm confirm-popover-danger">Supprimer</button>
+      </div>
+    `;
+    pop.addEventListener('pointerdown', e => e.stopPropagation());
+    document.body.appendChild(pop);
+    const popRect = pop.getBoundingClientRect();
+    pop.style.left = `${clamp(anchorRect.left + anchorRect.width / 2 - popRect.width / 2, 8, window.innerWidth - popRect.width - 8)}px`;
+    pop.style.top = `${clamp(anchorRect.bottom + 8, 8, window.innerHeight - popRect.height - 8)}px`;
+    activeConfirmPopover = pop;
+    pop.querySelector('.confirm-popover-cancel').addEventListener('click', closeConfirmPopover);
+    pop.querySelector('.confirm-popover-confirm').addEventListener('click', () => { closeConfirmPopover(); removeJtbdRow(frame, row); });
+    outsideClickHandler = (e) => { if (!pop.contains(e.target)) closeConfirmPopover(); };
+    setTimeout(() => document.addEventListener('pointerdown', outsideClickHandler), 0);
+  }
+
+  // Supprime les post-it d'une ligne, remonte celles du dessous d'un cran et raccourcit la frame.
+  async function removeJtbdRow(frame, row) {
+    const f = frame.data;
+    const n = jtbdRowCount(f);
+    if (n <= 1 || frame.jtbdBusy) return;
+    frame.jtbdBusy = true;
+    const rowOf = d => Math.round((d.y - f.y - JTBD.HEADER) / JTBD.ROW_H);
+    const notes = frameChildren(f.id).map(id => elements.get(id)).filter(en => en && en.data.type === 'note');
+    const gone = notes.filter(en => rowOf(en.data) === row);
+    const below = notes.filter(en => rowOf(en.data) > row);
+    const snaps = gone.map(en => snapshotForCreate(en.data));
+    const shiftBefore = below.map(en => ({ id: en.data.id, x: en.data.x, y: en.data.y }));
+    const beforeH = f.height;
+    gone.forEach(en => removeElementLocal(en.data.id));
+    below.forEach((en) => {
+      en.data.y -= JTBD.ROW_H;
+      en.el.style.top = `${en.data.y}px`;
+      updateConnectorsFor(en.data.id);
+    });
+    setJtbdFrameHeight(frame, jtbdFrameHeight(n - 1));
+    try {
+      await Promise.all(gone.map(en => Api.deleteElement(en.data.id)));
+      if (below.length) await Api.updateElementsBatch(below.map(en => ({ id: en.data.id, x: en.data.x, y: en.data.y })), false);
+      await Api.updateElement(f.id, { height: f.height });
+      recordUndo(async () => {
+        const fr = elements.get(f.id);
+        if (!fr) return;
+        setJtbdFrameHeight(fr, beforeH);
+        await Api.updateElement(f.id, { height: beforeH }).catch(() => {});
+        shiftBefore.forEach((b) => {
+          const en = elements.get(b.id);
+          if (en) { en.data.y = b.y; en.el.style.top = `${b.y}px`; }
+        });
+        await restoreMovedPositions(shiftBefore);
+        await recreateElements(snaps);
+      });
+    } catch (err) { alert(err.message); }
+    finally { frame.jtbdBusy = false; }
+  }
+
   // ---------- Copier / coller ----------
   // Presse-papiers en mémoire (propre à cet onglet, pas le presse-papiers système) : une photo des
   // éléments sélectionnés au moment du Ctrl/Cmd+C, recréés avec un nouvel id à chaque collage (décalage
@@ -1510,6 +1719,9 @@
     });
     // Un connecteur n'a de sens que si ses deux extrémités sont copiées avec lui.
     const items = [...idSet].map(id => elements.get(id)).filter(Boolean).filter((en) => {
+      // Un post-it de bloc "Jobs to be done" ne se copie jamais seul (il n'aurait plus d'emplacement) :
+      // seulement avec sa frame.
+      if (isJtbdNote(en) && !idSet.has(en.data.frameId)) return false;
       if (en.data.type !== 'connector') return true;
       return idSet.has(en.data.fromElementId) && idSet.has(en.data.toElementId);
     });
@@ -1574,7 +1786,7 @@
 
   function nudgeSelection(dx, dy) {
     const ids = multiSelectedIds.size ? [...multiSelectedIds] : (selectedElementId ? [selectedElementId] : []);
-    const movable = ids.filter((id) => { const en = elements.get(id); return en && !en.data.locked && !isMoodboardChild(en); });
+    const movable = ids.filter((id) => { const en = elements.get(id); return en && !en.data.locked && !isPinnedChild(en); });
     if (!movable.length) return;
     const before = movable.map((id) => { const en = elements.get(id); return { id, x: en.data.x, y: en.data.y }; });
     movable.forEach((id) => {
@@ -1669,7 +1881,7 @@
       e.preventDefault();
       const ids = [...multiSelectedIds];
       if (!confirm(`Supprimer ces ${ids.length} éléments ?`)) return;
-      const deletable = ids.filter((id) => { const entry = elements.get(id); return entry && !entry.data.locked; });
+      const deletable = ids.filter((id) => { const entry = elements.get(id); return entry && !entry.data.locked && !isJtbdNote(entry); });
       const snaps = deletable.map((id) => snapshotForCreate(elements.get(id).data));
       deletable.forEach((id) => {
         removeElementLocal(id);
@@ -1681,7 +1893,7 @@
     }
     if (selectedElementId) {
       const entry = elements.get(selectedElementId);
-      if (!entry || entry.data.locked) return;
+      if (!entry || entry.data.locked || isJtbdNote(entry)) return;
       e.preventDefault();
       showDeleteConfirm(entry, entry.el.getBoundingClientRect());
     }
@@ -1702,7 +1914,16 @@
     const pop = document.createElement('div');
     pop.className = 'confirm-popover';
     const childIds = entry.data.type === 'frame' ? frameChildren(entry.data.id) : [];
-    if (childIds.length) {
+    if (isJtbdFrame(entry)) {
+      // Un bloc "Jobs to be done" n'a pas de sens sans ses post-it : pas de "frame seule".
+      pop.innerHTML = `
+        <p>Supprimer ce bloc et tout son contenu ?</p>
+        <div class="confirm-popover-actions">
+          <button type="button" class="confirm-popover-cancel">Annuler</button>
+          <button type="button" class="confirm-popover-confirm confirm-popover-danger" data-mode="all">Supprimer</button>
+        </div>
+      `;
+    } else if (childIds.length) {
       pop.innerHTML = `
         <p>Cette frame contient ${childIds.length} élément${childIds.length > 1 ? 's' : ''}.</p>
         <div class="confirm-popover-actions confirm-popover-actions-stack">
@@ -2137,8 +2358,8 @@
         + (data.tag === 'moodboard'
           ? `<button type="button" class="element-icon-btn element-moodboard-add-btn" title="Ajouter des photos">${iconAddPhotos()}</button><span class="element-toolbar-sep"></span>`
           : '')
-        + `<select class="element-fontsize-select" data-role="title-fontsize" title="Taille du titre">${fontSizeOptionsHtml(data.fontSize)}</select>`
-        + colorDropdownHtml('title', data.titleColor, false, 'Couleur du titre');
+        + (data.tag === 'jtbd' ? '' : `<select class="element-fontsize-select" data-role="title-fontsize" title="Taille du titre">${fontSizeOptionsHtml(data.fontSize)}</select>`
+          + colorDropdownHtml('title', data.titleColor, false, 'Couleur du titre'));
     } else if (data.type === 'instruction' || data.type === 'tip') {
       // Pas de format/alignement ici : le titre/numéro/tag ont une mise en forme fixe, et le texte
       // riche du bloc "tips" se met en forme via la mini barre qui apparaît sur sa sélection (cf.
@@ -2168,6 +2389,9 @@
     // Une frame reste toujours tout au fond (cf. server.js) : le menu "⋮" n'y propose pas de
     // premier/arrière-plan, ce serait sans effet.
     const isFrame = data.type === 'frame';
+    // Post-it d'un bloc "Jobs to be done" : ni verrouillage ni menu "⋮" (dupliquer/supprimer/plans) — il
+    // ne se déplace ni ne se supprime seul.
+    if (isJtbdNoteData(data)) return `${controls}${sep}${voteCommentHtml.replace(/<span class="element-toolbar-sep"><\/span>\s*$/, '')}`;
     return `
       ${controls}${sep}
       ${voteCommentHtml}
@@ -2278,16 +2502,28 @@
     toolbarEl.style.top = `${top}px`;
   }
 
-  // Une photo de moodboard a toujours la largeur de sa colonne (cf. applyFrameArrangement) : lui laisser
-  // une poignée de redimensionnement n'aurait aucun effet durable, elle reprendrait aussitôt sa taille.
-  function isMoodboardChild(entry) {
-    if (entry.data.type !== 'image' || !entry.data.frameId) return false;
+  // Élément "épinglé" par sa frame : une photo de moodboard a toujours la largeur de sa colonne (cf.
+  // applyFrameArrangement), un post-it de bloc "Jobs to be done" reste à son emplacement dans la phrase —
+  // leur laisser une poignée de redimensionnement ou les déplacer n'aurait aucun effet durable.
+  function isPinnedChild(entry) {
+    if (!entry.data.frameId) return false;
     const frame = elements.get(entry.data.frameId);
-    return !!frame && frame.data.tag === 'moodboard';
+    if (!frame) return false;
+    if (entry.data.type === 'image') return frame.data.tag === 'moodboard';
+    return entry.data.type === 'note' && frame.data.tag === 'jtbd';
+  }
+  function isJtbdFrame(entry) { return entry.data.type === 'frame' && entry.data.tag === 'jtbd'; }
+  // Post-it d'un bloc "Jobs to be done" : s'édite, mais ne se déplace, ne se supprime, ne se copie ni ne se
+  // verrouille jamais seul (la ligne entière se supprime via sa corbeille, cf. removeJtbdRow).
+  function isJtbdNote(entry) { return entry.data.type === 'note' && isPinnedChild(entry); }
+  function isJtbdNoteData(data) {
+    if (data.type !== 'note' || !data.frameId) return false;
+    const frame = elements.get(data.frameId);
+    return !!frame && frame.data.tag === 'jtbd';
   }
 
   function showToolbarFor(entry) {
-    entry.el.classList.toggle('is-moodboard-child', isMoodboardChild(entry));
+    entry.el.classList.toggle('is-pinned-child', isPinnedChild(entry));
     if (entry.data.locked) {
       toolbarEl.innerHTML = buildLockedToolbarHtml(entry);
       toolbarEl.classList.add('is-open');
@@ -2480,7 +2716,7 @@
     if (!entries.length) return;
     // Un connecteur n'a pas de position propre (dérivée de ses deux ancres) : l'aligner n'a pas de
     // sens, et il serait de toute façon aussitôt "remis à sa place" au prochain recalcul.
-    const movable = entries.filter(en => en.data.type !== 'connector' && !isMoodboardChild(en));
+    const movable = entries.filter(en => en.data.type !== 'connector' && !isPinnedChild(en));
     const isAlign = action === 'align-left' || action === 'align-right' || action === 'align-center';
     if (isAlign && !movable.length) return;
 
@@ -2745,11 +2981,13 @@
       // remplit toute la boîte.
       el.innerHTML = `
         <textarea class="frame-title" placeholder="Titre…" maxlength="200" rows="1"></textarea>
+        ${data.tag === 'jtbd' ? '<div class="jtbd-decor"></div>' : ''}
         <div class="element-resize-handle"></div>
         ${anchorsHtml}
       `;
       textEl = el.querySelector('.frame-title');
       textEl.value = data.text || '';
+      if (data.tag === 'jtbd') el.classList.add('is-jtbd');
     } else if (data.type === 'instruction') {
       // Trois champs indépendants (numéro/titre/description), contrairement à tous les autres types
       // qui n'en ont qu'un seul (cf. wireMultiFieldEditing, qui généralise wireTextEditing pour ce cas).
@@ -2825,7 +3063,14 @@
     if (data.type === 'image') applyImageFilters(entry);
     if (data.type === 'rectangle') { applyRectangleStyle(entry); applyRectangleTextStyle(entry); autoGrowRectangleTextarea(entry); }
     if (data.type === 'frame') { applyRectangleStyle(entry); applyFrameTitleStyle(entry); }
-    if (data.type === 'note') { applyNoteTextStyle(entry); syncNoteTextareaHeight(entry); }
+    if (data.type === 'frame' && data.tag === 'jtbd') { wireJtbdDecor(entry); syncJtbdDecor(entry); }
+    if (data.type === 'note') {
+      applyNoteTextStyle(entry); syncNoteTextareaHeight(entry);
+      // Post-it d'un bloc "Jobs to be done" : indice de la colonne dans le champ vide (si sa frame est déjà
+      // là — sinon c'est elle qui s'en charge en s'affichant, cf. syncJtbdDecor).
+      const jf = data.frameId && elements.get(data.frameId);
+      if (jf && jf.data.tag === 'jtbd') syncJtbdPlaceholders(jf);
+    }
     if (data.type === 'instruction') {
       entry.numberEl = el.querySelector('.instruction-number');
       entry.titleEl = el.querySelector('.instruction-title');
@@ -3359,6 +3604,7 @@
       if (document.activeElement !== entry.textEl) entry.textEl.value = data.text || '';
       applyRectangleStyle(entry);
       applyFrameTitleStyle(entry);
+      if (data.tag === 'jtbd' && entry.el.querySelector('.jtbd-decor')) syncJtbdDecor(entry);
     } else if (data.type === 'instruction') {
       entry.el.style.background = data.color;
       if (document.activeElement !== entry.numberEl) entry.numberEl.value = data.number || '';
@@ -4634,7 +4880,8 @@
     }
 
     entry.enterEditing = function enterEditing() {
-      if (entry.data.locked) return;
+      // Le titre d'un bloc "Jobs to be done" est fixe.
+      if (entry.data.locked || isJtbdFrame(entry)) return;
       selectElement(id);
       editingElementId = id;
       el.classList.add('is-editing');
@@ -5154,7 +5401,7 @@
     // Une photo de moodboard ne se déplace jamais seule (cf. wireBodyDrag) — y compris prise dans une
     // sélection multiple ; elle suit en revanche son cadre quand celui-ci fait partie du geste.
     const idSet = new Set(ids);
-    ids = ids.filter((mid) => { const en = elements.get(mid); return !en || !isMoodboardChild(en) || idSet.has(en.data.frameId); });
+    ids = ids.filter((mid) => { const en = elements.get(mid); return !en || !isPinnedChild(en) || idSet.has(en.data.frameId); });
     const isRealGroup = !!entry.data.groupId;
     const startScreen = { x: e.clientX, y: e.clientY };
     const startPositions = new Map();
@@ -5301,10 +5548,13 @@
       // Photo de moodboard : se sélectionne (pour la supprimer, la commenter...) mais ne se déplace pas —
       // réorganiser par glisser est volontairement désactivé pour cette première version. Le cadre, lui,
       // se déplace toujours avec ses photos (cf. plus bas, glisser une frame).
-      if (isMoodboardChild(entry)) {
+      if (isPinnedChild(entry)) {
         e.stopPropagation();
         selectElement(id);
         closeConfirmPopover();
+        // Un post-it de bloc "Jobs to be done" ne bouge pas, mais un clic dessus l'ouvre en édition, comme
+        // n'importe quel post-it.
+        if (isJtbdNote(entry) && entry.enterEditing) entry.enterEditing();
         return;
       }
       // Pas de garde sur is-editing ici : un clic sur le textarea lui-même stoppe déjà la
@@ -5548,7 +5798,7 @@
     let resizeState = null;
 
     handle.addEventListener('pointerdown', (e) => {
-      if (entry.cropping || entry.data.locked || isMoodboardChild(entry)) return;
+      if (entry.cropping || entry.data.locked || isPinnedChild(entry) || isJtbdFrame(entry)) return;
       e.stopPropagation();
       selectElement(entry.data.id);
       const isMosaic = entry.data.type === 'frame' && (entry.data.tag === 'pdf-mosaic' || entry.data.tag === 'moodboard');
